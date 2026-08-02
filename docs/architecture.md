@@ -231,7 +231,13 @@ ThingsBoard CE   TB PostgreSQL   Trendx
 
 ---
 
-## 14. Planification
+## 15. Migrations et traçabilité schéma
 
-**Correction C — APScheduler :** En Phase 2, le worker utilise APScheduler en mode standalone, sans broker externe.  
-Pas de Redis nécessaire pour la planification. Les jobs sont gérés en mémoire avec persistance dans `trendx_catalog.trendz_task`.
+**Mécanisme officiel :** `public.schema_version` dans la base `trendx`.  
+Chaque migration SQL est enregistrée avec son nom, checksum, durée et statut.  
+Procédure :
+1. Déposer le fichier SQL dans `migrations/`
+2. L'appliquer via `make migrate` ou `psql`
+3. Insérer une ligne dans `public.schema_version`
+
+Aucun outil de migration tiers n'est utilisé en Phase 2.

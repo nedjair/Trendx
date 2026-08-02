@@ -350,9 +350,8 @@ make down-clean    # ⚠ nécessite TRENDX_CONFIRM_APPLY=YES, détruit volumes
 
 ## 13. Migrations
 
-- Alembic versionné, non destructif
-- Base unique `trendx` avec schémas `trendx_catalog` et `trendx_analytics`
-- Rôle `trendx_migration` sur base `trendx` uniquement
-- Pas de SQL brut hors Alembic
-- Schéma toujours qualifié dans les migrations
-- Pas de base `trendx_airflow` ni `trendx_mlflow` en Phase 2
+- Mécanisme officiel : `public.schema_version` dans la base `trendx`
+- Chaque migration SQL est tracée par nom, checksum, durée et statut
+- Rôle `trendx_migration` pour le DDL, `trendx_app` pour le DML
+- Pas d'outil de migration tiers en Phase 2
+- Schéma toujours qualifié (`trendx_catalog.*`, `trendx_analytics.*`)

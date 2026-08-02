@@ -11,7 +11,7 @@ from trendx.config import settings
 
 
 class EngineWrapper:
-    def __init__(self, name: str, dsn: str, pool_size: int = 5, max_overflow: int = 10) -> None:
+    def __init__(self, name: str, dsn: str, pool_size: int = 3, max_overflow: int = 2) -> None:
         self.name = name
         self.engine = create_engine(
             dsn,
@@ -34,7 +34,7 @@ class DatabaseManager:
         self._engines: dict[str, EngineWrapper] = {}
         self._sessionmakers: dict[str, sessionmaker[Session]] = {}
 
-    def register(self, name: str, dsn: str, pool_size: int = 5, max_overflow: int = 10) -> None:
+    def register(self, name: str, dsn: str, pool_size: int = 3, max_overflow: int = 2) -> None:
         if name in self._engines:
             logger.warning("Engine '{}' already registered, skipping", name)
             return

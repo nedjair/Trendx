@@ -156,9 +156,9 @@ test-e2e: ## Tests end-to-end (MVP complet)
 	@$(VENV)/bin/pytest -m e2e -ra 2>/dev/null || pytest -m e2e -ra
 
 # ————————————————————————————————————————
-# Migrations SQL (sur PostgreSQL externe existant)
+# Migrations SQL tracées via public.schema_version (sur PostgreSQL externe existant)
 # ————————————————————————————————————————
-migrate: ## Appliquer les migrations SQL sur la base trendx (AGENTS §17)
+migrate: ## Appliquer les migrations SQL tracées sur la base trendx (AGENTS §17)
 	@echo "[trendx-migrate] 001_trendz_native_schema.sql → trendx..."
 	@docker exec $(PG_EXTERNAL_CONTAINER) psql -v ON_ERROR_STOP=1 -U postgres -d trendx -c "SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'business_entity' LIMIT 1;" | grep -q 1 || \
 		docker exec $(PG_EXTERNAL_CONTAINER) psql -v ON_ERROR_STOP=1 -U postgres -d trendx -f /migrations/001_trendz_native_schema.sql
@@ -199,6 +199,10 @@ doctor: ## Vérifications pre-flight (réseau, ports, ressources, bases, disque)
 	echo -n "│  trendx_ro ne peut pas INSERT dans thingsboard ? : "; \
 	  ins=$$(docker exec mobili_dahsboard-postgres-1 psql -U trendx_ro -d thingsboard -c "INSERT INTO ts_kv (ts, entity_id, metric_key, str_v, long_v, dbl_v, bool_v, json_v, source) VALUES (0, '00000000-0000-0000-0000-000000000000', 'trendx_doctor_test', NULL, NULL, NULL, NULL, NULL, 'doctor') ON CONFLICT DO NOTHING;" 2>&1 | grep -c -i 'error\|FATAL'); \
 	  [ "$$ins" -gt 0 ] && echo "OK (INSERT refusé)" || { echo "FAIL — INSERT autorisé avec trendx_ro"; fail=$$((fail+1)); }; \
+	echo "│"; \
+	echo -n "│  trendx_app ne peut pas CREATE TABLE dans trendx_catalog ? : "; \
+	  cre=$$(docker exec mobili_dahsboard-postgres-1 psql -U trendx_app -d trendx -c "CREATE TABLE trendx_catalog.doctor_test (id int);" 2>&1 | grep -c -i 'error\|FATAL'); \
+	  [ "$$cre" -gt 0 ] && echo "OK (CREATE refusé)" || { echo "FAIL — CREATE autorisé avec trendx_app"; fail=$$((fail+1)); }; \
 	echo "│"; \
 	for svc in reverse-proxy api worker; do \
 	  echo -n "│  Ressources $$svc (cpus/mem/pids/logs) ? : "; \

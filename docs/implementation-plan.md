@@ -21,7 +21,7 @@
 - [ ] Création rôle `trendx_ro` sur base `thingsboard` (B1)
 - [ ] Création rôles `trendx_migration`, `trendx_app` sur base `trendx`
 - [ ] Écriture `docker-compose.yml` conforme (reverse-proxy/api/worker uniquement, pas de TimescaleDB)
-- [ ] Écriture migrations Alembic versionnées : schéma `trendx_catalog` + `trendx_analytics` (partitionné déclaratif + BRIN)
+ - [ ] Écriture migrations SQL tracées dans `public.schema_version` : schéma `trendx_catalog` + `trendx_analytics` (partitionné déclaratif + BRIN)
 - [ ] Partition mensuelle `trendx_analytics.ts_kv` pré-créée à +3 mois
 - [ ] Agrégats horaires/jour/semaine/mois : UPSERT incrémental, jamais REFRESH MATERIALIZED VIEW (Q3)
 - [ ] Installation API FastAPI + schéma de base, pytest unitaire 1er vert
@@ -31,7 +31,7 @@
 - [ ] Vérification espace disque avant toute migration (Correction B)
 - [ ] Arrêt automatique ingestion sous `TRENDX_DISK_MIN_FREE_GB=50` implémenté
 
-**Livrables :** docker-compose.yml, 3 Dockerfiles, migrations Alembic, API /health OK, runbook writeback validé
+**Livrables :** docker-compose.yml, 3 Dockerfiles, migrations SQL tracées, API /health OK, runbook writeback validé
 
 ---
 
