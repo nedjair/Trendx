@@ -109,7 +109,7 @@ if HAS_APSCHEDULER:
 
     def _call_db_function(sql: str, params: dict[str, Any]) -> Any:
         engine = get_analytics_engine()
-        with engine.connect() as conn:
+        with engine.begin() as conn:
             return conn.execute(text(sql), params).scalar_one()
 
     def _job_partitions() -> None:

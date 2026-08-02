@@ -23,6 +23,9 @@ PROFILE := $(shell grep -E '^TRENDX_PROFILE=' .env 2>/dev/null | cut -d= -f2 || 
 # Conteneur PostgreSQL existant ThingsBoard / Trendx
 PG_EXTERNAL_CONTAINER ?= mobili_dahsboard-postgres-1
 
+# Seuil disque dur (AGENTS §5) — lu depuis .env, défaut 50
+TRENDX_DISK_MIN_FREE_GB ?= $(shell grep -E '^TRENDX_DISK_MIN_FREE_GB=' .env 2>/dev/null | cut -d= -f2 || echo 50)
+
 .DEFAULT_GOAL := help
 
 # ————————————————————————————————————————
@@ -200,9 +203,27 @@ doctor: ## Vérifications pre-flight (réseau, ports, ressources, bases, disque)
 	  ins=$$(docker exec mobili_dahsboard-postgres-1 psql -U trendx_ro -d thingsboard -c "INSERT INTO ts_kv (ts, entity_id, metric_key, str_v, long_v, dbl_v, bool_v, json_v, source) VALUES (0, '00000000-0000-0000-0000-000000000000', 'trendx_doctor_test', NULL, NULL, NULL, NULL, NULL, 'doctor') ON CONFLICT DO NOTHING;" 2>&1 | grep -c -i 'error\|FATAL'); \
 	  [ "$$ins" -gt 0 ] && echo "OK (INSERT refusé)" || { echo "FAIL — INSERT autorisé avec trendx_ro"; fail=$$((fail+1)); }; \
 	echo "│"; \
-	echo -n "│  trendx_app ne peut pas CREATE TABLE dans trendx_catalog ? : "; \
-	  cre=$$(docker exec mobili_dahsboard-postgres-1 psql -U trendx_app -d trendx -c "CREATE TABLE trendx_catalog.doctor_test (id int);" 2>&1 | grep -c -i 'error\|FATAL'); \
-	  [ "$$cre" -gt 0 ] && echo "OK (CREATE refusé)" || { echo "FAIL — CREATE autorisé avec trendx_app"; fail=$$((fail+1)); }; \
+	for sch in trendx_catalog trendx_analytics public; do \
+	  echo -n "│  trendx_app CREATE TABLE $$sch.doctor_test ? : "; \
+	    cre=$$(docker exec mobili_dahsboard-postgres-1 psql -U trendx_app -d trendx -c "CREATE TABLE $$sch.doctor_test (id int);" 2>&1 | grep -c -i 'error\|FATAL'); \
+	    [ "$$cre" -gt 0 ] && echo "OK (CREATE refusé)" || { echo "FAIL — CREATE autorisé dans $$sch"; fail=$$((fail+1)); }; \
+	done; \
+	echo "│"; \
+	echo -n "│  Bases PostgreSQL (liste blanche) ? : "; \
+	  dbs=$$(docker exec mobili_dahsboard-postgres-1 psql -U postgres -d postgres -tAc "SELECT datname FROM pg_database WHERE NOT datistemplate AND datallowconn ORDER BY datname" 2>/dev/null | tr '\n' ' '); \
+	  unexpected=""; \
+	  for db in $$dbs; do case "$$db" in thingsboard|trendx|postgres|template*) ;; *) unexpected="$$unexpected $$db";; esac; done; \
+	  [ -z "$$unexpected" ] && echo "OK ($$dbs)" || { echo "FAIL — base(s) inattendue(s):$$unexpected"; fail=$$((fail+1)); }; \
+	echo "│"; \
+	echo -n "│  Search paths moteurs (règles schémas) ? : "; \
+	  sp=$$(docker exec trendx_api python3 /app/scripts/check_search_path.py 2>&1); rc=$$?; \
+	  echo "$$sp" | sed 's/^/│    /'; \
+	  if [ "$$rc" -ne 0 ]; then fail=$$((fail+1)); fi; \
+	echo "│"; \
+	echo -n "│  Auth ThingsBoard (sans leak) ? : "; \
+	  tbout=$$(python3 scripts/tb_auth_check.py 2>&1); rc=$$?; \
+	  echo "$$tbout"; \
+	  if [ "$$rc" -ne 0 ]; then fail=$$((fail+1)); fi; \
 	echo "│"; \
 	echo -n "│  Partitions trendx_analytics à +3 mois ? : "; \
 	  cov=$$(docker exec mobili_dahsboard-postgres-1 psql -U postgres -d trendx -tAc "SELECT trendx_analytics.partition_coverage(3);" 2>/dev/null | tr -d '\n'); \

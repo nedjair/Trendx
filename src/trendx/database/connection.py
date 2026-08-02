@@ -13,6 +13,8 @@ from trendx.config import settings
 # Budget connexions trendx_app (AGENTS §2, rôle CONNECTION LIMIT 24) :
 #   2 moteurs (catalog + analytics) x (pool 2 + overflow 1) = 6 connexions max
 #   par processus ; API (2 workers) = 12, worker = 6, total = 18 <= 24.
+# Moteur tb_readonly (rôle trendx_ro, LIMIT 5) : pool 1 + overflow 0 par
+#   processus ; API (2 workers) = 2, worker = 1, total = 3 <= 5.
 DEFAULT_POOL_SIZE = 2
 DEFAULT_MAX_OVERFLOW = 1
 
@@ -95,6 +97,20 @@ class DatabaseManager:
     def get_analytics_engine(self):
         return self.get_engine("analytics")
 
+    def get_tb_readonly_engine(self):
+        return self.get_engine("tb_readonly")
+
+    def engine_search_paths(self) -> dict[str, str]:
+        paths: dict[str, str] = {}
+        for name, wrapper in self._engines.items():
+            try:
+                with wrapper.engine.connect() as conn:
+                    row = conn.execute(text("SHOW search_path")).fetchone()
+                    paths[name] = str(row[0]) if row and row[0] else ""
+            except Exception as exc:
+                paths[name] = f"ERROR: {exc}"
+        return paths
+
     @contextmanager
     def get_session(self, db_name: str = "catalog") -> Generator[Session, None, None]:
         maker = self.get_sessionmaker(db_name)
@@ -141,8 +157,14 @@ def _register_default_engines() -> None:
     manager.register(
         "analytics", settings.analytics_dsn_app(), search_path="trendx_analytics,public"
     )
+    ro_dsn = settings.tb_db_readonly_dsn()
+    if ro_dsn:
+        manager.register(
+            "tb_readonly", ro_dsn, pool_size=1, max_overflow=0, search_path="public"
+        )
+        logger.info("Registered read-only ThingsBoard engine (tb_readonly, pool=1/0)")
 
-    logger.info("Default engines registered (catalog, analytics)")
+    logger.info("Default engines registered (catalog, analytics[, tb_readonly])")
 
 
 _register_default_engines()
@@ -154,6 +176,10 @@ def get_catalog_engine():
 
 def get_analytics_engine():
     return manager.get_analytics_engine()
+
+
+def get_tb_readonly_engine():
+    return manager.get_tb_readonly_engine()
 
 
 def get_session(db_name: str = "catalog") -> Generator[Session, None, None]:

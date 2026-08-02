@@ -41,40 +41,40 @@ def test_dsn_generation():
     assert "trendx" in dsn
 
     analytics_dsn = s.analytics_dsn_app()
-    assert "trendx_analytics" in analytics_dsn
+    assert analytics_dsn == dsn  # une seule base trendx ; schémas séparés par search_path
 
 
 @pytest.mark.unit
 def test_tb_readonly_dsn():
-    s = Settings(
-        TRENDX_ENV="testing",
-        TB_BASE_URL="http://test:8080",
-        TB_USERNAME="test",
-        TB_PASSWORD="test",
-        TB_DB_HOST="tb-host",
-        TB_DB_PORT=32768,
-        TB_DB_NAME="thingsboard",
-    )
+    with patch.dict(os.environ, {}, clear=True):
+        s = Settings(
+            TRENDX_ENV="testing",
+            TB_BASE_URL="http://test:8080",
+            TB_USERNAME="test",
+            TB_PASSWORD="test",
+            TB_DB_HOST="tb-host",
+            TB_DB_PORT=32768,
+            TB_DB_NAME="thingsboard",
+        )
+        dsn = s.tb_db_readonly_dsn()
+        assert dsn is None
 
-    dsn = s.tb_db_readonly_dsn()
-    assert dsn is None
-
-    s = Settings(
-        TRENDX_ENV="testing",
-        TB_BASE_URL="http://test:8080",
-        TB_USERNAME="test",
-        TB_PASSWORD="test",
-        TB_DB_HOST="tb-host",
-        TB_DB_PORT=32768,
-        TB_DB_NAME="thingsboard",
-        TB_DB_READONLY_USER="reader",
-        TB_DB_READONLY_PASSWORD="reader_pass",
-    )
-
-    dsn = s.tb_db_readonly_dsn()
-    assert dsn is not None
-    assert "reader" in dsn
-    assert "tb-host" in dsn
+    with patch.dict(os.environ, {}, clear=True):
+        s = Settings(
+            TRENDX_ENV="testing",
+            TB_BASE_URL="http://test:8080",
+            TB_USERNAME="test",
+            TB_PASSWORD="test",
+            TB_DB_HOST="tb-host",
+            TB_DB_PORT=32768,
+            TB_DB_NAME="thingsboard",
+            TB_DB_READONLY_USER="reader",
+            TB_DB_READONLY_PASSWORD="reader_pass",
+        )
+        dsn = s.tb_db_readonly_dsn()
+        assert dsn is not None
+        assert "reader" in dsn
+        assert "tb-host" in dsn
 
 
 @pytest.mark.unit

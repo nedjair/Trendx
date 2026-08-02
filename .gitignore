@@ -55,5 +55,8 @@ backups/
 # Compose legacy
 docker-compose.yml
 
+# Fichiers de tâche éphémères (consignes d'exécution historiques, exécutées)
+/prompt2.md
+
 # Runtime hors dépôt
 /opt/trendx/

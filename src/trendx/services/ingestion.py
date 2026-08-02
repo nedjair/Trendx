@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import shutil
 import time
 import uuid
 from collections.abc import Sequence
@@ -21,6 +23,22 @@ from trendx.database.repositories import (
 from trendx.thingsboard.telemetry import TelemetryReader, TelemetryPoint
 
 
+class DiskCapacityError(RuntimeError):
+    """Espace disque libre sous le seuil : ingestion arrêtée automatiquement."""
+
+
+def check_disk_min_free(mount: str = "/") -> float:
+    """Retourne l'espace libre (GB) sur `mount`, ou lève DiskCapacityError sous le seuil."""
+    usage = shutil.disk_usage(mount)
+    free_gb = usage.free / (1024**3)
+    if free_gb < settings.trendx_disk_min_free_gb:
+        raise DiskCapacityError(
+            f"Espace libre {mount}: {free_gb:.1f} GB < TRENDX_DISK_MIN_FREE_GB="
+            f"{settings.trendx_disk_min_free_gb} GB. Ingestion arrêtée."
+        )
+    return free_gb
+
+
 class IngestionService:
     PIPELINE_NAME = "ingestion"
 
@@ -40,6 +58,11 @@ class IngestionService:
         self._window_hours = window_hours
         self._total_processed: int = 0
         self._total_errors: int = 0
+
+    def ensure_disk_available(self, mounts: Sequence[str] = ("/", "/var/lib/docker")) -> None:
+        for mount in mounts:
+            if os.path.isdir(mount):
+                check_disk_min_free(mount)
 
     @property
     def total_processed(self) -> int:
@@ -390,6 +413,7 @@ class IngestionService:
             start=start_ts.isoformat(),
             end=end_ts.isoformat(),
         )
+        self.ensure_disk_available()
 
         batch_id = str(uuid.uuid4())[:12]
         windows = self._build_time_windows(start_ts, end_ts)
@@ -470,6 +494,7 @@ class IngestionService:
             start=start_date.isoformat(),
             end=end.isoformat(),
         )
+        self.ensure_disk_available()
 
         start_time = time.monotonic()
         result = await self.ingest_device_metric(
@@ -495,6 +520,7 @@ class IngestionService:
 
     async def run_incremental_ingest(self) -> list[dict[str, Any]]:
         logger.info("Starting incremental ingestion for all devices")
+        self.ensure_disk_available()
         devices = self._discover_devices()
         if not devices:
             logger.warning("No devices with active metrics discovered")

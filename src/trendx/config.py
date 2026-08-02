@@ -28,6 +28,13 @@ class Settings(BaseSettings):
         alias="TRENDX_JWT_SIGNING_KEY",
     )
 
+    trendx_api_token: SecretStr = Field(
+        default=SecretStr("CHANGE_ME"),
+        alias="TRENDX_API_TOKEN",
+    )
+
+    trendx_disk_min_free_gb: int = Field(default=50, alias="TRENDX_DISK_MIN_FREE_GB")
+
     trendx_api_host: str = Field(default="0.0.0.0", alias="TRENDX_API_HOST")
     trendx_api_port: int = Field(default=8000, alias="TRENDX_API_PORT")
     trendx_python_executor_port: int = Field(default=8181, alias="TRENDX_PYTHON_EXECUTOR_PORT")
@@ -100,6 +107,30 @@ class Settings(BaseSettings):
     @classmethod
     def _uppercase_log_level(cls, v: str) -> str:
         return v.upper()
+
+    @property
+    def tb_login(self) -> tuple[str, str]:
+        """Identifiants ThingsBoard (email, password).
+
+        .env (TB_USERNAME/TB_PASSWORD) d'abord s'ils sont réels ; sinon fallback
+        sur le coffre .secrets/service-accounts.env (TB_SERVICE_USER_EMAIL /
+        TB_SERVICE_USER_PASSWORD). Ne jamais journaliser les valeurs.
+        """
+        username = self.tb_username
+        password = self.tb_password.get_secret_value()
+        if username and password and password not in ("CHANGE_ME",) and len(password) >= 8:
+            return username, password
+        try:
+            with self.credentials_file.open("r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith("TB_SERVICE_USER_EMAIL="):
+                        username = line.split("=", 1)[1].strip() or username
+                    elif line.startswith("TB_SERVICE_USER_PASSWORD="):
+                        password = line.split("=", 1)[1].strip() or password
+        except OSError:
+            pass
+        return username, password
 
     def pg_dsn(self, dbname: str, user: str, password: SecretStr) -> str:
         return (

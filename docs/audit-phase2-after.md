@@ -227,4 +227,93 @@ Trendx et s'explique par le redémarrage de l'hôte. Aucun impact attribuable à
 
 ---
 
+## 7. Validation post-Phase 2 (2026-08-02, 16:30) — TLS, auth, search_path, nettoyage
+
+### 7.1 TLS du reverse-proxy — réalité vs documentation
+- Proxy en **HTTP simple** sur `127.0.0.1:8443` (nginx `listen 8443`, aucun `ssl`,
+  healthcheck Compose en `http`). Le `https://` de la doc était faux.
+- Corrigé : `docs/architecture.md`, `docs/deployment.md`, `docs/security.md` —
+  « HTTP sur loopback, chiffrement délégué au tunnel SSH, TLS reporté à une phase
+  ultérieure ; ne jamais publier ce port ailleurs que sur 127.0.0.1 tant que TLS absent ».
+- Preuve API : sans jeton `401`, jeton invalide `403`, jeton valide `200`,
+  `X-API-Key` `200`, `/health` public `200` (via `curl http://127.0.0.1:8443/...`).
+
+### 7.2 Authentification API ajoutée
+- Middleware `require_auth_middleware` (main.py) : `/api/v1/*` exige
+  `Authorization: Bearer <jeton>` ou `X-API-Key`, comparaison temps constant
+  (`hmac.compare_digest`). Public : `/`, `/health`, `/metrics`, `/docs`, `/redoc`,
+  `/openapi.json`.
+- Clé `TRENDX_API_TOKEN` générée (`openssl rand -hex 32`) dans `.env` (mode 600),
+  placeholder dans `.env.example`. Jamais journalisée.
+
+### 7.3 Test négatif trendx_app — cibles qualifiées (3/3 refusés)
+```
+trendx_app CREATE TABLE trendx_catalog.doctor_test  → OK (CREATE refusé)
+trendx_app CREATE TABLE trendx_analytics.doctor_test → OK (CREATE refusé)
+trendx_app CREATE TABLE public.doctor_test           → OK (CREATE refusé)
+```
+`make doctor` rejoué avec ces trois cibles explicitement qualifiées.
+
+### 7.4 Search paths effectifs (SHOW search_path sur chaque connexion)
+```
+catalog:     'trendx_catalog,public'
+analytics:   'trendx_analytics,public'
+tb_readonly: 'public'
+```
+- `tb_readonly` (nouveau moteur, pool 1/0, rôle `trendx_ro` LIMIT 5 → 3 ≤ 5)
+  **sans aucun schéma Trendx** ; aucun moteur ne porte les deux schémas.
+- Contrôle automatisé : `scripts/check_search_path.py` (intégré à `make doctor`).
+
+### 7.5 Nettoyage base partagée
+- `\l` complet : postgres, template0, template1, thingsboard, trendx, test_gexec3.
+- `test_gexec3` contrôlé : 0 table, ~7,4 MB, aucune relation avec ThingsBoard,
+  aucun privilège → **supprimée** (`DROP DATABASE`).
+- `make doctor` : contrôle liste blanche (thingsboard, trendx, postgres, template*),
+  échoue si une base inattendue apparaît.
+
+### 7.6 Compte de service ThingsBoard (préparation, création par l'opérateur)
+- Variables : `TB_SERVICE_USER_EMAIL` / `TB_SERVICE_USER_PASSWORD` dans
+  `.secrets/service-accounts.env` ; fallback runtime via `settings.tb_login` (config.py).
+- Liste des endpoints REST Phase 3 : voir `docs/service-accounts.md`.
+- Contrôle `make doctor` : `scripts/tb_auth_check.py` (POST `/api/auth/login`,
+  sortie `OK`/`SKIP`/`FAIL`, jamais de mot de passe) — `SKIP` tant que placeholders.
+- `TB_WRITEBACK_ENABLED=false` inchangé.
+
+### 7.7 Ingestion Phase 3 — garde-fous
+- `docs/phase3-ingestion-guardrails.md` : périmètre limité, débit API, reprise,
+  test réel d'arrêt sous `TRENDX_DISK_MIN_FREE_GB`.
+- Gate disque implémenté : `check_disk_min_free` + `ensure_disk_available`
+  (levée `DiskCapacityError` sous le seuil, avant chaque run et chaque device/metric).
+  Test unitaire `test_disk_min_free_gate`.
+- `prompt2.md` (consigne de tâche historique exécutée) : ajouté au `.gitignore`.
+
+### 7.8 Tests
+- `tests/unit` : 162 passed / 43 failed (échecs préexistants hors périmètre :
+  checkpoints stubs, mlflow absent, pydantic version). 2 tests config corrigés
+  (alignés sur la conception une-base-deux-schémas, plus de fuite de DSN).
+
+### 7.9 Bug rollback silencieux des jobs planifiés (découvert à la validation)
+- Premier tick planifié du worker (15:36:55) : `refresh_aggregate('hourly')`
+  renvoyait un JSON de succès, mais `aggregate_watermarks` restait à 14:36:12
+  (valeur de la migration). Diagnostic :
+  - `with engine.connect() as conn:` **ne commit pas** à la sortie du bloc
+    (`Connection.close()` fait ROLLBACK d'une transaction ouverte). Seul
+    `engine.begin()` commite à la sortie. Contrôle : un `UPDATE` simple via
+    `engine.connect()` n'était pas persisté ; via `engine.begin()` oui.
+  - `worker.py::_call_db_function` utilisait `engine.connect()` → les écritures
+    du planificateur (agrégats, création de partitions) étaient **silencieusement
+    annulées** à chaque tick.
+- Correctif : `_call_db_function` passe à `engine.begin()`.
+- Vérification end-to-end : tick de 15:59:23 → `hourly` watermark = 15:59:23
+  (persisté, identique au log du worker).
+- Audit des autres usages `engine.connect()` : `training.py`, `inference.py`,
+  `tasks.py`, `connection.py` (search_path, SELECT 1), `check_search_path.py` =
+  lecture seule → corrects. `ingestion.py` et `quality.py` utilisent déjà
+  `engine.begin()`. Les sessions ORM passent par `session.commit()` explicite.
+- Note sécurité : un diagnostic psycopg2 mal formé a fait apparaître le mot de
+  passe applicatif dans la sortie de terminal ; rotation de
+  `TRENDX_APP_PASSWORD` recommandée.
+
+---
+
 *Fin du snapshot final.*

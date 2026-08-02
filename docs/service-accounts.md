@@ -25,6 +25,44 @@ Avec `GRAFANA_API_ENABLED=true`, le script exige que le dossier `Trendx` et le d
 
 La création est désactivée par défaut. L'adaptateur contacte ThingsBoard uniquement après confirmation explicite du device, du customer isolé (`TB_CONFIRMED_CUSTOMER_ISOLATED=true`) et du fait que ce customer ne contient qu'un seul device (`TB_CONFIRMED_CUSTOMER_DEVICE_COUNT=1`). Ces confirmations sont des préconditions opérateur, pas une capacité de filtrage ajoutée au `CUSTOMER_USER`. L'URL de création est obligatoire car elle varie selon la version (`TB_SERVICE_USER_CREATE_URL`). Toute discordance arrête le script avant création. Le compte demandé est `CUSTOMER_USER`; aucune alarme ni écriture de télémétrie n'est appelée. Un customer partagé ne peut pas être limité à un device par ce script.
 
+## Compte de service ThingsBoard — Phase 3 (Canal 1 REST)
+
+### Variables attendues (coffre → `.secrets/service-accounts.env`, mode 600)
+
+| Variable | Emplacement | Usage |
+|---|---|---|
+| `TB_SERVICE_USER_EMAIL` | `.secrets/service-accounts.env` | Email du compte de service ThingsBoard |
+| `TB_SERVICE_USER_PASSWORD` | `.secrets/service-accounts.env` | Mot de passe du compte de service |
+
+- L'opérateur renseigne ces deux valeurs depuis le coffre ; elles ne sont JAMAIS versionnées ni journalisées.
+- À l'exécution, `settings.tb_login` (config.py) retombe sur ces valeurs si `.env` (`TB_USERNAME`/`TB_PASSWORD`) contient encore des placeholders.
+- Contrôle sans fuite : `make doctor` → `scripts/tb_auth_check.py` POSTe `/api/auth/login` et n'affiche que `OK`/`SKIP`/`FAIL` (jamais le mot de passe ni le JWT).
+
+### Points d'accès REST ThingsBoard nécessaires en Phase 3
+
+Phase 3 = découverte de topologie + ingestion incrémentale (lecture seule). Les droits du compte de service doivent couvrir :
+
+| Méthode | Endpoint | Usage Phase 3 |
+|---|---|---|
+| POST | `/api/auth/login` | Authentification (obtention du JWT) |
+| GET | `/api/info` | Version/état du serveur (diagnostic) |
+| GET | `/api/tenant/devices?pageSize&page` | Liste paginée des devices du tenant |
+| GET | `/api/device/{deviceId}` | Détail d'un device (attributs serveur) |
+| GET | `/api/deviceProfiles?pageSize&page` | Profils device (regroupement business entities) |
+| GET | `/api/tenant/assets?pageSize&page` | Assets du tenant (topologie) |
+| GET | `/api/customers?tenantId&pageSize&page` | Customers (isolation par tenant/customer) |
+| GET | `/api/relations?pageSize&page` | Relations entités (découverte topologie) |
+| GET | `/api/plugins/telemetry/{entityType}/{entityId}/attributes/{scope}` | Attributs client/shared/server |
+| GET | `/api/plugins/telemetry/{entityType}/{entityId}/keys/timeseries` | Liste des clés télémétrie |
+| GET | `/api/plugins/telemetry/{entityType}/{entityId}/values/timeseries?keys&startTs&endTs&limit` | **Valeurs télémétrie (chemin d'ingestion principal)** |
+
+Uniquement si le writeback/alarmes est activé explicitement (`TB_WRITEBACK_ENABLED`/`TB_ALARMS_ENABLED`, désactivés par défaut) :
+`POST /api/plugins/telemetry/{entityType}/{entityId}/timeseries/ANY`, `POST /api/alarm`,
+`GET /api/alarm`, `PUT /api/alarm/{alarmId}/ack`, `PUT /api/alarm/{alarmId}/clear`.
+
+> Note : `GET /api/tenants` (sysadmin) n'est pas requis si le compte est un compte tenant ;
+> la découverte se borne à son propre tenant.
+
 ## Exécution distante et rollback
 
 Toute exécution distante nécessite une confirmation séparée du propriétaire de l'environnement et `TRENDX_CONFIRM_APPLY=YES`. Utilisez une clé SSH, l'agent SSH ou une invite interactive, sans passer le mot de passe root en argument, dans `ssh`, `sshpass`, l'historique shell ou les logs. Exemple non destructif:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 import platform
 import sys
 import uuid
@@ -8,7 +9,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from loguru import logger
@@ -75,6 +76,43 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ── Authentification ────────────────────────────────────────────────────
+# Tous les endpoints /api/v1/* exigent un jeton (Bearer ou X-API-Key),
+# vérifié en temps constant. Endpoints publics : infrastructure seulement.
+
+
+PUBLIC_PATHS = {"/", "/health", "/metrics", "/docs", "/redoc", "/openapi.json"}
+
+
+@app.middleware("http")
+async def require_auth_middleware(request: Request, call_next):
+    path = request.url.path
+    if path in PUBLIC_PATHS:
+        return await call_next(request)
+    if path.startswith("/api/v1"):
+        provided: Optional[str] = None
+        authorization = request.headers.get("authorization")
+        x_api_key = request.headers.get("x-api-key")
+        if x_api_key:
+            provided = x_api_key
+        elif authorization and authorization.lower().startswith("bearer "):
+            provided = authorization[7:].strip()
+        if not provided:
+            logger.warning("API auth refusée (jeton absent) : {}", path)
+            return JSONResponse(
+                content={"detail": "Missing authentication credentials"},
+                status_code=401,
+            )
+        expected = settings.trendx_api_token.get_secret_value()
+        if not hmac.compare_digest(provided.encode("utf-8"), expected.encode("utf-8")):
+            logger.warning("API auth refusée (jeton invalide) : {}", path)
+            return JSONResponse(
+                content={"detail": "Invalid authentication token"},
+                status_code=403,
+            )
+    return await call_next(request)
 
 
 # ── Pydantic models ─────────────────────────────────────────────────────

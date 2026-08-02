@@ -42,10 +42,10 @@ ThingsBoard CE   TB PostgreSQL   Trendx
     ┌───────────────────────────────┐
     │     Stack Trendx              │
     │  ┌─────────────────────────┐  │
-    │  │  Reverse Proxy (TLS)    │  │
+    │  │  Reverse Proxy (HTTP)   │  │
     │  │  Port unique : 8443     │  │
-    │  │  Auth obligatoire       │  │
-    │  │  HSTS, pas 80           │  │
+    │  │  127.0.0.1 uniquement   │  │
+    │  │  TLS reporté (voir §12) │  │
     │  └──────────┬──────────────┘  │
     │             │                 │
     │  ┌──────────▼──────────────┐  │
@@ -75,7 +75,7 @@ ThingsBoard CE   TB PostgreSQL   Trendx
 
 | Composant | Rôle | Réseau |
 |---|---|---|
-| reverse-proxy | Nginx/Traefik TLS — seul exposant port 8443 (127.0.0.1 ou IP LAN), auth obligatoire, HSTS | trendx_edge + trendx_internal |
+| reverse-proxy | Nginx HTTP — seul exposant port 8443 (127.0.0.1 uniquement), auth obligatoire ; TLS reporté à une phase ultérieure | trendx_edge + trendx_internal |
 | trendx-api | FastAPI — REST catalogue, analytics, auth | trendx_internal + mobili_dahsboard_default |
 | trendx-worker | APScheduler + planificateur intégré | trendx_internal |
 | PostgreSQL (existant) | Base `trendx` avec schémas `trendx_catalog` + `trendx_analytics` | mobili_dahsboard_default |
@@ -101,7 +101,7 @@ ThingsBoard CE   TB PostgreSQL   Trendx
 - Reverse-proxy : `trendx_edge` + `trendx_internal` SEULEMENT.
 - API et worker : `trendx_internal` + `mobili_dahsboard_default` SEULEMENT.
 - Aucun service Trendx ne publie de port sur `0.0.0.0` directement.
-- Un seul point d'entrée : reverse-proxy Trendx TLS 8443 sur `127.0.0.1` ou IP LAN explicite.
+- Un seul point d'entrée : reverse-proxy Trendx HTTP 8443 sur `127.0.0.1` uniquement.
 - Canal 2 SQL : accès par nom de conteneur PostgreSQL TB sur `mobili_dahsboard-postgres-1:5432` uniquement.
 - B2 : REFUSÉ exposition hôte 5433 et tunnel SSH.
 
@@ -204,8 +204,19 @@ ThingsBoard CE   TB PostgreSQL   Trendx
 ## 12. Accès réseau et ports
 
 - **B6 : AUCUN port ouvert** sur l'hôte pour les services Trendx
-- Un seul point d'entrée : reverse-proxy Trendx TLS 8443 sur `127.0.0.1` ou IP LAN explicite
-- Auth obligatoire, HSTS, aucun port 80
+- Un seul point d'entrée : reverse-proxy Trendx HTTP 8443 sur `127.0.0.1` uniquement
+- Auth obligatoire sur `/api/v1/*` ; aucun port 80
+
+### 12.1 État TLS (constat Phase 2 — corrige la doc initiale)
+
+- Le reverse-proxy sert en **HTTP simple** sur `127.0.0.1:8443` : aucun TLS dans le
+  conteneur nginx, aucun certificat, aucun secret `tls_cert`/`tls_key`.
+- Le chiffrement de bout en bout est **délégué au tunnel SSH** pour tout accès distant :
+  `ssh -L 8443:127.0.0.1:8443 root@10.0.0.1`.
+- **TLS reporté à une phase ultérieure** (certificat auto-signé ou ACME + HSTS).
+- **Règle stricte tant que TLS est absent :** le port 8443 n'est JAMAIS publié ailleurs
+  que sur `127.0.0.1`. Pas d'exposition sur `0.0.0.0`, pas d'IP LAN, pas de NAT, pas de
+  port hôte supplémentaire.
 - Airflow, MLflow, Grafana : exposition interne Docker seulement
 - 8080 est pris par ThingsBoard : UI Trendx sur reverse-proxy interne
 

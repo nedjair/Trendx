@@ -55,9 +55,36 @@ Périodicité : tous les 90 jours, ou immédiatement après tout incident / susp
    et vérifier les journaux (aucune erreur d'authentification).
 6. Rejouer les tests négatifs :
    - `trendx_ro` : INSERT sur `thingsboard` refusé (read-only) ;
-   - `trendx_app` : CREATE TABLE sur `trendx` refusé (permission denied).
+   - `trendx_app` : CREATE TABLE qualifié refusé sur `trendx_catalog`, `trendx_analytics` et `public`.
 7. Vérifier que les attributs des rôles n'ont pas été réinitialisés :
    `SELECT rolname, rolconnlimit, rolcreatedb, rolsuper FROM pg_roles WHERE rolname LIKE 'trendx%';`
    (attendu : `trendx_ro`=5, `trendx_app`=24, `trendx_migration` NOCREATEDB, aucun superutilisateur).
 
 Dernière rotation : 2026-08-02 (rôles `trendx_app`, `trendx_migration`, `trendx_ro`).
+
+## 5. TLS du reverse-proxy (état réel — Phase 2)
+
+- Le reverse-proxy Trendx sert en **HTTP simple** sur `127.0.0.1:8443` (aucun TLS dans
+  le conteneur nginx, aucun certificat, aucun secret `tls_cert`/`tls_key`).
+- Le chiffrement est **délégué au tunnel SSH** pour tout accès distant
+  (`ssh -L 8443:127.0.0.1:8443 root@10.0.0.1`).
+- **TLS reporté à une phase ultérieure** (certificat auto-signé ou ACME + HSTS).
+- **Règle stricte tant que TLS est absent :** le port 8443 n'est JAMAIS publié ailleurs
+  que sur `127.0.0.1`. Pas d'exposition sur `0.0.0.0`, pas d'IP LAN, pas de NAT, pas de
+  port hôte supplémentaire.
+- Ne pas réintroduire `TLS_CERT`/`TLS_KEY`/`tls_cert`/`tls_key` dans le Compose tant que
+  le TLS n'est pas réellement implémenté.
+- L'authentification de l'API (`/api/v1/*`) reste obligatoire et indépendante du TLS :
+  jeton Bearer signé (voir §6).
+
+## 6. Authentification de l'API Trendx
+
+- Tous les endpoints `/api/v1/*` exigent un jeton (`Authorization: Bearer <jeton>`
+  ou `X-API-Key: <jeton>`) vérifié en temps constant (`hmac.compare_digest`).
+- Absence de jeton → HTTP 401 ; jeton invalide → HTTP 403.
+- Endpoints publics pour l'infrastructure uniquement : `/health`, `/metrics`, `/`,
+  `/docs`, `/redoc`, `/openapi.json` (healthchecks Docker et reverse-proxy).
+- Clé : `TRENDX_API_TOKEN` dans `.env` (mode 600, hors dépôt), générée par
+  `openssl rand -hex 32`. Jamais journalisée.
+- Les tokens ThingsBoard (JWT) ne transitent jamais par l'API Trendx publique ;
+  ils restent confinés au worker (Canal 1) et au moteur `tb_readonly` (Canal 2).

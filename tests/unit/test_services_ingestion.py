@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pandas as pd
 import pytest
 
-from trendx.services.ingestion import IngestionService
+from trendx.services.ingestion import DiskCapacityError, IngestionService, check_disk_min_free
 
 
 @pytest.fixture
@@ -133,6 +133,21 @@ def test_build_time_windows(service):
     assert len(windows) >= 2
     for wstart, wend in windows:
         assert wstart < wend
+
+
+@pytest.mark.unit
+def test_disk_min_free_gate(service, monkeypatch):
+    free = check_disk_min_free("/")
+    assert free > 0
+
+    monkeypatch.setattr("trendx.services.ingestion.settings.trendx_disk_min_free_gb", 10**6)
+    with pytest.raises(DiskCapacityError):
+        check_disk_min_free("/")
+    with pytest.raises(DiskCapacityError):
+        service.ensure_disk_available()
+
+    monkeypatch.setattr("trendx.services.ingestion.settings.trendx_disk_min_free_gb", 0)
+    assert service.ensure_disk_available() is None
 
 
 @pytest.mark.unit

@@ -53,14 +53,10 @@ services:
     networks:
       - trendx_internal
       - trendx_edge
-    environment:
-      - TLS_CERT=/run/secrets/tls_cert
-      - TLS_KEY=/run/secrets/tls_key
-    secrets:
-      - tls_cert
-      - tls_key
+    # TLS reporté à une phase ultérieure : HTTP simple sur 127.0.0.1,
+    # chiffrement délégué au tunnel SSH. Aucun certificat embarqué.
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider https://127.0.0.1:8443/healthz || exit 1"]
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:8443/healthz || exit 1"]
       interval: 20s
       timeout: 10s
       retries: 10
@@ -206,11 +202,13 @@ Chaque service déclare `cpus`, `memory`, `pids_limit` et `logging max-size/max-
 ## 5. Ports et conflits
 
 **B6 : AUCUN port ouvert** sur l'hôte pour les services Trendx.  
-Un seul point d'entrée : reverse-proxy Trendx TLS 8443 sur `127.0.0.1` ou IP LAN explicite.
+Un seul point d'entrée : reverse-proxy Trendx HTTP 8443 sur `127.0.0.1` uniquement.
+TLS reporté à une phase ultérieure — tant qu'il est absent, ne jamais publier ce
+port ailleurs que sur `127.0.0.1` (chiffrement délégué au tunnel SSH).
 
 | Service Trendx | Port interne | Port hôte | Conflit ? |
 |---|---|---|---|
-| reverse-proxy (TLS) | 8443 | 127.0.0.1:8443 | Non |
+| reverse-proxy (HTTP) | 8443 | 127.0.0.1:8443 | Non |
 | API | 8000 | interne seulement | N/A |
 | Worker | 8181 | interne seulement | N/A |
 | PostgreSQL Trendx | 5432 | Aucun (interne Docker) | N/A |
@@ -316,7 +314,7 @@ Un seul point d'entrée : reverse-proxy Trendx TLS 8443 sur `127.0.0.1` ou IP LA
 7. `make health` — vérification tous services
 
 **Accès :**
-- UI/API Trendx : `https://127.0.0.1:8443` (reverse-proxy TLS)
+- UI/API Trendx : `http://127.0.0.1:8443` (reverse-proxy HTTP — chiffrement via tunnel SSH, TLS reporté)
 
 **Rollback :**
 ```bash
