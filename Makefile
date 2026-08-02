@@ -204,6 +204,11 @@ doctor: ## Vérifications pre-flight (réseau, ports, ressources, bases, disque)
 	  cre=$$(docker exec mobili_dahsboard-postgres-1 psql -U trendx_app -d trendx -c "CREATE TABLE trendx_catalog.doctor_test (id int);" 2>&1 | grep -c -i 'error\|FATAL'); \
 	  [ "$$cre" -gt 0 ] && echo "OK (CREATE refusé)" || { echo "FAIL — CREATE autorisé avec trendx_app"; fail=$$((fail+1)); }; \
 	echo "│"; \
+	echo -n "│  Partitions trendx_analytics à +3 mois ? : "; \
+	  cov=$$(docker exec mobili_dahsboard-postgres-1 psql -U postgres -d trendx -tAc "SELECT trendx_analytics.partition_coverage(3);" 2>/dev/null | tr -d '\n'); \
+	  miss=$$(printf '%s' "$$cov" | grep -o '"missing":[^,]*' | cut -d: -f2 | tr -d ' '); \
+	  [ "$$miss" = "0" ] && echo "OK ($$cov)" || { echo "FAIL — partitions manquantes (< 3 mois): $$cov"; fail=$$((fail+1)); }; \
+	echo "│"; \
 	for svc in reverse-proxy api worker; do \
 	  echo -n "│  Ressources $$svc (cpus/mem/pids/logs) ? : "; \
 	    conf=$$($(DC) config 2>/dev/null); \

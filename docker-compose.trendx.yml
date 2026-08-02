@@ -51,7 +51,6 @@ services:
       PYTHONPATH: "/app/src:/app:$PYTHONPATH"
       PYTHONUNBUFFERED: "1"
       PYTHONDONTWRITEBYTECODE: "1"
-      TRENDX_JWT_SIGNING_KEY: "${TRENDX_JWT_SIGNING_KEY}"
       PG_ADMIN_HOST: mobili_dahsboard-postgres-1
     networks:
       - trendx_internal

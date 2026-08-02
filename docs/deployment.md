@@ -263,7 +263,7 @@ Un seul point d'entrée : reverse-proxy Trendx TLS 8443 sur `127.0.0.1` ou IP LA
 
 **B5 — TimescaleDB REFUSÉ :**
 - Aucune extension installée dans PostgreSQL production
-- Utiliser partitionnement déclaratif par temps + index BRIN + tables d'agrégats matérialisés
+- Utiliser partitionnement déclaratif par temps + index BRIN + tables d'agrégats alimentées par UPSERT incrémental
 - Réexamen sur benchmark chiffré uniquement
 
 **Rétention Phase 2 :**
@@ -279,12 +279,19 @@ Un seul point d'entrée : reverse-proxy Trendx TLS 8443 sur `127.0.0.1` ou IP LA
 - Échec explicite si partition manquante
 - DROP PARTITION pour purge
 
-**Agrégats matérialisés (Q3 — VALIDÉ avec correction) :**
+**Tables d'agrégats (Q3 — VALIDÉ avec correction, UPSERT incrémental) :**
 - Horaire : toutes les 15 min sur les 3 dernières heures, UPSERT sur plage recalculée
 - Jour : toutes les heures sur les 2 derniers jours, UPSERT
 - Semaine/mois : 1x/jour hors pointe, UPSERT
-- Watermark par agrégat
-- JAMAIS `REFRESH MATERIALIZED VIEW`
+- Watermark par agrégat (`trendx_analytics.aggregate_watermarks`)
+- JAMAIS `REFRESH MATERIALIZED VIEW` (verrouille l'instance PostgreSQL partagée avec ThingsBoard)
+- Job APScheduler : `aggregate_hourly` (IntervalTrigger 15 min), `aggregate_daily` (1 h), `aggregate_weekly` (cron 02:30 UTC)
+- Fonctions : `trendx_analytics.refresh_aggregate('hourly|daily|weekly')`, propriétaire `trendx_migration`
+
+**Partitionnement — automatisation APScheduler :**
+- Job `partitions_monthly` (cron 1er du mois 00:15 UTC) + `partitions_boot_check` au démarrage du worker
+- Fonction `trendx_analytics.ensure_partitions_forward(3)` (SECURITY DEFINER, exécutable par `trendx_app`)
+- Contrôle : `trendx_analytics.partition_coverage(3)` — `make doctor` échoue si moins de 3 mois de partitions
 
 ---
 
@@ -345,6 +352,17 @@ make down-clean    # ⚠ nécessite TRENDX_CONFIRM_APPLY=YES, détruit volumes
 - Sauvegarde : la sauvegarde de `trendx` inclut le volume PostgreSQL partagé
 
 **Protection :** Arrêt automatique ingestion sous `TRENDX_DISK_MIN_FREE_GB` + alerte < 100 GB.
+
+---
+
+## 12bis. Sauvegardes
+
+- Cible : base `trendx` uniquement (jamais `thingsboard` — lecture seule)
+- Convention : `/opt/trendx/data/backups/YYYYMMDD/trendx.dump.gz`
+  (`pg_dump -Fc --no-owner --clean` pipé dans `gzip -9`, cible `make backup`)
+- Droits : `chmod 700 /opt/trendx/data/backups` et tout son contenu
+- Vérification : `make restore-check` (intégrité gzip + restauration de test)
+- Le fichier plat hérité `trendx_2026-08-02.dump` (non compressé, à la racine) est obsolète : archivé dans `backups/archive/`
 
 ---
 

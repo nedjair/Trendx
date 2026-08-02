@@ -10,9 +10,26 @@ from sqlalchemy.orm import Session, sessionmaker
 from trendx.config import settings
 
 
+# Budget connexions trendx_app (AGENTS §2, rôle CONNECTION LIMIT 24) :
+#   2 moteurs (catalog + analytics) x (pool 2 + overflow 1) = 6 connexions max
+#   par processus ; API (2 workers) = 12, worker = 6, total = 18 <= 24.
+DEFAULT_POOL_SIZE = 2
+DEFAULT_MAX_OVERFLOW = 1
+
+
 class EngineWrapper:
-    def __init__(self, name: str, dsn: str, pool_size: int = 5, max_overflow: int = 10) -> None:
+    def __init__(
+        self,
+        name: str,
+        dsn: str,
+        pool_size: int = DEFAULT_POOL_SIZE,
+        max_overflow: int = DEFAULT_MAX_OVERFLOW,
+        search_path: str | None = None,
+    ) -> None:
         self.name = name
+        connect_args: dict = {"connect_timeout": 10}
+        if search_path:
+            connect_args["options"] = "-c search_path=" + search_path
         self.engine = create_engine(
             dsn,
             pool_size=pool_size,
@@ -20,9 +37,15 @@ class EngineWrapper:
             pool_pre_ping=True,
             pool_recycle=3600,
             echo=False,
-            connect_args={"connect_timeout": 10},
+            connect_args=connect_args,
         )
-        logger.debug("Engine '{}' created (pool={}, overflow={})", name, pool_size, max_overflow)
+        logger.debug(
+            "Engine '{}' created (pool={}, overflow={}, search_path={})",
+            name,
+            pool_size,
+            max_overflow,
+            search_path,
+        )
 
     def dispose(self) -> None:
         self.engine.dispose()
@@ -34,11 +57,20 @@ class DatabaseManager:
         self._engines: dict[str, EngineWrapper] = {}
         self._sessionmakers: dict[str, sessionmaker[Session]] = {}
 
-    def register(self, name: str, dsn: str, pool_size: int = 5, max_overflow: int = 10) -> None:
+    def register(
+        self,
+        name: str,
+        dsn: str,
+        pool_size: int = DEFAULT_POOL_SIZE,
+        max_overflow: int = DEFAULT_MAX_OVERFLOW,
+        search_path: str | None = None,
+    ) -> None:
         if name in self._engines:
             logger.warning("Engine '{}' already registered, skipping", name)
             return
-        wrapper = EngineWrapper(name, dsn, pool_size=pool_size, max_overflow=max_overflow)
+        wrapper = EngineWrapper(
+            name, dsn, pool_size=pool_size, max_overflow=max_overflow, search_path=search_path
+        )
         self._engines[name] = wrapper
         self._sessionmakers[name] = sessionmaker(bind=wrapper.engine, expire_on_commit=False)
         logger.info("Registered engine '{}'", name)
@@ -105,8 +137,10 @@ manager = DatabaseManager()
 
 
 def _register_default_engines() -> None:
-    manager.register("catalog", settings.catalog_dsn_app())
-    manager.register("analytics", settings.analytics_dsn_app())
+    manager.register("catalog", settings.catalog_dsn_app(), search_path="trendx_catalog,public")
+    manager.register(
+        "analytics", settings.analytics_dsn_app(), search_path="trendx_analytics,public"
+    )
 
     logger.info("Default engines registered (catalog, analytics)")
 

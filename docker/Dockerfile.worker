@@ -54,7 +54,8 @@ RUN /opt/venv/bin/python -m pip install --no-cache-dir -c /app/constraints.txt \
         orjson==3.10.1 \
         pydantic==2.6.4 \
         pydantic-settings==2.2.1 \
-        python-dotenv==1.0.1
+        python-dotenv==1.0.1 \
+        APScheduler==3.10.4
 
 # ——— Installer le package trendx SANS celery/redis (worker APScheduler process) ———
 RUN /opt/venv/bin/python -m pip install --no-cache-dir --no-deps -c /app/constraints.txt -e . \
@@ -85,4 +86,4 @@ ENV SERVER_PORT=8181 \
 EXPOSE 8181
 
 ENTRYPOINT ["/usr/bin/dumb-init", "--"]
-CMD ["python3", "-m", "trendx.worker"]
+CMD ["python3", "-m", "trendx.services.worker"]

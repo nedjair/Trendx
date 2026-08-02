@@ -22,6 +22,9 @@ kombu==5.3.5
 billiard==4.2.0
 vine==5.1.0
 
+# Planification (worker APScheduler — partitions mensuelles + agrégats)
+APScheduler==3.10.4
+
 # Validation & Config
 pydantic==2.6.4
 pydantic-settings==2.2.1

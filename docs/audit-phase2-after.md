@@ -2,7 +2,7 @@
 
 **Date :** 2026-08-02  
 **Opérateur :** Kilo  
-**Séquence :** Étape 12 — snapshot après modifications
+**Séquence :** Étape 12 — snapshot après modifications (+ correctifs post-refus de tag)
 
 ---
 
@@ -10,49 +10,75 @@
 
 ```
 Sys. de fichiers Taille Utilisé Dispo Uti% Monté sur
-/dev/sdb2          1,1T    681G  362G  66% /
+/dev/sdb2          1,1T    682G  361G  66% /
 ```
 
-**Espace libre :** 362 GB  
+**Espace libre :** 361 GB  
 **Seuil minimal (TRENDX_DISK_MIN_FREE_GB) :** 50 GB  
-**Marge :** 312 GB  
+**Marge :** 311 GB  
 **Consommation Trendx :** ~14 GB (images + containers + données)
 
 ---
 
 ## 2. Conteneurs Docker (après)
 
-| Conteneur | Image | État | Santé | Créé le |
-|---|---|---|---|---|
-| trendx_reverse_proxy | trendx/reverse-proxy:latest | running | healthy | 2026-08-02 13:45:14 |
-| trendx_api | trendx/api:latest | running | healthy | 2026-08-02 14:00:10 |
-| trendx_worker | trendx/worker:latest | running | healthy | 2026-08-02 14:17:28 |
-| thingsboard_thingsboard-ce_1 | thingsboard/tb-node:4.3.1.1-mobilis | running | — | 2026-06-15 16:27:16 |
-| mobili_dahsboard-postgres-1 | postgres:16 | running | healthy | 2026-06-01 12:05:40 |
+| Conteneur | Image | État | Santé | Créé le (UTC) | StartedAt (UTC) | RestartCount |
+|---|---|---|---|---|---|---|
+| trendx_reverse_proxy | trendx/reverse-proxy:latest | running | healthy | 2026-08-02 13:51:38 | 2026-08-02 13:51:38 | 0 |
+| trendx_api | trendx/api:latest | running | healthy | 2026-08-02 15:05:09 | 2026-08-02 15:05:10 | 0 |
+| trendx_worker | trendx/worker:latest | running | healthy | 2026-08-02 15:05:09 | 2026-08-02 15:05:22 | 0 |
+| thingsboard_thingsboard-ce_1 | thingsboard/tb-node:4.3.1.1-mobilis | running | — | 2026-06-15 15:27:16 | 2026-08-02 07:47:09 | 1 |
+| mobili_dahsboard-postgres-1 | postgres:16 | running | healthy | 2026-06-01 11:05:40 | 2026-08-02 07:43:09 | 0 |
 
 **Conteneurs Trendx :** 3 (reverse-proxy, api, worker)
 
 ---
 
-## 3. Base de données ThingsBoard (après)
+## 3. Bases de données (après)
 
-| Base | Propriétaire | Tables |
+| Base | Propriétaire | Contenu |
 |---|---|---|
-| thingsboard | postgres | Tables ThingsBoard CE |
-| trendx | postgres | 58 tables Trendz |
-| trendx_airflow | trendx_airflow | (existe, hors périmètre) |
-| trendx_analytics | trendx_migration | (existe, hors périmètre) |
-| trendx_mlflow | trendx_mlflow | (existe, hors périmètre) |
+| thingsboard | postgres | Tables ThingsBoard CE (lecture seule Trendx) |
+| trendx | postgres | Schémas `public` (schéma Trendz natif), `trendx_catalog`, `trendx_analytics` |
+| postgres / template0 / template1 | postgres | Système |
+| test_gexec3 | postgres | Reliquat vide (0 table, 7,4 MB) — **à confirmer suppression** |
+
+**Bases supprimées :** `trendx_airflow`, `trendx_mlflow` (hors périmètre Phase 2, correctif M4)
 
 **Rôles PostgreSQL :**
 - postgres (superuser)
-- trendx_ro (nouveau, read-only, CONNECTION LIMIT 5)
-- trendx_app (lecture/écriture trendx)
-- trendx_migration (migrations)
-- trendx_airflow, trendx_mlflow (hors périmètre)
+- trendx_ro : read-only sur `thingsboard`, CONNECTION LIMIT 5
+- trendx_app : DML sur `trendx`, CONNECTION LIMIT **24**
+- trendx_migration : DDL/migrations, `NOCREATEDB` (correctif M5)
 
-**max_connections :** 100  
-**Connexions actives :** 22 (inchangé)
+**Rôles supprimés :** `trendx_airflow`, `trendx_mlflow` (correctif M4)
+
+**max_connections :** 100
+
+---
+
+## 3bis. Stockage analytique (correctifs bloquants 1 et 3)
+
+**Partitionnement mensuel (+3 mois) :**
+- Tables partitionnées : `ts_kv`, `predictions`, `anomaly_scores`, `data_quality`, `ml_metrics`
+- Aucune partition DEFAULT
+- Dernière partition créée : `*_2026_11` (borne max 2026-12-01) → couverture garantie à +3 mois
+- `trendx_analytics.ensure_partitions_forward(3)` (SECURITY DEFINER) : création mensuelle automatisée (APScheduler)
+- `trendx_analytics.partition_coverage(3)` : `{"missing": 0, ...}` — contrôle échouant dans `make doctor`
+
+**Tables d'agrégats (remplacement des vues matérialisées) :**
+- `ts_kv_hourly`, `ts_kv_daily`, `ts_kv_weekly` : tables réelles (UPSERT incrémental)
+- `aggregate_watermarks` : filigrane par agrégat (watermark, début/fin, lignes)
+- `trendx_analytics.refresh_aggregate('hourly|daily|weekly')` : fenêtres 3 h / 2 j / 7 j
+- Jobs APScheduler : `aggregate_hourly` (15 min), `aggregate_daily` (1 h), `aggregate_weekly` (cron 02:30 UTC)
+- Propriétaire : `trendx_migration` ; `GRANT` DML à `trendx_app`
+- **Aucun `REFRESH MATERIALIZED VIEW`** (verrouillage de l'instance PostgreSQL partagée avec ThingsBoard)
+
+**Budget connexions `trendx_app` (correctif bloquant 2) :**
+- Pools SQLAlchemy : `pool_size=2`, `max_overflow=1` par moteur
+- 2 moteurs (catalog + analytics) × 3 = 6 connexions max / processus
+- API = 2 workers uvicorn (PID vérifiés) → 12 max ; worker = 1 processus → 6 max
+- **Total réel maximal : 18 ≤ LIMIT 24 (marge 6)**
 
 ---
 
@@ -74,14 +100,57 @@ Sys. de fichiers Taille Utilisé Dispo Uti% Monté sur
 
 ---
 
-## 6. Points d'attention
+## 6. Migrations tracées
 
-1. Base `trendx` créée avec 58 tables (schéma Trendz)
-2. Rôle `trendx_ro` créé avec CONNECTION LIMIT 5, read-only
-3. Images Trendx construites : ~6 GB total
-4. Worker fonctionne en mode APScheduler process, sans broker
-5. Espace disque suffisant (362 GB libres)
-6. ThingsBoard non impacté (conteneurs et base inchangés)
+| Migration | Appliquée le (UTC) | Statut |
+|---|---|---|
+| 001_trendz_native_schema.sql | 2026-08-02 13:50:42 | OK |
+| 003_schema_alignment.sql | 2026-08-02 13:50:42 | OK |
+| 004_aggregates_partitions.sql | 2026-08-02 14:35:29 | OK |
+
+---
+
+## 6bis. Rotation des secrets PostgreSQL (correctif BLOQUANT credentials)
+
+**Constat (2026-08-02) :** `.env` et `.secrets/service-accounts.env` ne contenaient
+que des placeholders (`CHANGE_ME`) ; les mots de passe réels des rôles étaient
+introuvables (le vault ne correspondait pas à PostgreSQL — `pg_hba` n'autorise que
+`127.0.0.1` en `trust`, le test local était donc faussement positif).
+
+**Correctif approuvé par l'utilisateur** (rotation complète, périmètre strict
+`trendx_app` / `trendx_migration` / `trendx_ro`) :
+- Génération `openssl rand -base64 32` (secret distinct par rôle) ;
+- Application via `psql \password <role>` (stdin, aucun secret en clair sur la ligne
+  de commande, `HISTFILE=/dev/null`) ;
+- Persistance dans `.secrets/service-accounts.env` (dir 700, fichier 600) et
+  `.env` (repo + /opt/trendx, 600) ; `TB_DB_READONLY_USER/PASSWORD` désormais renseignés ;
+- Aucun secret dans `docker-compose.trendx.yml` (le `TRENDX_JWT_SIGNING_KEY` du bloc
+  `environment:` a été retiré, fourni désormais uniquement via `env_file`) ;
+- Rôle `postgres` et rôles ThingsBoard **non touchés**.
+
+**Vérifications :** authentification réseau OK pour les 3 rôles ; attributs inchangés
+(`trendx_ro` LIMIT 5, `trendx_app` LIMIT 24, `trendx_migration` NOCREATEDB, aucun
+superuser) ; tests négatifs rejoués (INSERT `trendx_ro` refusé, CREATE TABLE
+`trendx_app` refusé) ; conteneurs TB/PG (StartedAt/RestartCount) inchangés ; aucune
+erreur d'authentification dans les logs api/worker.
+
+**Risque accepté consigné :** `pg_hba` `trust` sur 127.0.0.1 = `docker exec` équivaut
+à un accès superutilisateur sans mot de passe. Non corrigé (imposerait de recharger la
+config du conteneur PostgreSQL ThingsBoard). Mesures compensatoires dans
+`docs/security.md` (§3) : restriction d'accès hôte/démon Docker + journalisation.
+
+## 6ter. Correctif search_path des moteurs SQLAlchemy
+
+**Constat :** les tables catalogue sont dans le schéma `trendx_catalog` (58 tables,
+dont `business_entity`) et les tables analytiques dans `trendx_analytics` ; les
+moteurs SQLAlchemy n'appliquaient pas de `search_path`, d'où
+`relation "business_entity" does not exist` (HTTP 500 sur `/api/v1/catalog/devices`).
+
+**Correctif :** `src/trendx/database/connection.py` — `search_path` par moteur
+(`catalog` → `trendx_catalog,public`, `analytics` → `trendx_analytics,public`) via
+`connect_args["options"]="-c search_path=..."`. Pool inchangé (2/1).
+
+**Vérification :** `GET /api/v1/catalog/devices` → HTTP 200 `{"data":[],"total":0,...}`.
 
 ---
 
@@ -93,12 +162,15 @@ Sys. de fichiers Taille Utilisé Dispo Uti% Monté sur
 │  Réseau mobili_dahsboard_default existe ? : OK
 │  Port publié (seul 127.0.0.1:8443 autorisé) ? : OK
 │  trendx_ro ne peut pas INSERT dans thingsboard ? : OK (INSERT refusé)
+│  trendx_app ne peut pas CREATE TABLE dans trendx_catalog ? : OK (CREATE refusé)
+│  Partitions trendx_analytics à +3 mois ? : OK ({"missing": 0, "target_bound": "2026-12-01T00:00:00+00:00"})
 │  Ressources reverse-proxy/api/worker : OK
+│  Pas de mélange pools TB/trendx dans .env ? : OK
 │  Espace libre / >= 50 GB ? : OK (361 GB)
 │  Espace libre /var/lib/docker >= 50 GB ? : OK (361 GB)
 ```
 
-**Tous les contrôles sont verts.**
+**Tous les contrôles sont verts** (exécution `make doctor` du 2026-08-02 16:03).
 
 ---
 
@@ -106,22 +178,52 @@ Sys. de fichiers Taille Utilisé Dispo Uti% Monté sur
 
 | Métrique | Avant | Après | Δ |
 |---|---|---|---|
-| Espace libre /dev/sdb2 | 376 GB | 362 GB | -14 GB |
+| Espace libre /dev/sdb2 | 376 GB | 361 GB | -15 GB |
 | Conteneurs Trendx | 0 | 3 | +3 |
-| Images Docker Trendx | 0 | 3 | +3 |
-| Bases Trendx | 1 (déjà existante) | 1 | 0 |
-| Rôles trendx_* | 4 | 5 | +1 (trendx_ro) |
+| Bases Trendx | 1 (déjà existante) + airflow + mlflow | 1 | -2 (airflow, mlflow) |
+| Rôles trendx_* | 4 | 3 | -1 |
 | Connexions PG actives | 22 | 22 | 0 |
-| Conteneurs TB/PG | Inchangés | Inchangés | 0 |
+| Conteneurs TB/PG | Inchangés | Inchangés (StartedAt 07:43/07:47, RestartCount TB=1) | 0 |
 
 ---
 
 ## 9. Conclusion
 
-Phase 2 infrastructure déployée avec succès.  
-Tous les contrôles sont verts.  
-ThingsBoard non impacté.  
-Prêt pour Phase 3 (ingestion, entraînement, prévision).
+Phase 2 infrastructure déployée avec succès. Tous les correctifs bloquants appliqués :
+partitions +3 mois automatisées, agrégats en tables à UPSERT (sans vue matérialisée),
+budget connexions `trendx_app` = 18 ≤ 24, rôles hors périmètre supprimés,
+`trendx_migration NOCREATEDB`, `schema_version` propriété `trendx_migration`,
+sauvegarde au format canonique `YYYYMMDD/trendx.dump.gz` + `chmod 700`,
+rotation des secrets PostgreSQL (vault + `.env` réalignés, `\password` sans clair),
+correctif `search_path` des moteurs (catalogue opérationnel). Prêt pour Phase 3
+(ingestion, entraînement, prévision).
+
+---
+
+## 10. Incident infrastructure — signalé à l'exploitant
+
+**Redémarrage de l'hôte (et du démon Docker) le 2026-08-02 à 07:42 UTC**,
+plus de 6 heures avant la création des conteneurs Trendx (13:51 UTC).
+
+Preuves :
+```text
+$ uptime
+ 15:43:43 up  7:01, ...
+$ last reboot
+ reboot   system boot  7.0.0-28-generic Sun Aug  2 08:42   still running
+$ journalctl -u docker --since "2026-08-02 07:00" --until "2026-08-02 09:00"
+ août 02 08:42:47 iotserver systemd[1]: Starting docker.service - Docker Application Container Engine...
+ août 02 08:43:05 iotserver dockerd: Restoring containers: start.
+ août 02 08:43:11 iotserver dockerd: Loading containers: done.
+```
+
+Chronologie (UTC) : boot hôte 07:42:47 → dockerd restaure 07:43:05–07:43:11 →
+PG/Kafka/Zookeeper/adminer redémarrés 07:43:09 → ThingsBoard-ce 07:47:09 (`RestartCount=1`) →
+premiers conteneurs Trendx 13:51:38.
+
+Le `RestartCount=1` du conteneur ThingsBoard est donc **antérieur** à toute activité
+Trendx et s'explique par le redémarrage de l'hôte. Aucun impact attribuable à Trendx.
+**Action requise :** signaler l'incident à ops@mobilis.dz.
 
 ---
 

@@ -1,86 +1,59 @@
-# ========================================
-# Dépendances
-# ========================================
-node_modules/
-bower_components/
-vendor/
-
-# ========================================
-# Environnement
-# ========================================
+# Secrets
 .env
-.env.local
-.env.*.local
-config/development.env
-config/staging.env
-config/production.env
+.env.*
+!.env.example
+!*.env.example
+secrets/
+.secrets/
+*.token
+*.pem
+*.key
 
-# ========================================
-# Logs
-# ========================================
-logs/
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-
-# ========================================
-# Runtime data
-# ========================================
-pids/
-*.pid
-*.seed
-*.pid.lock
-
-# ========================================
-# Build outputs
-# ========================================
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
 dist/
 build/
-out/
-.next/
-.nuxt/
-.output/
+*.egg-info/
 
-# ========================================
-# Cache
-# ========================================
-.cache/
-.parcel-cache/
-.turbo/
-.eslintcache
-.stylelintcache
+# Modèles et artefacts
+ml_models/
+mlruns/
+artifacts/
+*.pkl
+*.joblib
 
-# ========================================
-# Testing
-# ========================================
-coverage/
-*.lcov
-.nyc_output/
+# Données
+data/
+*.csv
+*.parquet
+*.db
+*.sqlite
 
-# ========================================
-# Editors & IDE
-# ========================================
-.vscode/*
-!.vscode/extensions.json
+# Airflow
+airflow.db
+airflow.cfg
+logs/
+
+# IDE et système
+.vscode/
 .idea/
-*.swp
-*.swo
-*~
-
-# ========================================
-# Système
-# ========================================
 .DS_Store
-Thumbs.db
-ehthumbs.db
-Desktop.ini
 
-# ========================================
-# Temporary files
-# ========================================
-*.tmp
-*.temp
-tmp/
-temp/
+# Sauvegardes
+backups/
+*.dump
+*.sql.gz
+*.sql
+!docs/proposed-schema.sql
+
+# Compose legacy
+docker-compose.yml
+
+# Runtime hors dépôt
+/opt/trendx/

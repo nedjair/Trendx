@@ -5,6 +5,7 @@ import socket
 import sys
 import threading
 import time
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
@@ -88,6 +89,106 @@ def task_forecast_dryrun(device_id: str, metric_name: str, horizon: int = 24) ->
     }
 
 
+# ————————————————————————————————————————————————
+# Maintenance planifiée : partitions mensuelles + agrégats (UPSERT incrémental)
+# ————————————————————————————————————————————————
+try:
+    from apscheduler.schedulers.background import BackgroundScheduler
+    from apscheduler.triggers.cron import CronTrigger
+    from apscheduler.triggers.interval import IntervalTrigger
+
+    HAS_APSCHEDULER = True
+except ImportError:  # pragma: no cover - dépendance ajoutée au Dockerfile.worker
+    HAS_APSCHEDULER = False
+    logger.error("APScheduler non installé — maintenance partitions/agrégats DÉSACTIVÉE")
+
+if HAS_APSCHEDULER:
+    from sqlalchemy import text
+
+    from trendx.database.connection import get_analytics_engine
+
+    def _call_db_function(sql: str, params: dict[str, Any]) -> Any:
+        engine = get_analytics_engine()
+        with engine.connect() as conn:
+            return conn.execute(text(sql), params).scalar_one()
+
+    def _job_partitions() -> None:
+        try:
+            result = _call_db_function(
+                "SELECT trendx_analytics.ensure_partitions_forward(:months)", {"months": 3}
+            )
+            logger.info(f"[scheduler] ensure_partitions_forward(3) -> {result}")
+        except Exception as exc:  # noqa: BLE001
+            logger.error(f"[scheduler] ensure_partitions_forward(3) échec: {exc}")
+
+    def _job_aggregate(agg: str) -> None:
+        try:
+            result = _call_db_function(
+                "SELECT trendx_analytics.refresh_aggregate(:agg)", {"agg": agg}
+            )
+            logger.info(f"[scheduler] refresh_aggregate('{agg}') -> {result}")
+        except Exception as exc:  # noqa: BLE001
+            logger.error(f"[scheduler] refresh_aggregate('{agg}') échec: {exc}")
+
+    def _start_scheduler() -> BackgroundScheduler:
+        sched = BackgroundScheduler(timezone=settings.trendx_timezone)
+        sched.add_job(
+            _job_partitions,
+            CronTrigger(day="1", hour=0, minute=15),
+            id="partitions_monthly",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=3600,
+        )
+        sched.add_job(
+            _job_aggregate,
+            IntervalTrigger(minutes=15),
+            args=["hourly"],
+            id="aggregate_hourly",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=600,
+        )
+        sched.add_job(
+            _job_aggregate,
+            IntervalTrigger(hours=1),
+            args=["daily"],
+            id="aggregate_daily",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=3600,
+        )
+        sched.add_job(
+            _job_aggregate,
+            CronTrigger(hour=2, minute=30),
+            args=["weekly"],
+            id="aggregate_weekly",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=3600,
+        )
+        # Vérification d'amorçage : contrôle immédiat de la couverture partitions
+        sched.add_job(
+            _job_partitions,
+            "date",
+            run_date=datetime.now(timezone.utc) + timedelta(seconds=10),
+            id="partitions_boot_check",
+            max_instances=1,
+            coalesce=True,
+        )
+        sched.start()
+        logger.info(
+            "trendx-worker APScheduler démarré (jobs: partitions_monthly, aggregate_hourly,"
+            " aggregate_daily, aggregate_weekly, partitions_boot_check)"
+        )
+        return sched
+
+
+_scheduler = None
+if HAS_APSCHEDULER:
+    _scheduler = _start_scheduler()
+
+
 logger.info(
     "trendx-worker initialized (APScheduler process, no broker). port={port}, engine={engine}",
     port=EXECUTOR_PORT,
@@ -98,4 +199,6 @@ try:
     while True:
         time.sleep(3600)
 except KeyboardInterrupt:
+    if _scheduler is not None:
+        _scheduler.shutdown(wait=False)
     logger.info("trendx-worker stopped by signal")
