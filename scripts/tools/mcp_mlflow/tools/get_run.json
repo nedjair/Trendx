@@ -1,0 +1,18 @@
+{
+  "name": "get_run",
+  "description": "Récupérer les métadonnées et données d'un run MLflow",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "run_id": {
+        "type": "string",
+        "description": "Identifiant unique du run MLflow"
+      },
+      "run_uuid": {
+        "type": "string",
+        "description": "UUID du run (alternative à run_id)"
+      }
+    },
+    "required": ["run_id"]
+  }
+}

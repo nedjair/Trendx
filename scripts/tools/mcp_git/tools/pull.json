@@ -1,0 +1,28 @@
+{
+  "name": "pull",
+  "description": "Récupérer et fusionner les changements depuis un dépôt distant",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "Chemin vers le dépôt Git"
+      },
+      "remote": {
+        "type": "string",
+        "description": "Nom du dépôt distant",
+        "default": "origin"
+      },
+      "branch": {
+        "type": "string",
+        "description": "Branche à récupérer (branche courante par défaut)"
+      },
+      "rebase": {
+        "type": "boolean",
+        "description": "Utiliser rebase au lieu de merge",
+        "default": false
+      }
+    },
+    "required": []
+  }
+}

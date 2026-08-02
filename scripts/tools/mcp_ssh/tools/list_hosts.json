@@ -1,0 +1,14 @@
+{
+  "name": "list_hosts",
+  "description": "Lister tous les hôtes SSH configurés",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "group": {
+        "type": "string",
+        "description": "Filtrer par groupe d'hôtes (optionnel)"
+      }
+    },
+    "required": []
+  }
+}

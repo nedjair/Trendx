@@ -1,0 +1,28 @@
+{
+  "name": "rules",
+  "description": "Lister les règles d'enregistrement et d'alerte Prometheus",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "type": {
+        "type": "string",
+        "default": "all",
+        "enum": ["all", "alert", "record"],
+        "description": "Filtrer par type de règles"
+      },
+      "rule_name": {
+        "type": "string",
+        "description": "Filtrer par nom de règle (substring)"
+      },
+      "file": {
+        "type": "string",
+        "description": "Filtrer par nom de fichier de règles"
+      },
+      "prometheus_url": {
+        "type": "string",
+        "default": "http://localhost:9090"
+      }
+    },
+    "required": []
+  }
+}

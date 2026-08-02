@@ -1,0 +1,40 @@
+{
+  "name": "create_alarm",
+  "description": "Créer une nouvelle alarme sur une entité ThingsBoard",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "type": {
+        "type": "string",
+        "description": "Type d'alarme (ex: highTemperature)"
+      },
+      "originator_type": {
+        "type": "string",
+        "default": "DEVICE",
+        "enum": ["DEVICE", "ASSET", "CUSTOMER", "TENANT"]
+      },
+      "originator_id": {
+        "type": "string",
+        "description": "ID UUID de l'entité origine"
+      },
+      "severity": {
+        "type": "string",
+        "default": "WARNING",
+        "enum": ["CRITICAL", "MAJOR", "MINOR", "WARNING", "INDETERMINATE"]
+      },
+      "name": {
+        "type": "string",
+        "description": "Nom/titre de l'alarme"
+      },
+      "details": {
+        "type": "object",
+        "description": "Détails additionnels"
+      },
+      "token": {
+        "type": "string",
+        "description": "Token JWT"
+      }
+    },
+    "required": ["type", "originator_id", "name", "token"]
+  }
+}

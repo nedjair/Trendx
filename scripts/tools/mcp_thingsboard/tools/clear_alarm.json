@@ -1,0 +1,27 @@
+{
+  "name": "clear_alarm",
+  "description": "Clore (clear) une alarme existante sur ThingsBoard",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "alarm_id": {
+        "type": "string",
+        "description": "ID UUID de l'alarme"
+      },
+      "propagate": {
+        "type": "boolean",
+        "default": true,
+        "description": "Propager le clear aux entités parentes"
+      },
+      "clear_details": {
+        "type": "object",
+        "description": "Détails de la résolution"
+      },
+      "token": {
+        "type": "string",
+        "description": "Token JWT"
+      }
+    },
+    "required": ["alarm_id", "token"]
+  }
+}

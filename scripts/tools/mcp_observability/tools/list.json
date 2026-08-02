@@ -1,0 +1,37 @@
+{
+  "name": "list",
+  "description": "Lister les alertes actuellement actives dans Prometheus Alertmanager",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "filter": {
+        "type": "string",
+        "description": "Filtre de correspondance (ex: severity=critical)"
+      },
+      "receiver": {
+        "type": "string",
+        "description": "Filtrer par receiver configuré"
+      },
+      "silenced": {
+        "type": "boolean",
+        "default": false,
+        "description": "Inclure les alertes silencées"
+      },
+      "inhibited": {
+        "type": "boolean",
+        "default": false,
+        "description": "Inclure les alertes inhibées"
+      },
+      "active": {
+        "type": "boolean",
+        "default": true,
+        "description": "Inclure les alertes actives"
+      },
+      "alertmanager_url": {
+        "type": "string",
+        "default": "http://localhost:9093"
+      }
+    },
+    "required": []
+  }
+}

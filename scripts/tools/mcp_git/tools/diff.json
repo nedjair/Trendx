@@ -1,0 +1,28 @@
+{
+  "name": "diff",
+  "description": "Afficher les différences entre commits, branche ou l'index",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "Chemin vers le dépôt Git"
+      },
+      "target": {
+        "type": "string",
+        "description": "Cible du diff (fichier, commit, branche). Par défaut: différence avec l'index"
+      },
+      "staged": {
+        "type": "boolean",
+        "description": "Comparer l'index avec le dernier commit",
+        "default": false
+      },
+      "context_lines": {
+        "type": "integer",
+        "description": "Nombre de lignes de contexte",
+        "default": 3
+      }
+    },
+    "required": []
+  }
+}

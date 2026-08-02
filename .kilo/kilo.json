@@ -1,0 +1,70 @@
+{
+  "$schema": "https://app.kilo.ai/config.json",
+  "skills": {
+    "paths": [
+      "./skills"
+    ]
+  },
+  "permission": {
+    "bash": "allow",
+    "edit": "allow",
+    "context7_*": "allow",
+    "sequentialthinking_*": "allow"
+  },
+  "mcp": {
+    "sequentialthinking": {
+      "type": "local",
+      "command": [
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-sequential-thinking"
+      ],
+      "enabled": true,
+      "timeout": 10000
+    },
+    "context7": {
+      "type": "local",
+      "command": [
+        "node",
+        "/root/Trendx/.kilo/mcp-bin/node_modules/@upstash/context7-mcp/dist/index.js"
+      ],
+      "environment": {
+        "DEFAULT_MINIMUM_TOKENS": "{{DEFAULT_MINIMUM_TOKENS}}"
+      }
+    },
+    "filesystem": {
+      "type": "local",
+      "command": [
+        "npx",
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "/root/Trendx/docs"
+      ]
+    },
+    "thingsboard": {
+      "type": "local",
+      "command": [
+        "bash",
+        "/root/Trendx/scripts/mcp-thingsboard.sh"
+      ],
+      "enabled": true,
+      "timeout": 30000
+    },
+    "ai-vision": {
+      "type": "local",
+      "command": [
+        "npx",
+        "-y",
+        "ai-vision-mcp"
+      ],
+      "environment": {
+        "GOOGLE_API_KEY": "{{GOOGLE_API_KEY}}",
+        "DEFAULT_QUESTION": "Describe this image in detail",
+        "DEFAULT_MODEL": "gemini-2.5-flash",
+        "DEFAULT_MAX_TOKENS": "1024"
+      },
+      "enabled": true,
+      "timeout": 30000
+    }
+  }
+}

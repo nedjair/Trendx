@@ -1,0 +1,31 @@
+{
+  "name": "add_host",
+  "description": "Ajouter un nouvel hôte SSH à la configuration",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "hostname": {
+        "type": "string",
+        "description": "Nom d'hôte ou adresse IP du serveur SSH"
+      },
+      "port": {
+        "type": "integer",
+        "description": "Port SSH (par défaut 22)",
+        "default": 22
+      },
+      "username": {
+        "type": "string",
+        "description": "Nom d'utilisateur pour la connexion SSH"
+      },
+      "identity_file": {
+        "type": "string",
+        "description": "Chemin vers le fichier d'identité (clé privée)"
+      },
+      "group": {
+        "type": "string",
+        "description": "Groupe d'appartenance de l'hôte"
+      }
+    },
+    "required": ["hostname", "username"]
+  }
+}

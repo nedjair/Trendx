@@ -1,0 +1,26 @@
+{
+  "name": "post_telemetry",
+  "description": "Publier des données de télémétrie pour un périphérique ThingsBoard",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "device_token": {
+        "type": "string",
+        "description": "Token d'accès du périphérique (device access token)"
+      },
+      "telemetry": {
+        "type": "object",
+        "description": "Objet JSON contenant les clés/valeurs de télémétrie"
+      },
+      "timestamp": {
+        "type": "integer",
+        "description": "Timestamp en ms (défaut: actuel)"
+      },
+      "base_url": {
+        "type": "string",
+        "default": "https://thingsboard.example.com"
+      }
+    },
+    "required": ["device_token", "telemetry"]
+  }
+}

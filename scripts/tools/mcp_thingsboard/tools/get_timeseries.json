@@ -1,0 +1,48 @@
+{
+  "name": "get_timeseries",
+  "description": "Récupérer les valeurs historiques d'une timeseries pour un périphérique",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "device_id": {
+        "type": "string",
+        "description": "ID UUID du périphérique"
+      },
+      "keys": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Liste des clés de timeseries à récupérer"
+      },
+      "start_ts": {
+        "type": "integer",
+        "description": "Timestamp de début (ms)"
+      },
+      "end_ts": {
+        "type": "integer",
+        "description": "Timestamp de fin (ms)"
+      },
+      "limit": {
+        "type": "integer",
+        "default": 100,
+        "description": "Nombre maximum de points par clé"
+      },
+      "agg": {
+        "type": "string",
+        "default": "NONE",
+        "enum": ["NONE", "MIN", "MAX", "AVG", "SUM", "COUNT"],
+        "description": "Fonction d'agrégation"
+      },
+      "interval": {
+        "type": "integer",
+        "description": "Intervalle d'agrégation en ms"
+      },
+      "token": {
+        "type": "string",
+        "description": "Token JWT"
+      }
+    },
+    "required": ["device_id", "keys", "token"]
+  }
+}

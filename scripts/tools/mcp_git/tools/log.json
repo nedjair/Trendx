@@ -1,0 +1,28 @@
+{
+  "name": "log",
+  "description": "Afficher l'historique des commits du dépôt Git",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "Chemin vers le dépôt Git"
+      },
+      "max_count": {
+        "type": "integer",
+        "description": "Nombre maximum de commits à afficher",
+        "default": 10
+      },
+      "oneline": {
+        "type": "boolean",
+        "description": "Afficher chaque commit sur une seule ligne",
+        "default": true
+      },
+      "branch": {
+        "type": "string",
+        "description": "Branche spécifique à consulter"
+      }
+    },
+    "required": []
+  }
+}

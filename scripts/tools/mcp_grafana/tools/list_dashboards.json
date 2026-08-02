@@ -1,0 +1,31 @@
+{
+  "name": "list_dashboards",
+  "description": "Lister tous les tableaux de bord Grafana",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "query": {
+        "type": "string",
+        "description": "Recherche textuelle sur le nom du dashboard"
+      },
+      "tag": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Filtrer par tags"
+      },
+      "type": {
+        "type": "string",
+        "description": "Type de dashboard (dash-db ou dash-home)",
+        "default": "dash-db"
+      },
+      "limit": {
+        "type": "integer",
+        "description": "Limite du nombre de résultats",
+        "default": 1000
+      }
+    },
+    "required": []
+  }
+}

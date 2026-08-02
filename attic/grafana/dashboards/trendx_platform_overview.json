@@ -1,0 +1,390 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+      "gridPos": { "h": 3, "w": 24, "x": 0, "y": 0 },
+      "id": 1,
+      "options": {
+        "code": {
+          "language": "markdown",
+          "showLineNumbers": false,
+          "showMiniMap": false
+        },
+        "content": "# Trendx — Platform Overview\n\n## System Health & Status Dashboard\n",
+        "mode": "markdown"
+      },
+      "pluginVersion": "10.4.5",
+      "targets": [],
+      "title": "Trendx — Platform Overview",
+      "type": "text"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 3 },
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "10.4.5",
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+          "format": "table",
+          "group": [],
+          "hide": false,
+          "metricColumn": "none",
+          "rawQuery": true,
+          "rawSql": "SELECT COUNT(*) AS value FROM pg_stat_activity WHERE state = 'active'",
+          "refId": "A",
+          "select": [[{ "params": ["value"], "type": "column" }]],
+          "timeColumn": "time",
+          "where": []
+        }
+      ],
+      "title": "API — Active Connections",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 3 },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "10.4.5",
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+          "format": "table",
+          "group": [],
+          "hide": false,
+          "metricColumn": "none",
+          "rawQuery": true,
+          "rawSql": "SELECT COUNT(*) AS value FROM information_schema.tables WHERE table_schema = 'public'",
+          "refId": "A",
+          "select": [[{ "params": ["value"], "type": "column" }]],
+          "timeColumn": "time",
+          "where": []
+        }
+      ],
+      "title": "Worker — Tables",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 3 },
+      "id": 4,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "10.4.5",
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+          "format": "table",
+          "group": [],
+          "hide": false,
+          "metricColumn": "none",
+          "rawQuery": true,
+          "rawSql": "SELECT COUNT(*) AS value FROM trendz_task",
+          "refId": "A",
+          "select": [[{ "params": ["value"], "type": "column" }]],
+          "timeColumn": "time",
+          "where": []
+        }
+      ],
+      "title": "Airflow — Total Tasks",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 3 },
+      "id": 5,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "10.4.5",
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+          "format": "table",
+          "group": [],
+          "hide": false,
+          "metricColumn": "none",
+          "rawQuery": true,
+          "rawSql": "SELECT COUNT(*) AS value FROM prediction_model",
+          "refId": "A",
+          "select": [[{ "params": ["value"], "type": "column" }]],
+          "timeColumn": "time",
+          "where": []
+        }
+      ],
+      "title": "MLflow — Models",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 3 },
+      "id": 6,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "10.4.5",
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+          "format": "table",
+          "group": [],
+          "hide": false,
+          "metricColumn": "none",
+          "rawQuery": true,
+          "rawSql": "SELECT COUNT(*) AS value FROM pg_stat_activity WHERE state = 'active' AND usename = 'trendx_app'",
+          "refId": "A",
+          "select": [[{ "params": ["value"], "type": "column" }]],
+          "timeColumn": "time",
+          "where": []
+        }
+      ],
+      "title": "Grafana — DB Sessions",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 7 },
+      "id": 7,
+      "options": {
+        "code": {
+          "language": "sql",
+          "showLineNumbers": false,
+          "showMiniMap": false
+        },
+        "content": "-- Devices Overview\nSELECT id, name, type, entity_id, source, created_at, updated_at\nFROM business_entity\nORDER BY type, name;\n",
+        "mode": "code"
+      },
+      "pluginVersion": "10.4.5",
+      "targets": [],
+      "title": "SQL — Devices Overview Query",
+      "type": "text"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 15 },
+      "id": 8,
+      "options": {
+        "code": {
+          "language": "sql",
+          "showLineNumbers": false,
+          "showMiniMap": false
+        },
+        "content": "-- Telemetry Volume\nSELECT\n  date_trunc('hour', ts) AS hour,\n  COUNT(*) AS point_count\nFROM ts_kv\nWHERE ts >= ${__from:date} AND ts < ${__to:date}\nGROUP BY hour\nORDER BY hour;\n\n-- Active Alarms\nSELECT * FROM alert_incident WHERE status IN ('ACTIVE', 'ACK');\n\n-- Recent Tasks\nSELECT * FROM trendz_task ORDER BY created_at DESC LIMIT 20;\n",
+        "mode": "code"
+      },
+      "pluginVersion": "10.4.5",
+      "targets": [],
+      "title": "SQL — Telemetry Volume / Alarms / Tasks",
+      "type": "text"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 23 },
+      "id": 9,
+      "interval": "1h",
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+          "format": "time_series",
+          "group": [],
+          "hide": false,
+          "metricColumn": "none",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  date_trunc('hour', ts) AS time,\n  COUNT(*) AS value\nFROM ts_kv\nWHERE ts >= ${__from:date} AND ts < ${__to:date}\nGROUP BY time\nORDER BY time",
+          "refId": "A",
+          "select": [[{ "params": ["value"], "type": "column" }]],
+          "timeColumn": "time",
+          "where": []
+        }
+      ],
+      "title": "Telemetry Volume (points per hour)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 31 },
+      "id": 10,
+      "options": {
+        "code": {
+          "language": "sql",
+          "showLineNumbers": true,
+          "showMiniMap": false
+        },
+        "content": "-- Active Alarms\nSELECT\n  id,\n  logical_key,\n  severity,\n  status,\n  entity_id,\n  metric_key,\n  opened_at,\n  last_value\nFROM alert_incident\nWHERE status IN ('ACTIVE', 'ACK')\nORDER BY opened_at DESC\nLIMIT 50;\n",
+        "mode": "code"
+      },
+      "pluginVersion": "10.4.5",
+      "targets": [],
+      "title": "Active Alarms (query only — configure table panel in UI)",
+      "type": "text"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 31 },
+      "id": 11,
+      "options": {
+        "code": {
+          "language": "sql",
+          "showLineNumbers": true,
+          "showMiniMap": false
+        },
+        "content": "-- Recent Tasks\nSELECT\n  id,\n  name,\n  task_type,\n  status,\n  priority,\n  retry_count,\n  created_at,\n  started_at,\n  finished_at,\n  duration_ms\nFROM trendz_task\nORDER BY created_at DESC\nLIMIT 20;\n",
+        "mode": "code"
+      },
+      "pluginVersion": "10.4.5",
+      "targets": [],
+      "title": "Recent Tasks (query only — configure table panel in UI)",
+      "type": "text"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": ["trendx", "platform", "overview"],
+  "templating": {
+    "list": [
+      {
+        "current": { "selected": true, "text": "ALG16025001", "value": "ALG16025001" },
+        "hide": 0,
+        "includeAll": false,
+        "multi": false,
+        "name": "device_id",
+        "options": [
+          { "selected": true, "text": "ALG16025001", "value": "ALG16025001" }
+        ],
+        "query": "SELECT DISTINCT entity_id::text FROM ts_kv ORDER BY entity_id::text",
+        "refresh": 2,
+        "skipUrlSync": false,
+        "type": "query",
+        "datasource": { "type": "postgres", "uid": "trendx-timescaledb" }
+      },
+      {
+        "current": { "selected": true, "text": "mppt_main_battery_voltage_v", "value": "mppt_main_battery_voltage_v" },
+        "hide": 0,
+        "includeAll": false,
+        "multi": false,
+        "name": "metric_name",
+        "options": [
+          { "selected": true, "text": "mppt_main_battery_voltage_v", "value": "mppt_main_battery_voltage_v" }
+        ],
+        "query": "SELECT DISTINCT metric_key FROM ts_kv ORDER BY metric_key",
+        "refresh": 2,
+        "skipUrlSync": false,
+        "type": "query",
+        "datasource": { "type": "postgres", "uid": "trendx-timescaledb" }
+      },
+      {
+        "auto": true,
+        "auto_count": 30,
+        "auto_min": "10s",
+        "current": { "selected": true, "text": "Last 24 hours", "value": "now-24h" },
+        "hide": 0,
+        "includeAll": false,
+        "multi": false,
+        "name": "time_range",
+        "options": [
+          { "selected": false, "text": "Last 1 hour", "value": "now-1h" },
+          { "selected": true, "text": "Last 24 hours", "value": "now-24h" },
+          { "selected": false, "text": "Last 7 days", "value": "now-7d" },
+          { "selected": false, "text": "Last 30 days", "value": "now-30d" },
+          { "selected": false, "text": "Last 90 days", "value": "now-90d" }
+        ],
+        "query": "now-1h, now-24h, now-7d, now-30d, now-90d",
+        "skipUrlSync": false,
+        "type": "interval"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Trendx — Platform Overview",
+  "uid": "trendx-platform-overview",
+  "version": 1,
+  "weekStart": ""
+}

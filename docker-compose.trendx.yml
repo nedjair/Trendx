@@ -1,0 +1,140 @@
+services:
+  reverse-proxy:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.ui
+    image: trendx/reverse-proxy:latest
+    container_name: trendx_reverse_proxy
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8443:8443"
+    environment:
+      VITE_API_BASE_URL: "http://api:8000"
+    depends_on:
+      api:
+        condition: service_started
+    networks:
+      - trendx_edge
+      - trendx_internal
+      - mobili_dahsboard_default
+    cpus: "0.5"
+    mem_limit: 256m
+    pids_limit: 100
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:8443/healthz || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    volumes:
+      - /opt/trendx/data/reverse-proxy/logs:/var/log/nginx:rw
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    image: trendx/api:latest
+    container_name: trendx_api
+    restart: unless-stopped
+    command: >
+      uvicorn trendx.main:app
+      --host 0.0.0.0
+      --port 8000
+      --workers 2
+      --log-level info
+    environment:
+      PYTHONPATH: "/app/src:/app:$PYTHONPATH"
+      PYTHONUNBUFFERED: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+      TRENDX_JWT_SIGNING_KEY: "${TRENDX_JWT_SIGNING_KEY}"
+      PG_ADMIN_HOST: mobili_dahsboard-postgres-1
+    networks:
+      - trendx_internal
+      - mobili_dahsboard_default
+    cpus: "1.0"
+    mem_limit: 512m
+    pids_limit: 200
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; r=urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3); sys.exit(0 if r.status==200 else 1)"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    volumes:
+      - ./src:/app/src:ro
+      - ./migrations:/app/migrations:ro
+      - ./scripts:/app/scripts:ro
+      - ./tests:/app/tests:ro
+      - ./.secrets:/app/.secrets:ro
+    env_file:
+      - ./.env
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+    image: trendx/worker:latest
+    container_name: trendx_worker
+    restart: unless-stopped
+    command: python3 -m trendx.services.worker
+    environment:
+      PYTHONPATH: "/app/src:/app:$PYTHONPATH"
+      PYTHONUNBUFFERED: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+      SERVER_PORT: "${TRENDX_PYTHON_EXECUTOR_PORT:-8181}"
+      SCRIPT_ENGINE_RUNTIME_TIMEOUT: "10000"
+      EXECUTOR_MANAGER: "1"
+      EXECUTOR_SCRIPT_ENGINE: "6"
+      THROTTLING_QUEUE_CAPACITY: "10"
+    user: "python-executor:1000"
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - trendx_internal
+      - mobili_dahsboard_default
+    cpus: "0.5"
+    mem_limit: 512m
+    pids_limit: 100
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import os, sys, socket; s=socket.socket(); s.settimeout(2); r=s.connect_ex(('127.0.0.1', 8181)); sys.exit(0)"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    volumes:
+      - ./src:/app/src:ro
+      - ./scripts:/app/scripts:ro
+      - ./.secrets:/app/.secrets:ro
+    env_file:
+      - ./.env
+
+networks:
+  trendx_internal:
+    name: trendx_internal
+    driver: bridge
+  trendx_edge:
+    name: trendx_edge
+    driver: bridge
+  mobili_dahsboard_default:
+    external: true
+    name: mobili_dahsboard_default
+
+volumes:
+  trendx_data:
+    name: trendx_data

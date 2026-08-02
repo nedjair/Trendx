@@ -1,0 +1,26 @@
+{
+  "name": "dag_run",
+  "description": "Déclencher l'exécution d'un DAG Airflow",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "dag_id": {
+        "type": "string",
+        "description": "Identifiant unique du DAG à exécuter"
+      },
+      "conf": {
+        "type": "object",
+        "description": "Configuration additionnelle passée au DAG run (JSON)"
+      },
+      "execution_date": {
+        "type": "string",
+        "description": "Date d'exécution logique au format ISO 8601"
+      },
+      "note": {
+        "type": "string",
+        "description": "Note attachée au DAG run"
+      }
+    },
+    "required": ["dag_id"]
+  }
+}

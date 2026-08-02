@@ -1,0 +1,99 @@
+repos:
+  # ————————————————————————————————————————
+  # 1. Vérifications génériques
+  # ————————————————————————————————————————
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: check-added-large-files
+      - id: check-ast
+      - id: check-case-conflict
+      - id: check-executables-have-shebangs
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-shebang-scripts-are-executable
+      - id: check-symlinks
+      - id: check-toml
+      - id: check-vcs-permalinks
+      - id: check-xml
+      - id: check-yaml
+        args: ["--unsafe"]
+      - id: destroyed-symlinks
+      - id: detect-aws-credentials
+        args: ["--allow-missing-credentials"]
+      - id: detect-private-key
+      - id: end-of-file-fixer
+      - id: forbid-new-submodules
+      - id: mixed-line-ending
+        args: ["--fix=lf"]
+      - id: name-tests-test
+        args: ["--pytest-test-first"]
+      - id: no-commit-to-branch
+        args: ["--branch", "main", "--branch", "master"]
+      - id: pretty-format-json
+        args: ["--autofix", "--indent", "2", "--no-sort-keys"]
+      - id: requirements-txt-fixer
+      - id: sort-simple-yaml
+      - id: trailing-whitespace
+
+  # ————————————————————————————————————————
+  # 2. Python - linting et formatage (ruff)
+  # ————————————————————————————————————————
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.3.5
+    hooks:
+      - id: ruff
+        args: ["--fix", "--exit-non-zero-on-fix"]
+      - id: ruff-format
+
+  # ————————————————————————————————————————
+  # 3. Python - vérification de types (mypy)
+  # ————————————————————————————————————————
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.9.0
+    hooks:
+      - id: mypy
+        additional_dependencies: ["pydantic>=2.6", "types-redis"]
+        args: ["--config-file=pyproject.toml"]
+        pass_filenames: false
+
+  # ————————————————————————————————————————
+  # 4. Python - sécurité
+  # ————————————————————————————————————————
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.7.8
+    hooks:
+      - id: bandit
+        args: ["-c", "pyproject.toml", "-r", "src"]
+        additional_dependencies: ["bandit[toml]"]
+
+  # ————————————————————————————————————————
+  # 5. Vérification des secrets (gitleaks)
+  # ————————————————————————————————————————
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.18.4
+    hooks:
+      - id: gitleaks
+
+  # ————————————————————————————————————————
+  # 6. Docker
+  # ————————————————————————————————————————
+  - repo: https://github.com/hadolint/hadolint
+    rev: v2.12.0
+    hooks:
+      - id: hadolint-docker
+        args: ["--ignore", "DL3008"]
+
+  # ————————————————————————————————————————
+  # 7. Makefile / Shell
+  # ————————————————————————————————————————
+  - repo: https://github.com/crate-ci/typos
+    rev: v1.21.0
+    hooks:
+      - id: typos
+        args: ["--format", "short"]
+
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.9.0.2
+    hooks:
+      - id: shellcheck

@@ -1,0 +1,350 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": {
+        "type": "grafana",
+        "uid": "-- Grafana --"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "code": {
+          "language": "markdown",
+          "showLineNumbers": false,
+          "showMiniMap": false
+        },
+        "content": "# Trendx — Vue d'ensemble (Phase 2 infrastructure)\n\n## Stack\n- **TimescaleDB analytics** : `trendx_analytics` (hypertables, CAGGs)\n- **TimescaleDB catalogue** : `trendx` (42 tables Trendz natives)\n- **API FastAPI** : `:8000` (/health, /docs)\n- **UI React/Vite** : `:8080`\n- **Airflow 2.9** : `:8082` (admin / mot de passe `.secrets`)\n- **MLflow 2.14** : `:5000`\n- **Grafana 10.4.5** : `:3001` (ce port, 3000=Gitea)\n- **Redis 7** : broker Celery worker (port interne 6379)\n- **Python Worker** : port 8181 (parité Trendz 1.15.0 python-executor)\n\n## MVP\n- Device : `${device_id}`\n- Métrique : `${metric_name}`\n- Algorithme : `${algorithm}`\n- Préfixe writeback (désactivé Phase 2) : `_EPD_<metric>`\n\n## Contraintes Phase 2\nAucun appel REST API ThingsBoard (ports 8081 / 8090).\nAccès direct PostgreSQL ThingsBoard port hôte **32768** seulement si compte RO fourni.\n",
+        "mode": "markdown"
+      },
+      "pluginVersion": "10.4.5",
+      "targets": [],
+      "title": "Plateforme Trendx — Stack & MVP",
+      "type": "text"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "trendx-tsdb-analytics"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 6
+      },
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "10.4.5",
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "trendx-tsdb-analytics"
+          },
+          "format": "table",
+          "group": [],
+          "hide": false,
+          "metricColumn": "none",
+          "rawQuery": true,
+          "rawSql": "SELECT COUNT(*) AS value FROM pg_tables WHERE schemaname='public'",
+          "refId": "A",
+          "select": [
+            [
+              {
+                "params": [
+                  "value"
+                ],
+                "type": "column"
+              }
+            ]
+          ],
+          "timeColumn": "time",
+          "where": []
+        }
+      ],
+      "title": "Tables publiques trendx_analytics",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "trendx-catalog"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 6
+      },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "10.4.5",
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "trendx-catalog"
+          },
+          "format": "table",
+          "group": [],
+          "hide": false,
+          "metricColumn": "none",
+          "rawQuery": true,
+          "rawSql": "SELECT COUNT(*) AS value FROM pg_tables WHERE schemaname='public' AND tablename NOT LIKE 'pg_%' AND tablename NOT LIKE 'sql_%'",
+          "refId": "A",
+          "select": [
+            [
+              {
+                "params": [
+                  "value"
+                ],
+                "type": "column"
+              }
+            ]
+          ],
+          "timeColumn": "time",
+          "where": []
+        }
+      ],
+      "title": "Tables catalogue Trendz natives",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "grafana",
+        "uid": "-- Grafana --"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 6
+      },
+      "id": 4,
+      "options": {
+        "code": {
+          "language": "sql",
+          "showLineNumbers": true,
+          "showMiniMap": false
+        },
+        "content": "-- Vérification rapide hypertables trendx_analytics\n-- à lancer après migration 002_hypertables_analytics.sql\nSELECT hypertable_name, num_chunks, compression_enabled\nFROM timescaledb_information.hypertables\nWHERE hypertable_schema = 'public'\nORDER BY hypertable_name;\n\n-- 4 bases attendues : trendx, trendx_analytics, trendx_airflow, trendx_mlflow\nSELECT datname, datcollate FROM pg_database WHERE datname LIKE 'trendx_%' ORDER BY datname;",
+        "mode": "code"
+      },
+      "pluginVersion": "10.4.5",
+      "targets": [],
+      "title": "Diagnostic rapide SQL",
+      "type": "text"
+    }
+  ],
+  "refresh": false,
+  "schemaVersion": 39,
+  "tags": [
+    "trendx",
+    "overview",
+    "phase2"
+  ],
+  "templating": {
+    "list": [
+      {
+        "current": {
+          "selected": true,
+          "text": "ALG16025001",
+          "value": "ALG16025001"
+        },
+        "hide": 0,
+        "includeAll": false,
+        "multi": false,
+        "name": "device_id",
+        "options": [
+          {
+            "selected": true,
+            "text": "ALG16025001",
+            "value": "ALG16025001"
+          },
+          {
+            "selected": false,
+            "text": "CerboGx",
+            "value": "CerboGx"
+          }
+        ],
+        "query": "ALG16025001, CerboGx",
+        "skipUrlSync": false,
+        "type": "custom"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "mppt_main_battery_voltage_v",
+          "value": "mppt_main_battery_voltage_v"
+        },
+        "hide": 0,
+        "includeAll": false,
+        "multi": false,
+        "name": "metric_name",
+        "options": [
+          {
+            "selected": true,
+            "text": "mppt_main_battery_voltage_v",
+            "value": "mppt_main_battery_voltage_v"
+          },
+          {
+            "selected": false,
+            "text": "mppt_main_battery_current_a",
+            "value": "mppt_main_battery_current_a"
+          }
+        ],
+        "query": "mppt_main_battery_voltage_v, mppt_main_battery_current_a",
+        "skipUrlSync": false,
+        "type": "custom"
+      },
+      {
+        "auto": false,
+        "auto_count": 30,
+        "auto_min": "10s",
+        "current": {
+          "selected": true,
+          "text": "Last 24 hours",
+          "value": "now-24h"
+        },
+        "hide": 0,
+        "includeAll": false,
+        "multi": false,
+        "name": "time_range",
+        "options": [
+          {
+            "selected": false,
+            "text": "Last 1 hour",
+            "value": "now-1h"
+          },
+          {
+            "selected": true,
+            "text": "Last 24 hours",
+            "value": "now-24h"
+          },
+          {
+            "selected": false,
+            "text": "Last 7 days",
+            "value": "now-7d"
+          },
+          {
+            "selected": false,
+            "text": "Last 30 days",
+            "value": "now-30d"
+          },
+          {
+            "selected": false,
+            "text": "Last 90 days",
+            "value": "now-90d"
+          }
+        ],
+        "query": "now-1h, now-24h, now-7d, now-30d, now-90d",
+        "skipUrlSync": false,
+        "type": "custom"
+      },
+      {
+        "current": {
+          "selected": true,
+          "text": "Prophet",
+          "value": "Prophet"
+        },
+        "hide": 0,
+        "includeAll": true,
+        "multi": false,
+        "name": "algorithm",
+        "options": [
+          {
+            "selected": false,
+            "text": "All",
+            "value": "$__all"
+          },
+          {
+            "selected": true,
+            "text": "Prophet",
+            "value": "Prophet"
+          },
+          {
+            "selected": false,
+            "text": "ARIMA",
+            "value": "ARIMA"
+          },
+          {
+            "selected": false,
+            "text": "Linear",
+            "value": "Linear"
+          },
+          {
+            "selected": false,
+            "text": "Fourier",
+            "value": "Fourier"
+          }
+        ],
+        "query": "Prophet, ARIMA, Linear, Fourier",
+        "skipUrlSync": false,
+        "type": "custom"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Trendx — Vue d'ensemble",
+  "uid": "trendx-overview",
+  "version": 1,
+  "weekStart": ""
+}

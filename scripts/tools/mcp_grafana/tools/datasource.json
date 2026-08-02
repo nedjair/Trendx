@@ -1,0 +1,35 @@
+{
+  "name": "datasource",
+  "description": "Interroger une source de données Grafana (query)",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "datasource_uid": {
+        "type": "string",
+        "description": "UID de la source de données"
+      },
+      "datasource_id": {
+        "type": "integer",
+        "description": "ID de la source de données (alternative)"
+      },
+      "queries": {
+        "type": "array",
+        "items": {
+          "type": "object"
+        },
+        "description": "Liste des requêtes à exécuter sur la datasource"
+      },
+      "from": {
+        "type": "string",
+        "description": "Date de début (ex: now-6h)",
+        "default": "now-6h"
+      },
+      "to": {
+        "type": "string",
+        "description": "Date de fin (ex: now)",
+        "default": "now"
+      }
+    },
+    "required": ["datasource_uid", "queries"]
+  }
+}

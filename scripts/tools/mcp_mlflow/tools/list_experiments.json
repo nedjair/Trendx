@@ -1,0 +1,25 @@
+{
+  "name": "list_experiments",
+  "description": "Lister toutes les expériences MLflow",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "max_results": {
+        "type": "integer",
+        "description": "Nombre maximum d'expériences à retourner",
+        "default": 1000
+      },
+      "filter_string": {
+        "type": "string",
+        "description": "Filtre MLflow sur les expériences"
+      },
+      "view_type": {
+        "type": "string",
+        "description": "Type de vue (ACTIVE_ONLY, DELETED_ONLY, ALL)",
+        "default": "ACTIVE_ONLY",
+        "enum": ["ACTIVE_ONLY", "DELETED_ONLY", "ALL"]
+      }
+    },
+    "required": []
+  }
+}

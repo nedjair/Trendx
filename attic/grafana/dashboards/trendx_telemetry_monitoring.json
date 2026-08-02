@@ -1,0 +1,366 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 },
+      "id": 1,
+      "interval": "5m",
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+          "format": "time_series",
+          "group": [],
+          "hide": false,
+          "metricColumn": "none",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  ts AS time,\n  dbl_v AS value\nFROM ts_kv\nWHERE entity_id = '${device_id}'::uuid\n  AND metric_key = '${metric_name}'\n  AND ts >= ${__from:date}\n  AND ts < ${__to:date}\n  AND dbl_v IS NOT NULL\nORDER BY ts",
+          "refId": "A",
+          "select": [[{ "params": ["value"], "type": "column" }]],
+          "timeColumn": "ts",
+          "where": []
+        }
+      ],
+      "title": "Raw Telemetry: ${device_id} / ${metric_name}",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 8 },
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["mean"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "10.4.5",
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+          "format": "table",
+          "group": [],
+          "hide": false,
+          "metricColumn": "none",
+          "rawQuery": true,
+          "rawSql": "SELECT AVG(dbl_v) AS value FROM ts_kv WHERE entity_id = '${device_id}'::uuid AND metric_key = '${metric_name}' AND ts >= ${__from:date} AND ts < ${__to:date} AND dbl_v IS NOT NULL",
+          "refId": "A",
+          "select": [[{ "params": ["value"], "type": "column" }]],
+          "timeColumn": "time",
+          "where": []
+        }
+      ],
+      "title": "Average",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 8 },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["max"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "10.4.5",
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+          "format": "table",
+          "group": [],
+          "hide": false,
+          "metricColumn": "none",
+          "rawQuery": true,
+          "rawSql": "SELECT MAX(dbl_v) AS value FROM ts_kv WHERE entity_id = '${device_id}'::uuid AND metric_key = '${metric_name}' AND ts >= ${__from:date} AND ts < ${__to:date} AND dbl_v IS NOT NULL",
+          "refId": "A",
+          "select": [[{ "params": ["value"], "type": "column" }]],
+          "timeColumn": "time",
+          "where": []
+        }
+      ],
+      "title": "Maximum",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 8 },
+      "id": 4,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["min"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "10.4.5",
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+          "format": "table",
+          "group": [],
+          "hide": false,
+          "metricColumn": "none",
+          "rawQuery": true,
+          "rawSql": "SELECT MIN(dbl_v) AS value FROM ts_kv WHERE entity_id = '${device_id}'::uuid AND metric_key = '${metric_name}' AND ts >= ${__from:date} AND ts < ${__to:date} AND dbl_v IS NOT NULL",
+          "refId": "A",
+          "select": [[{ "params": ["value"], "type": "column" }]],
+          "timeColumn": "time",
+          "where": []
+        }
+      ],
+      "title": "Minimum",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 8 },
+      "id": 5,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["stddev"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "10.4.5",
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+          "format": "table",
+          "group": [],
+          "hide": false,
+          "metricColumn": "none",
+          "rawQuery": true,
+          "rawSql": "SELECT STDDEV(dbl_v) AS value FROM ts_kv WHERE entity_id = '${device_id}'::uuid AND metric_key = '${metric_name}' AND ts >= ${__from:date} AND ts < ${__to:date} AND dbl_v IS NOT NULL",
+          "refId": "A",
+          "select": [[{ "params": ["value"], "type": "column" }]],
+          "timeColumn": "time",
+          "where": []
+        }
+      ],
+      "title": "Std Deviation",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 12 },
+      "id": 6,
+      "options": {
+        "minVizHeight": 75,
+        "minVizWidth": 75,
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true,
+        "sizing": "auto"
+      },
+      "pluginVersion": "10.4.5",
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+          "format": "table",
+          "group": [],
+          "hide": false,
+          "metricColumn": "none",
+          "rawQuery": true,
+          "rawSql": "WITH\n  expected AS (\n    SELECT COUNT(*) AS cnt FROM generate_series(\n      date_trunc('hour', ${__from:date}),\n      date_trunc('hour', ${__to:date}),\n      interval '1 hour'\n    ) AS gs\n  ),\n  actual AS (\n    SELECT COUNT(DISTINCT date_trunc('hour', ts)) AS cnt\n    FROM ts_kv\n    WHERE entity_id = '${device_id}'::uuid\n      AND metric_key = '${metric_name}'\n      AND ts >= ${__from:date}\n      AND ts < ${__to:date}\n  )\nSELECT\n  CASE WHEN expected.cnt > 0\n    THEN ROUND((actual.cnt::numeric / expected.cnt) * 100, 1)\n    ELSE 0\n  END AS value\nFROM expected, actual",
+          "refId": "A",
+          "select": [[{ "params": ["value"], "type": "column" }]],
+          "timeColumn": "time",
+          "where": []
+        }
+      ],
+      "title": "Data Completeness %",
+      "type": "gauge"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 12 },
+      "id": 7,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "orientation": "auto",
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "pluginVersion": "10.4.5",
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+          "format": "time_series",
+          "group": [],
+          "hide": false,
+          "metricColumn": "none",
+          "rawQuery": true,
+          "rawSql": "WITH hours AS (\n  SELECT date_trunc('hour', gs) AS hour\n  FROM generate_series(\n    date_trunc('hour', ${__from:date}),\n    date_trunc('hour', ${__to:date}),\n    interval '1 hour'\n  ) AS gs\n)\nSELECT\n  h.hour AS time,\n  COUNT(kv.ts) AS value\nFROM hours h\nLEFT JOIN ts_kv kv\n  ON date_trunc('hour', kv.ts) = h.hour\n  AND kv.entity_id = '${device_id}'::uuid\n  AND kv.metric_key = '${metric_name}'\nGROUP BY h.hour\nORDER BY h.hour",
+          "refId": "A",
+          "select": [[{ "params": ["value"], "type": "column" }]],
+          "timeColumn": "time",
+          "where": []
+        }
+      ],
+      "title": "Missing Data (points per hour)",
+      "type": "barchart"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 12 },
+      "id": 8,
+      "options": {
+        "bucketOffset": 0,
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+          "format": "table",
+          "group": [],
+          "hide": false,
+          "metricColumn": "none",
+          "rawQuery": true,
+          "rawSql": "SELECT dbl_v AS value\nFROM ts_kv\nWHERE entity_id = '${device_id}'::uuid\n  AND metric_key = '${metric_name}'\n  AND ts >= ${__from:date}\n  AND ts < ${__to:date}\n  AND dbl_v IS NOT NULL",
+          "refId": "A",
+          "select": [[{ "params": ["value"], "type": "column" }]],
+          "timeColumn": "time",
+          "where": []
+        }
+      ],
+      "title": "Distribution (histogram)",
+      "type": "histogram"
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 39,
+  "tags": ["trendx", "telemetry", "monitoring"],
+  "templating": {
+    "list": [
+      {
+        "current": { "selected": true, "text": "ALG16025001", "value": "ALG16025001" },
+        "hide": 0,
+        "includeAll": false,
+        "multi": false,
+        "name": "device_id",
+        "options": [
+          { "selected": true, "text": "ALG16025001", "value": "ALG16025001" }
+        ],
+        "query": "SELECT DISTINCT entity_id::text FROM ts_kv ORDER BY entity_id::text",
+        "refresh": 2,
+        "skipUrlSync": false,
+        "type": "query",
+        "datasource": { "type": "postgres", "uid": "trendx-timescaledb" }
+      },
+      {
+        "current": { "selected": true, "text": "mppt_main_battery_voltage_v", "value": "mppt_main_battery_voltage_v" },
+        "hide": 0,
+        "includeAll": false,
+        "multi": false,
+        "name": "metric_name",
+        "options": [
+          { "selected": true, "text": "mppt_main_battery_voltage_v", "value": "mppt_main_battery_voltage_v" }
+        ],
+        "query": "SELECT DISTINCT metric_key FROM ts_kv ORDER BY metric_key",
+        "refresh": 2,
+        "skipUrlSync": false,
+        "type": "query",
+        "datasource": { "type": "postgres", "uid": "trendx-timescaledb" }
+      },
+      {
+        "auto": true,
+        "auto_count": 30,
+        "auto_min": "10s",
+        "current": { "selected": true, "text": "Last 24 hours", "value": "now-24h" },
+        "hide": 0,
+        "includeAll": false,
+        "multi": false,
+        "name": "time_range",
+        "options": [
+          { "selected": false, "text": "Last 1 hour", "value": "now-1h" },
+          { "selected": true, "text": "Last 24 hours", "value": "now-24h" },
+          { "selected": false, "text": "Last 7 days", "value": "now-7d" },
+          { "selected": false, "text": "Last 30 days", "value": "now-30d" },
+          { "selected": false, "text": "Last 90 days", "value": "now-90d" }
+        ],
+        "query": "now-1h, now-24h, now-7d, now-30d, now-90d",
+        "skipUrlSync": false,
+        "type": "interval"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Trendx — Telemetry Monitoring",
+  "uid": "trendx-telemetry-monitoring",
+  "version": 1,
+  "weekStart": ""
+}

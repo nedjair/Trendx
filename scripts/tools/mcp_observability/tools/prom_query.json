@@ -1,0 +1,42 @@
+{
+  "name": "prom_query",
+  "description": "Exécuter une requête PromQL instantanée ou range sur Prometheus",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "query": {
+        "type": "string",
+        "description": "Expression PromQL à exécuter"
+      },
+      "type": {
+        "type": "string",
+        "default": "query",
+        "enum": ["query", "query_range"],
+        "description": "Type de requête: instantanée ou range"
+      },
+      "start": {
+        "type": "string",
+        "description": "Date de début pour query_range (RFC3339 ou Unix)"
+      },
+      "end": {
+        "type": "string",
+        "description": "Date de fin pour query_range"
+      },
+      "step": {
+        "type": "string",
+        "default": "1m",
+        "description": "Pas d'échantillonnage pour query_range (ex: 30s, 1m, 5m)"
+      },
+      "time": {
+        "type": "string",
+        "description": "Timestamp pour query instantanée"
+      },
+      "prometheus_url": {
+        "type": "string",
+        "default": "http://localhost:9090",
+        "description": "URL de base Prometheus"
+      }
+    },
+    "required": ["query"]
+  }
+}

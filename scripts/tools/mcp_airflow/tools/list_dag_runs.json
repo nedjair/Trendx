@@ -1,0 +1,33 @@
+{
+  "name": "list_dag_runs",
+  "description": "Lister les exécutions d'un DAG Airflow",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "dag_id": {
+        "type": "string",
+        "description": "Identifiant du DAG"
+      },
+      "limit": {
+        "type": "integer",
+        "description": "Nombre maximum de runs à retourner",
+        "default": 25
+      },
+      "offset": {
+        "type": "integer",
+        "description": "Décalage pagination",
+        "default": 0
+      },
+      "state": {
+        "type": "string",
+        "description": "Filtrer par état (queued, running, success, failed, etc.)",
+        "enum": ["queued", "running", "success", "failed"]
+      },
+      "start_date_gte": {
+        "type": "string",
+        "description": "Date de début minimale (ISO 8601)"
+      }
+    },
+    "required": ["dag_id"]
+  }
+}

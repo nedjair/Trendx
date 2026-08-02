@@ -1,0 +1,19 @@
+{
+  "name": "status",
+  "description": "Afficher l'état du dépôt Git (fichiers modifiés, indexés, etc.)",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "Chemin vers le dépôt Git (répertoire courant par défaut)"
+      },
+      "short": {
+        "type": "boolean",
+        "description": "Afficher le format court",
+        "default": false
+      }
+    },
+    "required": []
+  }
+}

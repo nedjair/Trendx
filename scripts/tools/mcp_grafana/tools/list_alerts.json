@@ -1,0 +1,24 @@
+{
+  "name": "list_alerts",
+  "description": "Lister les règles d'alerte et leurs états dans Grafana",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "dashboard_uid": {
+        "type": "string",
+        "description": "Filtrer par dashboard UID"
+      },
+      "state": {
+        "type": "string",
+        "description": "Filtrer par état d'alerte",
+        "enum": ["Alerting", "OK", "Pending", "NoData", "Paused"]
+      },
+      "limit": {
+        "type": "integer",
+        "description": "Nombre maximum d'alertes",
+        "default": 100
+      }
+    },
+    "required": []
+  }
+}

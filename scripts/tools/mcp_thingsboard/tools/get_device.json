@@ -1,0 +1,22 @@
+{
+  "name": "get_device",
+  "description": "Récupérer les informations détaillées d'un périphérique ThingsBoard",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "device_id": {
+        "type": "string",
+        "description": "ID UUID du périphérique"
+      },
+      "device_name": {
+        "type": "string",
+        "description": "Nom du périphérique (alternative à device_id)"
+      },
+      "token": {
+        "type": "string",
+        "description": "Token JWT d'authentification"
+      }
+    },
+    "required": ["token"]
+  }
+}

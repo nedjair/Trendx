@@ -1,0 +1,23 @@
+{
+  "name": "login",
+  "description": "S'authentifier auprès de ThingsBoard et récupérer le token JWT",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "username": {
+        "type": "string",
+        "description": "Nom d'utilisateur ThingsBoard (email)"
+      },
+      "password": {
+        "type": "string",
+        "description": "Mot de passe ThingsBoard"
+      },
+      "base_url": {
+        "type": "string",
+        "description": "URL de base de l'instance ThingsBoard",
+        "default": "https://thingsboard.example.com"
+      }
+    },
+    "required": ["username", "password"]
+  }
+}

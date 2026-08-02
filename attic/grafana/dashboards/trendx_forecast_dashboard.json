@@ -1,0 +1,379 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 },
+      "id": 1,
+      "interval": "5m",
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+          "format": "time_series",
+          "group": [],
+          "hide": false,
+          "metricColumn": "none",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  ts AS time,\n  dbl_v AS value\nFROM ts_kv\nWHERE entity_id = '${device_id}'::uuid\n  AND metric_key = '${metric_name}'\n  AND ts >= ${__from:date}\n  AND ts < ${__to:date}\n  AND dbl_v IS NOT NULL\nORDER BY ts",
+          "refId": "actual",
+          "select": [[{ "params": ["value"], "type": "column" }]],
+          "timeColumn": "ts",
+          "where": []
+        },
+        {
+          "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+          "format": "time_series",
+          "group": [],
+          "hide": false,
+          "metricColumn": "none",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  ts AS time,\n  value\nFROM forecast_series\nWHERE entity_id = '${device_id}'::uuid\n  AND metric_key = '${metric_name}'\n  AND (model_used = '${algorithm}' OR '${algorithm}' = 'All')\n  AND ts >= ${__from:date}\n  AND ts < ${__to:date}\nORDER BY ts",
+          "refId": "predicted",
+          "select": [[{ "params": ["value"], "type": "column" }]],
+          "timeColumn": "ts",
+          "where": []
+        }
+      ],
+      "title": "Real vs Predicted — ${device_id} / ${metric_name}",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 },
+      "id": 2,
+      "interval": "1h",
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+          "format": "time_series",
+          "group": [],
+          "hide": false,
+          "metricColumn": "none",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  ts AS time,\n  value,\n  lower_bound,\n  upper_bound\nFROM forecast_series\nWHERE entity_id = '${device_id}'::uuid\n  AND metric_key = '${metric_name}'\n  AND (model_used = '${algorithm}' OR '${algorithm}' = 'All')\n  AND ts >= ${__from:date}\n  AND ts < ${__to:date}\nORDER BY ts",
+          "refId": "A",
+          "select": [[{ "params": ["value"], "type": "column" }]],
+          "timeColumn": "ts",
+          "where": []
+        }
+      ],
+      "title": "Confidence Bands — ${algorithm}",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+      "gridPos": { "h": 4, "w": 8, "x": 0, "y": 16 },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "10.4.5",
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+          "format": "table",
+          "group": [],
+          "hide": false,
+          "metricColumn": "none",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  AVG(smape) AS value\nFROM forecast_leadtime\nWHERE entity_id = '${device_id}'::uuid\n  AND metric_key = '${metric_name}'",
+          "refId": "A",
+          "select": [[{ "params": ["value"], "type": "column" }]],
+          "timeColumn": "time",
+          "where": []
+        }
+      ],
+      "title": "Avg sMAPE",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+      "gridPos": { "h": 4, "w": 8, "x": 8, "y": 16 },
+      "id": 4,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "10.4.5",
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+          "format": "table",
+          "group": [],
+          "hide": false,
+          "metricColumn": "none",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  AVG(mae) AS value\nFROM forecast_leadtime\nWHERE entity_id = '${device_id}'::uuid\n  AND metric_key = '${metric_name}'",
+          "refId": "A",
+          "select": [[{ "params": ["value"], "type": "column" }]],
+          "timeColumn": "time",
+          "where": []
+        }
+      ],
+      "title": "Avg MAE",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+      "gridPos": { "h": 4, "w": 8, "x": 16, "y": 16 },
+      "id": 5,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "10.4.5",
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+          "format": "table",
+          "group": [],
+          "hide": false,
+          "metricColumn": "none",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  AVG(coverage) AS value\nFROM forecast_leadtime\nWHERE entity_id = '${device_id}'::uuid\n  AND metric_key = '${metric_name}'",
+          "refId": "A",
+          "select": [[{ "params": ["value"], "type": "column" }]],
+          "timeColumn": "time",
+          "where": []
+        }
+      ],
+      "title": "Avg Interval Coverage",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+      "id": 6,
+      "options": {
+        "bucketOffset": 0,
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+          "format": "table",
+          "group": [],
+          "hide": false,
+          "metricColumn": "none",
+          "rawQuery": true,
+          "rawSql": "WITH actual_forecast AS (\n  SELECT\n    kv.ts,\n    kv.dbl_v AS actual,\n    fs.value AS predicted\n  FROM ts_kv kv\n  JOIN forecast_series fs\n    ON kv.entity_id = fs.entity_id\n    AND kv.metric_key = fs.metric_key\n    AND kv.ts = fs.ts\n  WHERE kv.entity_id = '${device_id}'::uuid\n    AND kv.metric_key = '${metric_name}'\n    AND kv.ts >= ${__from:date}\n    AND kv.ts < ${__to:date}\n    AND (fs.model_used = '${algorithm}' OR '${algorithm}' = 'All')\n)\nSELECT (actual - predicted) AS value\nFROM actual_forecast\nWHERE actual IS NOT NULL AND predicted IS NOT NULL",
+          "refId": "A",
+          "select": [[{ "params": ["value"], "type": "column" }]],
+          "timeColumn": "time",
+          "where": []
+        }
+      ],
+      "title": "Error Distribution (forecast errors)",
+      "type": "histogram"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+      "id": 7,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+          "format": "time_series",
+          "group": [],
+          "hide": false,
+          "metricColumn": "none",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  horizon_step AS time,\n  smape AS value,\n  mae AS mae_value,\n  rmse AS rmse_value\nFROM forecast_leadtime\nWHERE entity_id = '${device_id}'::uuid\n  AND metric_key = '${metric_name}'\nORDER BY horizon_step",
+          "refId": "A",
+          "select": [[{ "params": ["value"], "type": "column" }]],
+          "timeColumn": "horizon_step",
+          "where": []
+        }
+      ],
+      "title": "Horizon Performance (sMAPE by step)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 28 },
+      "id": 8,
+      "options": {
+        "code": {
+          "language": "sql",
+          "showLineNumbers": true,
+          "showMiniMap": false
+        },
+        "content": "-- Model Comparison\nSELECT\n  id,\n  algorithm,\n  metric_key,\n  hyperparameters,\n  train_metrics,\n  test_metrics,\n  status,\n  is_champion,\n  champion_since,\n  created_at,\n  trained_at,\n  mlflow_run_id\nFROM prediction_model\nWHERE metric_key = '${metric_name}'\nORDER BY created_at DESC\nLIMIT 20;\n",
+        "mode": "code"
+      },
+      "pluginVersion": "10.4.5",
+      "targets": [],
+      "title": "Model Comparison (query only — configure table panel in UI)",
+      "type": "text"
+    }
+  ],
+  "refresh": "5m",
+  "schemaVersion": 39,
+  "tags": ["trendx", "forecast", "ml"],
+  "templating": {
+    "list": [
+      {
+        "current": { "selected": true, "text": "ALG16025001", "value": "ALG16025001" },
+        "hide": 0,
+        "includeAll": false,
+        "multi": false,
+        "name": "device_id",
+        "options": [
+          { "selected": true, "text": "ALG16025001", "value": "ALG16025001" }
+        ],
+        "query": "SELECT DISTINCT entity_id::text FROM ts_kv ORDER BY entity_id::text",
+        "refresh": 2,
+        "skipUrlSync": false,
+        "type": "query",
+        "datasource": { "type": "postgres", "uid": "trendx-timescaledb" }
+      },
+      {
+        "current": { "selected": true, "text": "mppt_main_battery_voltage_v", "value": "mppt_main_battery_voltage_v" },
+        "hide": 0,
+        "includeAll": false,
+        "multi": false,
+        "name": "metric_name",
+        "options": [
+          { "selected": true, "text": "mppt_main_battery_voltage_v", "value": "mppt_main_battery_voltage_v" }
+        ],
+        "query": "SELECT DISTINCT metric_key FROM ts_kv ORDER BY metric_key",
+        "refresh": 2,
+        "skipUrlSync": false,
+        "type": "query",
+        "datasource": { "type": "postgres", "uid": "trendx-timescaledb" }
+      },
+      {
+        "auto": true,
+        "auto_count": 30,
+        "auto_min": "10s",
+        "current": { "selected": true, "text": "Last 7 days", "value": "now-7d" },
+        "hide": 0,
+        "includeAll": false,
+        "multi": false,
+        "name": "time_range",
+        "options": [
+          { "selected": false, "text": "Last 24 hours", "value": "now-24h" },
+          { "selected": true, "text": "Last 7 days", "value": "now-7d" },
+          { "selected": false, "text": "Last 30 days", "value": "now-30d" },
+          { "selected": false, "text": "Last 90 days", "value": "now-90d" }
+        ],
+        "query": "now-24h, now-7d, now-30d, now-90d",
+        "skipUrlSync": false,
+        "type": "interval"
+      },
+      {
+        "current": { "selected": true, "text": "Prophet", "value": "Prophet" },
+        "hide": 0,
+        "includeAll": true,
+        "multi": false,
+        "name": "algorithm",
+        "options": [
+          { "selected": false, "text": "All", "value": "$__all" },
+          { "selected": true, "text": "Prophet", "value": "Prophet" },
+          { "selected": false, "text": "ARIMA", "value": "ARIMA" },
+          { "selected": false, "text": "LinearRegression", "value": "LinearRegression" },
+          { "selected": false, "text": "Fourier", "value": "Fourier" }
+        ],
+        "query": "SELECT DISTINCT algorithm FROM prediction_model ORDER BY algorithm",
+        "refresh": 2,
+        "skipUrlSync": false,
+        "type": "query",
+        "datasource": { "type": "postgres", "uid": "trendx-timescaledb" }
+      }
+    ]
+  },
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Trendx — Real vs Predicted",
+  "uid": "trendx-forecast-dashboard",
+  "version": 1,
+  "weekStart": ""
+}

@@ -1,0 +1,11 @@
+{
+  "name": "mcp_secrets",
+  "version": "1.0.0",
+  "contact": "admin@trendx.local",
+  "capabilities": {
+    "tools": true,
+    "logging": false,
+    "prompts": false,
+    "resources": false
+  }
+}

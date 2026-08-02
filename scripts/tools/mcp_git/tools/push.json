@@ -1,0 +1,33 @@
+{
+  "name": "push",
+  "description": "Envoyer les commits locaux vers un dépôt distant",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "Chemin vers le dépôt Git"
+      },
+      "remote": {
+        "type": "string",
+        "description": "Nom du dépôt distant",
+        "default": "origin"
+      },
+      "branch": {
+        "type": "string",
+        "description": "Branche à pousser (branche courante par défaut)"
+      },
+      "force": {
+        "type": "boolean",
+        "description": "Forcer la poussée (force push)",
+        "default": false
+      },
+      "tags": {
+        "type": "boolean",
+        "description": "Pousser également les tags",
+        "default": false
+      }
+    },
+    "required": []
+  }
+}

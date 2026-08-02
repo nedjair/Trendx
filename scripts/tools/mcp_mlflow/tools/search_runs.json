@@ -1,0 +1,39 @@
+{
+  "name": "search_runs",
+  "description": "Rechercher des runs MLflow avec filtres et agrégations",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "experiment_ids": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Liste des IDs d'expériences à inclure"
+      },
+      "filter_string": {
+        "type": "string",
+        "description": "Expression de filtre MLflow (ex: metrics.accuracy > 0.8)"
+      },
+      "run_view_type": {
+        "type": "string",
+        "default": "ACTIVE_ONLY",
+        "enum": ["ACTIVE_ONLY", "DELETED_ONLY", "ALL"],
+        "description": "Type de vue des runs"
+      },
+      "max_results": {
+        "type": "integer",
+        "default": 100,
+        "description": "Nombre maximum de runs retournés"
+      },
+      "order_by": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Liste des champs pour trier (ex: ['metrics.rmse DESC'])"
+      }
+    },
+    "required": ["experiment_ids"]
+  }
+}

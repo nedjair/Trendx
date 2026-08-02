@@ -1,0 +1,63 @@
+{
+  "name": "email_send",
+  "description": "Envoyer un email via un serveur SMTP",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "to": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Liste des destinataires"
+      },
+      "cc": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Liste des destinataires en copie"
+      },
+      "bcc": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Liste des destinataires en copie cachée"
+      },
+      "subject": {
+        "type": "string",
+        "description": "Sujet du mail"
+      },
+      "body": {
+        "type": "string",
+        "description": "Corps du message (texte ou HTML)"
+      },
+      "body_html": {
+        "type": "boolean",
+        "default": false,
+        "description": "Indique si body est du HTML"
+      },
+      "from": {
+        "type": "string",
+        "description": "Expéditeur (ex: alerts@trendx.local)"
+      },
+      "smtp_host": {
+        "type": "string",
+        "default": "localhost"
+      },
+      "smtp_port": {
+        "type": "integer",
+        "default": 25
+      },
+      "attachments": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Chemins des fichiers à joindre"
+      }
+    },
+    "required": ["to", "subject", "body"]
+  }
+}

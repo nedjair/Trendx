@@ -1,0 +1,31 @@
+{
+  "name": "log_metric",
+  "description": "Enregistrer une métrique dans un run MLflow",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "run_id": {
+        "type": "string",
+        "description": "Identifiant du run où enregistrer la métrique"
+      },
+      "key": {
+        "type": "string",
+        "description": "Nom de la métrique"
+      },
+      "value": {
+        "type": "number",
+        "description": "Valeur de la métrique"
+      },
+      "timestamp": {
+        "type": "integer",
+        "description": "Timestamp en millisecondes (défaut: temps actuel)"
+      },
+      "step": {
+        "type": "integer",
+        "description": "Numéro d'étape (step)",
+        "default": 0
+      }
+    },
+    "required": ["run_id", "key", "value"]
+  }
+}

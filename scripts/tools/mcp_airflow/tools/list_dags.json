@@ -1,0 +1,32 @@
+{
+  "name": "list_dags",
+  "description": "Lister tous les DAGs disponibles dans Airflow",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "limit": {
+        "type": "integer",
+        "description": "Nombre maximum de DAGs à retourner",
+        "default": 100
+      },
+      "offset": {
+        "type": "integer",
+        "description": "Décalage pour la pagination",
+        "default": 0
+      },
+      "tags": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Filtrer les DAGs par tags"
+      },
+      "only_active": {
+        "type": "boolean",
+        "description": "Ne retourner que les DAGs actifs",
+        "default": true
+      }
+    },
+    "required": []
+  }
+}

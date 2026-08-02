@@ -1,0 +1,88 @@
+# ============================================================
+# Trendx — Python Executor Worker (ML : Prophet / ARIMA / PyOD)
+# Reproduction du conteneur thingsboard-trendz-python-executor:1.15.0
+# Python 3.11 identique, user python-executor non-root, venv /opt/venv
+# ============================================================
+FROM python:3.11.14-slim-bookworm AS base
+
+LABEL org.opencontainers.image.title="Trendx Python Executor Worker" \
+      org.opencontainers.image.description="Celery/HTTP worker for forecasts, anomaly detection and calculated fields" \
+      org.opencontainers.image.version="0.1.0"
+
+# ——— Système ———
+ENV DEBIAN_FRONTEND=noninteractive \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        ca-certificates curl gnupg tzdata locales \
+        build-essential libpq-dev python3-dev libopenblas-dev liblapack-dev gfortran \
+        postgresql-client netcat-openbsd dumb-init procps libgomp1 \
+ && rm -rf /var/lib/apt/lists/* \
+ && update-ca-certificates \
+ && echo "UTC" > /etc/timezone && dpkg-reconfigure -f noninteractive tzdata
+
+# ——— VEN global /opt/venv ——— (même layout que Trendz python-executor)
+ENV VIRTUAL_ENV=/opt/venv \
+    PATH=/opt/venv/bin:${PATH} \
+    PYTHON_EXECUTABLE_PATH=/opt/venv/bin/python3 \
+    PYTHONPATH=/opt/venv/lib/python3.11/site-packages:/app/src:/app
+
+RUN python3 -m venv /opt/venv \
+ && /opt/venv/bin/python -m pip install --upgrade pip wheel \
+ && /opt/venv/bin/python -m pip install --no-cache-dir "setuptools>=65,<68"
+
+WORKDIR /app
+COPY constraints.txt /app/constraints.txt
+
+# ——— Dépendances Python (épinglées via constraints.txt) ———
+RUN /opt/venv/bin/python -m pip install --no-cache-dir -c /app/constraints.txt \
+        numpy==1.26.4 \
+        pandas==2.2.2 \
+        scipy==1.12.0 \
+        SQLAlchemy==2.0.29 \
+        psycopg2-binary==2.9.9 \
+        httpx==0.27.0 \
+        tenacity==8.2.3 \
+        pendulum==3.0.0 \
+        loguru==0.7.2 \
+        orjson==3.10.1 \
+        pydantic==2.6.4 \
+        pydantic-settings==2.2.1 \
+        python-dotenv==1.0.1
+
+# ——— Installer le package trendx SANS celery/redis (worker APScheduler process) ———
+RUN /opt/venv/bin/python -m pip install --no-cache-dir --no-deps -c /app/constraints.txt -e . \
+  && /opt/venv/bin/python -c "import trendx; print('trendx import OK')" 2>/dev/null || true
+
+# ——— User non-root identique Trendz python-executor ———
+RUN groupadd -r -g 1000 python-executor \
+ && useradd -r -u 1000 -g 1000 -s /bin/bash -m -d /home/python-executor python-executor \
+ && chown -R python-executor:python-executor /app \
+ && mkdir -p /usr/share/python-executor /data \
+ && chown python-executor:python-executor /usr/share/python-executor /data
+
+COPY ./src /app/src
+COPY ./scripts /app/scripts
+COPY pyproject.toml /app/pyproject.toml
+
+RUN chown -R python-executor:python-executor /app
+
+USER python-executor
+WORKDIR /usr/share/python-executor
+ENV SERVER_PORT=8181 \
+    SCRIPT_ENGINE_RUNTIME_TIMEOUT=10000 \
+    EXECUTOR_MANAGER=1 \
+    EXECUTOR_SCRIPT_ENGINE=6 \
+    THROTTLING_QUEUE_CAPACITY=10 \
+    NETWORK_BUFFER_SIZE=20971520
+
+EXPOSE 8181
+
+ENTRYPOINT ["/usr/bin/dumb-init", "--"]
+CMD ["python3", "-m", "trendx.worker"]

@@ -1,0 +1,28 @@
+{
+  "name": "commit",
+  "description": "Créer un nouveau commit avec les changements indexés",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "path": {
+        "type": "string",
+        "description": "Chemin vers le dépôt Git"
+      },
+      "message": {
+        "type": "string",
+        "description": "Message du commit"
+      },
+      "all": {
+        "type": "boolean",
+        "description": "Indexer automatiquement tous les fichiers modifiés et supprimés",
+        "default": false
+      },
+      "no_verify": {
+        "type": "boolean",
+        "description": "Ignorer les hooks de pré-commit",
+        "default": false
+      }
+    },
+    "required": ["message"]
+  }
+}

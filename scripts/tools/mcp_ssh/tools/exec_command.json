@@ -1,0 +1,28 @@
+{
+  "name": "exec_command",
+  "description": "Exécuter une commande sur un hôte SSH distant",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "host": {
+        "type": "string",
+        "description": "Nom d'hôte ou alias de l'hôte cible"
+      },
+      "command": {
+        "type": "string",
+        "description": "Commande à exécuter sur le serveur distant"
+      },
+      "timeout": {
+        "type": "integer",
+        "description": "Délai maximum d'exécution en secondes",
+        "default": 30
+      },
+      "sudo": {
+        "type": "boolean",
+        "description": "Exécuter avec les privilèges sudo",
+        "default": false
+      }
+    },
+    "required": ["host", "command"]
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "name": "task_status",
+  "description": "Récupérer le statut d'une tâche spécifique dans un DAG run",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "dag_id": {
+        "type": "string",
+        "description": "Identifiant du DAG"
+      },
+      "dag_run_id": {
+        "type": "string",
+        "description": "Identifiant du DAG run"
+      },
+      "task_id": {
+        "type": "string",
+        "description": "Identifiant de la tâche"
+      },
+      "map_index": {
+        "type": "integer",
+        "description": "Index pour les tâches mappées",
+        "default": -1
+      }
+    },
+    "required": ["dag_id", "dag_run_id", "task_id"]
+  }
+}

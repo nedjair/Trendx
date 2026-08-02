@@ -1,0 +1,30 @@
+{
+  "name": "latest",
+  "description": "Récupérer les dernières valeurs de timeseries d'un périphérique",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "device_id": {
+        "type": "string",
+        "description": "ID UUID du périphérique"
+      },
+      "keys": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Liste des clés (vide = toutes)"
+      },
+      "use_strict_data_types": {
+        "type": "boolean",
+        "default": true,
+        "description": "Utiliser des types stricts"
+      },
+      "token": {
+        "type": "string",
+        "description": "Token JWT"
+      }
+    },
+    "required": ["device_id", "token"]
+  }
+}

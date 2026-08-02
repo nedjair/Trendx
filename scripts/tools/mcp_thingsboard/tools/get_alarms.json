@@ -1,0 +1,45 @@
+{
+  "name": "get_alarms",
+  "description": "Récupérer les alarmes associées à un périphérique ou tenant",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "entity_type": {
+        "type": "string",
+        "default": "DEVICE",
+        "enum": ["DEVICE", "TENANT", "CUSTOMER", "ASSET"],
+        "description": "Type d'entité"
+      },
+      "entity_id": {
+        "type": "string",
+        "description": "ID UUID de l'entité"
+      },
+      "status": {
+        "type": "string",
+        "default": "ANY",
+        "enum": ["ANY", "ACTIVE", "CLEARED", "ACK"],
+        "description": "Statut de l'alarme"
+      },
+      "severity": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Sévérités à inclure (CRITICAL, MAJOR, MINOR, WARNING, INDETERMINATE)"
+      },
+      "page_size": {
+        "type": "integer",
+        "default": 50
+      },
+      "page": {
+        "type": "integer",
+        "default": 0
+      },
+      "token": {
+        "type": "string",
+        "description": "Token JWT"
+      }
+    },
+    "required": ["entity_id", "token"]
+  }
+}

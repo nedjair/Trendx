@@ -1,0 +1,22 @@
+{
+  "name": "test",
+  "description": "Tester la connexion SSH vers un ou plusieurs hôtes",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "hosts": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Liste des hôtes à tester. Si vide, teste tous les hôtes configurés."
+      },
+      "timeout": {
+        "type": "integer",
+        "description": "Délai maximum par connexion en secondes",
+        "default": 10
+      }
+    },
+    "required": []
+  }
+}

@@ -1,0 +1,381 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": { "type": "grafana", "uid": "-- Grafana --" },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 },
+      "id": 1,
+      "interval": "1h",
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+          "format": "time_series",
+          "group": [],
+          "hide": false,
+          "metricColumn": "none",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  ts AS time,\n  normalized_score AS value\nFROM anomaly_score\nWHERE entity_id = '${device_id}'::uuid\n  AND metric_key = '${metric_name}'\n  AND ts >= ${__from:date}\n  AND ts < ${__to:date}\nORDER BY ts",
+          "refId": "score",
+          "select": [[{ "params": ["value"], "type": "column" }]],
+          "timeColumn": "ts",
+          "where": []
+        },
+        {
+          "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+          "format": "time_series",
+          "group": [],
+          "hide": false,
+          "metricColumn": "none",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  ts AS time,\n  CASE WHEN is_anomaly THEN 1 ELSE 0 END AS value\nFROM anomaly_score\nWHERE entity_id = '${device_id}'::uuid\n  AND metric_key = '${metric_name}'\n  AND ts >= ${__from:date}\n  AND ts < ${__to:date}\nORDER BY ts",
+          "refId": "threshold",
+          "select": [[{ "params": ["value"], "type": "column" }]],
+          "timeColumn": "ts",
+          "where": []
+        }
+      ],
+      "title": "Anomaly Scores",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 },
+      "id": 2,
+      "interval": "5m",
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+          "format": "time_series",
+          "group": [],
+          "hide": false,
+          "metricColumn": "none",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  ts AS time,\n  dbl_v AS value\nFROM ts_kv\nWHERE entity_id = '${device_id}'::uuid\n  AND metric_key = '${metric_name}'\n  AND ts >= ${__from:date}\n  AND ts < ${__to:date}\n  AND dbl_v IS NOT NULL\nORDER BY ts",
+          "refId": "actual",
+          "select": [[{ "params": ["value"], "type": "column" }]],
+          "timeColumn": "ts",
+          "where": []
+        }
+      ],
+      "title": "Anomalous Episodes — ${device_id} / ${metric_name}",
+      "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "id": 3,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "orientation": "auto",
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "pluginVersion": "10.4.5",
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+          "format": "table",
+          "group": [],
+          "hide": false,
+          "metricColumn": "none",
+          "rawQuery": true,
+          "rawSql": "SELECT\n  episode_id,\n  MAX(anomaly_score_index) AS asi,\n  COUNT(*) AS points,\n  MIN(severity) AS severity\nFROM anomaly\nWHERE entity_id = '${device_id}'::uuid\n  AND metric_key = '${metric_name}'\n  AND ('${severity}' = 'All' OR severity = '${severity}')\n  AND start_ts >= ${__from:date}\n  AND end_ts < ${__to:date}\nGROUP BY episode_id\nORDER BY episode_id",
+          "refId": "A",
+          "select": [[{ "params": ["value"], "type": "column" }]],
+          "timeColumn": "time",
+          "where": []
+        }
+      ],
+      "title": "Anomaly Score Index by Episode",
+      "type": "barchart"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 16 },
+      "id": 4,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "10.4.5",
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+          "format": "table",
+          "group": [],
+          "hide": false,
+          "metricColumn": "none",
+          "rawQuery": true,
+          "rawSql": "SELECT COUNT(*) AS value FROM anomaly WHERE entity_id = '${device_id}'::uuid AND metric_key = '${metric_name}' AND ('${severity}' = 'All' OR severity = '${severity}') AND start_ts >= ${__from:date} AND end_ts < ${__to:date}",
+          "refId": "A",
+          "select": [[{ "params": ["value"], "type": "column" }]],
+          "timeColumn": "time",
+          "where": []
+        }
+      ],
+      "title": "Total Anomalies",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 16 },
+      "id": 5,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["mean"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "10.4.5",
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+          "format": "table",
+          "group": [],
+          "hide": false,
+          "metricColumn": "none",
+          "rawQuery": true,
+          "rawSql": "SELECT AVG(score) AS value FROM anomaly WHERE entity_id = '${device_id}'::uuid AND metric_key = '${metric_name}' AND ('${severity}' = 'All' OR severity = '${severity}') AND start_ts >= ${__from:date} AND end_ts < ${__to:date}",
+          "refId": "A",
+          "select": [[{ "params": ["value"], "type": "column" }]],
+          "timeColumn": "time",
+          "where": []
+        }
+      ],
+      "title": "Avg Severity Score",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 20 },
+      "id": 6,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["max"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "10.4.5",
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+          "format": "table",
+          "group": [],
+          "hide": false,
+          "metricColumn": "none",
+          "rawQuery": true,
+          "rawSql": "SELECT MAX(score) AS value FROM anomaly WHERE entity_id = '${device_id}'::uuid AND metric_key = '${metric_name}' AND ('${severity}' = 'All' OR severity = '${severity}') AND start_ts >= ${__from:date} AND end_ts < ${__to:date}",
+          "refId": "A",
+          "select": [[{ "params": ["value"], "type": "column" }]],
+          "timeColumn": "time",
+          "where": []
+        }
+      ],
+      "title": "Max Score",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 20 },
+      "id": 7,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "pluginVersion": "10.4.5",
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+          "format": "table",
+          "group": [],
+          "hide": false,
+          "metricColumn": "none",
+          "rawQuery": true,
+          "rawSql": "SELECT COUNT(DISTINCT episode_id) AS value FROM anomaly WHERE entity_id = '${device_id}'::uuid AND metric_key = '${metric_name}' AND ('${severity}' = 'All' OR severity = '${severity}') AND start_ts >= ${__from:date} AND end_ts < ${__to:date} AND episode_id IS NOT NULL",
+          "refId": "A",
+          "select": [[{ "params": ["value"], "type": "column" }]],
+          "timeColumn": "time",
+          "where": []
+        }
+      ],
+      "title": "Distinct Episodes",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "postgres", "uid": "trendx-timescaledb" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 24 },
+      "id": 8,
+      "options": {
+        "code": {
+          "language": "sql",
+          "showLineNumbers": true,
+          "showMiniMap": false
+        },
+        "content": "-- Anomaly Timeline (calendar heatmap query template)\nSELECT\n  DATE(start_ts) AS anomaly_date,\n  COUNT(*) AS anomaly_count,\n  AVG(anomaly_score_index) AS avg_asi\nFROM anomaly\nWHERE entity_id = '${device_id}'::uuid\n  AND metric_key = '${metric_name}'\n  AND ('${severity}' = 'All' OR severity = '${severity}')\n  AND start_ts >= ${__from:date}\n  AND end_ts < ${__to:date}\nGROUP BY DATE(start_ts)\nORDER BY anomaly_date;\n",
+        "mode": "code"
+      },
+      "pluginVersion": "10.4.5",
+      "targets": [],
+      "title": "SQL — Anomaly Timeline Query",
+      "type": "text"
+    }
+  ],
+  "refresh": "5m",
+  "schemaVersion": 39,
+  "tags": ["trendx", "anomaly", "monitoring"],
+  "templating": {
+    "list": [
+      {
+        "current": { "selected": true, "text": "ALG16025001", "value": "ALG16025001" },
+        "hide": 0,
+        "includeAll": false,
+        "multi": false,
+        "name": "device_id",
+        "options": [
+          { "selected": true, "text": "ALG16025001", "value": "ALG16025001" }
+        ],
+        "query": "SELECT DISTINCT entity_id::text FROM anomaly_score ORDER BY entity_id::text",
+        "refresh": 2,
+        "skipUrlSync": false,
+        "type": "query",
+        "datasource": { "type": "postgres", "uid": "trendx-timescaledb" }
+      },
+      {
+        "current": { "selected": true, "text": "mppt_main_battery_voltage_v", "value": "mppt_main_battery_voltage_v" },
+        "hide": 0,
+        "includeAll": false,
+        "multi": false,
+        "name": "metric_name",
+        "options": [
+          { "selected": true, "text": "mppt_main_battery_voltage_v", "value": "mppt_main_battery_voltage_v" }
+        ],
+        "query": "SELECT DISTINCT metric_key FROM anomaly_score ORDER BY metric_key",
+        "refresh": 2,
+        "skipUrlSync": false,
+        "type": "query",
+        "datasource": { "type": "postgres", "uid": "trendx-timescaledb" }
+      },
+      {
+        "auto": true,
+        "auto_count": 30,
+        "auto_min": "10s",
+        "current": { "selected": true, "text": "Last 7 days", "value": "now-7d" },
+        "hide": 0,
+        "includeAll": false,
+        "multi": false,
+        "name": "time_range",
+        "options": [
+          { "selected": false, "text": "Last 24 hours", "value": "now-24h" },
+          { "selected": true, "text": "Last 7 days", "value": "now-7d" },
+          { "selected": false, "text": "Last 30 days", "value": "now-30d" },
+          { "selected": false, "text": "Last 90 days", "value": "now-90d" }
+        ],
+        "query": "now-24h, now-7d, now-30d, now-90d",
+        "skipUrlSync": false,
+        "type": "interval"
+      },
+      {
+        "current": { "selected": true, "text": "All", "value": "$__all" },
+        "hide": 0,
+        "includeAll": true,
+        "multi": false,
+        "name": "severity",
+        "options": [
+          { "selected": true, "text": "All", "value": "$__all" },
+          { "selected": false, "text": "LOW", "value": "LOW" },
+          { "selected": false, "text": "MEDIUM", "value": "MEDIUM" },
+          { "selected": false, "text": "HIGH", "value": "HIGH" },
+          { "selected": false, "text": "CRITICAL", "value": "CRITICAL" }
+        ],
+        "query": "LOW, MEDIUM, HIGH, CRITICAL",
+        "skipUrlSync": false,
+        "type": "custom"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Trendx — Anomalies",
+  "uid": "trendx-anomaly-dashboard",
+  "version": 1,
+  "weekStart": ""
+}

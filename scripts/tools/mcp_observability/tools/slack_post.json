@@ -1,0 +1,47 @@
+{
+  "name": "slack_post",
+  "description": "Publier un message dans un canal Slack via webhook ou API",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "channel": {
+        "type": "string",
+        "description": "Nom du canal ou ID (ex: #alerts, C123456)"
+      },
+      "text": {
+        "type": "string",
+        "description": "Contenu texte brut du message"
+      },
+      "blocks": {
+        "type": "array",
+        "items": {
+          "type": "object"
+        },
+        "description": "Blocs Slack (Block Kit) pour messages riches"
+      },
+      "attachments": {
+        "type": "array",
+        "items": {
+          "type": "object"
+        }
+      },
+      "username": {
+        "type": "string",
+        "description": "Nom d'affichage du bot"
+      },
+      "icon_emoji": {
+        "type": "string",
+        "description": "Emoji icône du bot (ex: :rotating_light:)"
+      },
+      "webhook_url": {
+        "type": "string",
+        "description": "URL du webhook Slack Incoming"
+      },
+      "token": {
+        "type": "string",
+        "description": "Token Slack bot/user (xoxb- / xoxp-)"
+      }
+    },
+    "required": ["text"]
+  }
+}

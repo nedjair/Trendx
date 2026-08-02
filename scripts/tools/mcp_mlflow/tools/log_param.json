@@ -1,0 +1,22 @@
+{
+  "name": "log_param",
+  "description": "Enregistrer un paramètre dans un run MLflow",
+  "inputSchema": {
+    "type": "object",
+    "properties": {
+      "run_id": {
+        "type": "string",
+        "description": "Identifiant du run où enregistrer le paramètre"
+      },
+      "key": {
+        "type": "string",
+        "description": "Nom du paramètre"
+      },
+      "value": {
+        "type": "string",
+        "description": "Valeur du paramètre (convertie en string)"
+      }
+    },
+    "required": ["run_id", "key", "value"]
+  }
+}
