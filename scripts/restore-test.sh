@@ -67,7 +67,7 @@ ok "base ${TEST_DB} créée, CREATE temporaire accordé à trendx_migration"
 step "3/6 restauration du dump (--role=trendx_migration)"
 docker cp "${dump}" "${PG}:${TMP_DUMP}"
 if ! docker exec "${PG}" sh -c \
-    "gunzip -c ${TMP_DUMP} | pg_restore --clean --if-exists --no-owner \
+    "gunzip -c ${TMP_DUMP} | pg_restore -U trendx_migration --clean --if-exists --no-owner \
        --role=trendx_migration -d ${TEST_DB}"; then
   docker exec "${PG}" rm -f "${TMP_DUMP}" || true
   fatal "pg_restore a échoué (base ${TEST_DB} conservée pour diagnostic)"
