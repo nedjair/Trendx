@@ -229,8 +229,12 @@ try:
     for mp in _default_monitor_mounts():
         if os.path.isdir(mp):
             try:
+                st = os.stat(mp)
                 free = check_disk_min_free(mp)
-                logger.info("[disk] mount {} = {:.1f} GB libres", mp, free)
+                logger.info(
+                    "[disk] mount {} = {:.1f} GB libres (dev={})",
+                    mp, free, st.st_dev,
+                )
             except Exception as exc:  # noqa: BLE001
                 logger.error("[disk] mount {} KO : {}", mp, exc)
         else:

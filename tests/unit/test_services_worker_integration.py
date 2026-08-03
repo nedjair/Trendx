@@ -13,6 +13,8 @@ from trendx.services.scheduler_guards import (
     verify_aggregate_refresh,
     verify_aggregate_rows,
 )
+from trendx.database.connection import get_catalog_engine
+from trendx.database.repositories import CheckpointRepository
 
 
 _WATERMARK_ROW = {
@@ -155,3 +157,88 @@ def test_verify_aggregate_rows_passes_when_rows_upserted() -> None:
         scheduler_guards, "check_source_rows_exist", return_value=True
     ):
         verify_aggregate_rows(_WATERMARK_ROW["aggregate_name"], 5, "2026-08-03T08:00:00+00:00")
+
+
+def test_checkpoint_write_then_read_distinct_connection() -> None:
+    engine = get_catalog_engine()
+    test_pipeline = "integration_test"
+    test_entity = "dev-checkpoint-001"
+    test_metric = "temperature"
+    test_ts = "2026-06-15T12:00:00+00:00"
+
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "DELETE FROM trendx_catalog.ingestion_checkpoints "
+                "WHERE pipeline = :p AND entity_id = :e AND metric_key = :m"
+            ),
+            {"p": test_pipeline, "e": test_entity, "m": test_metric},
+        )
+
+    with engine.begin() as conn:
+        repo = CheckpointRepository(conn)
+        repo.upsert_watermark(
+            test_pipeline, test_entity, test_ts, test_metric, records_processed=1000, last_batch_id="batch-1"
+        )
+
+    with engine.connect() as conn:
+        repo2 = CheckpointRepository(conn)
+        row = repo2.get_watermark(test_pipeline, test_entity, test_metric)
+        assert row is not None
+        assert row["watermark_ts"] is not None
+        assert str(row["watermark_ts"]).startswith("2026-06-15")
+        assert row["records_processed"] == 1000
+        assert row["last_batch_id"] == "batch-1"
+
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "DELETE FROM trendx_catalog.ingestion_checkpoints "
+                "WHERE pipeline = :p AND entity_id = :e AND metric_key = :m"
+            ),
+            {"p": test_pipeline, "e": test_entity, "m": test_metric},
+        )
+
+
+def test_checkpoint_upsert_concurrent_same_key() -> None:
+    engine = get_catalog_engine()
+    test_pipeline = "integration_test"
+    test_entity = "dev-checkpoint-002"
+    test_metric = "humidity"
+
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "DELETE FROM trendx_catalog.ingestion_checkpoints "
+                "WHERE pipeline = :p AND entity_id = :e AND metric_key = :m"
+            ),
+            {"p": test_pipeline, "e": test_entity, "m": test_metric},
+        )
+
+    with engine.begin() as conn1:
+        repo1 = CheckpointRepository(conn1)
+        repo1.upsert_watermark(
+            test_pipeline, test_entity, "2026-06-15T12:00:00+00:00", test_metric, records_processed=500, last_batch_id="batch-a"
+        )
+
+    with engine.begin() as conn2:
+        repo2 = CheckpointRepository(conn2)
+        repo2.upsert_watermark(
+            test_pipeline, test_entity, "2026-06-15T13:00:00+00:00", test_metric, records_processed=1500, last_batch_id="batch-b"
+        )
+
+    with engine.connect() as conn3:
+        repo3 = CheckpointRepository(conn3)
+        row = repo3.get_watermark(test_pipeline, test_entity, test_metric)
+        assert row is not None
+        assert row["records_processed"] == 1500
+        assert row["last_batch_id"] == "batch-b"
+
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "DELETE FROM trendx_catalog.ingestion_checkpoints "
+                "WHERE pipeline = :p AND entity_id = :e AND metric_key = :m"
+            ),
+            {"p": test_pipeline, "e": test_entity, "m": test_metric},
+        )

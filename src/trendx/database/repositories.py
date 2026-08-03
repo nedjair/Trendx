@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Generic, Optional, Sequence, TypeVar
 
 from loguru import logger
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.orm import Session
 
 from trendx.database.models import (

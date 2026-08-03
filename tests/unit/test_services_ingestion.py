@@ -173,6 +173,16 @@ def test_ensure_disk_available_fail_closed_when_no_mount_resolvable(monkeypatch)
 
 
 @pytest.mark.unit
+def test_ensure_disk_available_fails_on_duplicate_devices(monkeypatch):
+    monkeypatch.setenv("TRENDX_DISK_MONITOR_MOUNTS", "/tmp,/tmp")
+    from importlib import reload
+    import trendx.services.ingestion as ing_mod
+    reload(ing_mod)
+    with pytest.raises(ing_mod.DiskCapacityError, match="même périphérique"):
+        ing_mod.IngestionService().ensure_disk_available()
+
+
+@pytest.mark.unit
 def test_lit_function():
     from datetime import datetime
 

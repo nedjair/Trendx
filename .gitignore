@@ -51,6 +51,7 @@ backups/
 *.sql.gz
 *.sql
 !docs/proposed-schema.sql
+!migrations/*.sql
 
 # Compose legacy
 docker-compose.yml

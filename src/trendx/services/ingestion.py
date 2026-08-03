@@ -69,8 +69,18 @@ class IngestionService:
     def ensure_disk_available(self, mounts: Sequence[str] | None = None) -> None:
         targets = list(mounts if mounts is not None else _default_monitor_mounts())
         resolved: list[str] = []
+        seen_devs: dict[int, str] = {}
         for mount in targets:
             if os.path.isdir(mount):
+                st = os.stat(mount)
+                dev = st.st_dev
+                if dev in seen_devs:
+                    raise DiskCapacityError(
+                        "Deux sondes disque visent le même périphérique "
+                        f"(dev={dev}) : {seen_devs[dev]} et {mount}. "
+                        "Retire l'une d'elles ou déclare-les explicitement comme redondantes."
+                    )
+                seen_devs[dev] = mount
                 check_disk_min_free(mount)
                 resolved.append(mount)
         if not resolved:
@@ -80,7 +90,10 @@ class IngestionService:
             )
         logger.info(
             "[disk] points de montage surveillés résolus : {}",
-            ", ".join(f"{m}={shutil.disk_usage(m).free / (1024**3):.1f} GB libres" for m in resolved),
+            ", ".join(
+                f"{m} (dev={os.stat(m).st_dev}, {shutil.disk_usage(m).free / (1024**3):.1f} GB libres)"
+                for m in resolved
+            ),
         )
 
     @property
