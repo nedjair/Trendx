@@ -80,7 +80,8 @@ FROM nginx:1.27.0-alpine-slim AS runtime
 
 LABEL org.opencontainers.image.title="Trendx UI Runtime" \
       org.opencontainers.image.description="Nginx serving Trendx React/Vite SPA with API proxy" \
-      org.opencontainers.image.version="0.1.0"
+      org.opencontainers.image.version="0.1.0" \
+      com.trendx.project="trendx"
 
 # config nginx : SPA fallback index.html + /api/* proxy vers api:8000
 COPY docker/nginx-ui.conf /etc/nginx/conf.d/default.conf

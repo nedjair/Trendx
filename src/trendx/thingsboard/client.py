@@ -123,7 +123,11 @@ class ThingsBoardError(Exception):
     def __init__(self, status: int, body: Any = None) -> None:
         self.status = status
         self.body = body
-        super().__init__(f"ThingsBoard API error {status}: {body}")
+        body_str = str(body) if body is not None else "None"
+        # Échapper les accolades pour éviter les problèmes de format string
+        # avec loguru / tenacity quand le body contient des dicts.
+        safe_body = body_str.replace("{", "{{").replace("}", "}}")
+        super().__init__(f"ThingsBoard API error {status}: {safe_body}")
 
 
 class ThingsBoardAuthError(ThingsBoardError):
@@ -381,7 +385,9 @@ class ThingsBoardClient:
     async def get_devices(self, page: int = 0, page_size: int | None = None) -> PageData:
         params = {"pageSize": page_size or self._page_size, "page": page}
         data = await self._get("/api/tenant/devices", params=params)
-        return PageData.model_validate(data)
+        result = PageData.model_validate(data)
+        result.data = [Device.model_validate(item) for item in result.data]
+        return result
 
     async def get_device_by_id(self, device_id: str) -> Device:
         data = await self._get(f"/api/device/{device_id}")

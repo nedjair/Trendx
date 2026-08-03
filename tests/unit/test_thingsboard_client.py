@@ -194,12 +194,13 @@ async def test_retry_on_429(mock_client):
 @pytest.mark.asyncio
 async def test_context_manager(mock_client):
     mock_client._client = AsyncMock()
-    mock_client._client.aclose = AsyncMock()
+    aclose_mock = AsyncMock()
+    mock_client._client.aclose = aclose_mock
 
     async with mock_client as cm:
         assert cm is mock_client
 
-    mock_client._client.aclose.assert_awaited_once()
+    aclose_mock.assert_awaited_once()
 
 
 @pytest.mark.unit

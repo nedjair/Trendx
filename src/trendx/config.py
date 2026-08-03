@@ -35,6 +35,10 @@ class Settings(BaseSettings):
 
     trendx_disk_min_free_gb: int = Field(default=50, alias="TRENDX_DISK_MIN_FREE_GB")
 
+    # Verrou d'ingestion : false par défaut. L'endpoint /api/v1/ingestion/trigger
+    # refuse (409) tant que TRENDX_INGEST_ENABLED n'est pas explicitement true.
+    trendx_ingest_enabled: bool = Field(default=False, alias="TRENDX_INGEST_ENABLED")
+
     trendx_api_host: str = Field(default="0.0.0.0", alias="TRENDX_API_HOST")
     trendx_api_port: int = Field(default=8000, alias="TRENDX_API_PORT")
     trendx_python_executor_port: int = Field(default=8181, alias="TRENDX_PYTHON_EXECUTOR_PORT")
@@ -50,6 +54,9 @@ class Settings(BaseSettings):
     tb_page_size: int = Field(default=100, alias="TB_PAGE_SIZE")
     tb_writeback_enabled: bool = Field(default=False, alias="TB_WRITEBACK_ENABLED")
     tb_alarms_enabled: bool = Field(default=False, alias="TB_ALARMS_ENABLED")
+    # Authentification ThingsBoard réelle configurée (compte service) : true uniquement
+    # quand des identifiants vérifiés sont en place. Verrou d'ingestion : absent => false.
+    tb_auth_configured: bool = Field(default=False, alias="TB_AUTH_CONFIGURED")
     tb_device_id: str = Field(default="ALG16025001", alias="TB_DEVICE_ID")
     tb_metric_name: str = Field(
         default="mppt_main_battery_voltage_v", alias="TB_METRIC_NAME"
@@ -118,6 +125,9 @@ class Settings(BaseSettings):
         """
         username = self.tb_username
         password = self.tb_password.get_secret_value()
+        # Heuristique réduite aux placeholders : ne spécialise AUCUN mot de passe
+        # réel (le constat du mot de passe d'usine ThingsBoard est consigné dans
+        # docs/security.md sans valeur ; TB_AUTH_CONFIGURED fait foi).
         if username and password and password not in ("CHANGE_ME",) and len(password) >= 8:
             return username, password
         try:

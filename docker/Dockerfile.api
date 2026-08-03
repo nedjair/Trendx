@@ -7,7 +7,8 @@ FROM python:3.11.14-slim-bookworm AS base
 LABEL org.opencontainers.image.title="Trendx API" \
       org.opencontainers.image.description="Trendx Analytics Platform - Backend API" \
       org.opencontainers.image.version="0.1.0" \
-      org.opencontainers.image.source="https://gitea.local/trendx/Trendx"
+      org.opencontainers.image.source="https://gitea.local/trendx/Trendx" \
+      com.trendx.project="trendx"
 
 # ——— Système ———
 ENV DEBIAN_FRONTEND=noninteractive \

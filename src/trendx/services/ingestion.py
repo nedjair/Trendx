@@ -27,6 +27,19 @@ class DiskCapacityError(RuntimeError):
     """Espace disque libre sous le seuil : ingestion arrêtée automatiquement."""
 
 
+def _get_filesystem_type(path: str) -> str:
+    """Retourne le type de système de fichiers pour un chemin donné (lit /proc/mounts)."""
+    try:
+        with open("/proc/mounts", "r") as f:
+            for line in f:
+                parts = line.split()
+                if len(parts) >= 3 and parts[1] == path:
+                    return parts[2]
+    except Exception:
+        pass
+    return "unknown"
+
+
 def _default_monitor_mounts() -> tuple[str, ...]:
     mounts_env = os.environ.get("TRENDX_DISK_MONITOR_MOUNTS", "").strip()
     if mounts_env:
@@ -34,16 +47,68 @@ def _default_monitor_mounts() -> tuple[str, ...]:
     return ("/",)
 
 
+def _statvfs_available_gb(mount: str) -> tuple[float, float, float]:
+    """Retourne (available_gb, free_gb, total_gb) avec available = f_bavail * f_frsize."""
+    st = os.statvfs(mount)
+    frsize = st.f_frsize or st.f_bsize
+    avail_gb = (st.f_bavail * frsize) / (1024**3)
+    free_gb = (st.f_bfree * st.f_bsize) / (1024**3)
+    total_gb = (st.f_blocks * st.f_bsize) / (1024**3)
+    return avail_gb, free_gb, total_gb
+
+
 def check_disk_min_free(mount: str = "/") -> float:
-    """Retourne l'espace libre (GB) sur `mount`, ou lève DiskCapacityError sous le seuil."""
-    usage = shutil.disk_usage(mount)
-    free_gb = usage.free / (1024**3)
-    if free_gb < settings.trendx_disk_min_free_gb:
+    """Retourne l'espace DISPONIBLE (f_bavail, hors réservé root) en GB, ou lève DiskCapacityError sous le seuil."""
+    avail_gb, free_gb, total_gb = _statvfs_available_gb(mount)
+    if avail_gb < settings.trendx_disk_min_free_gb:
         raise DiskCapacityError(
-            f"Espace libre {mount}: {free_gb:.1f} GB < TRENDX_DISK_MIN_FREE_GB="
-            f"{settings.trendx_disk_min_free_gb} GB. Ingestion arrêtée."
+            f"Espace disponible {mount}: {avail_gb:.1f} GB < TRENDX_DISK_MIN_FREE_GB="
+            f"{settings.trendx_disk_min_free_gb} GB (free={free_gb:.1f} GB, total={total_gb:.1f} GB). "
+            "Ingestion arrêtée."
         )
-    return free_gb
+    return avail_gb
+
+
+def probe_disk_mounts(service: str = "trendx") -> None:
+    """Sonde unique de disque, partagée par api et worker (format de journal identique).
+
+    Pour chaque montage surveillé (TRENDX_DISK_MONITOR_MOUNTS) :
+      - mesure via _statvfs_available_gb() (f_bavail/f_bfree/f_blocks) ;
+      - type de FS via _get_filesystem_type() (lutin /proc/mounts) ;
+      - delta réservé = free - avail (blocs réservés root, ext4 5 %) ;
+      - tmpfs => RuntimeError (fatal, fail-closed) ;
+      - total manifestement faible => warning ;
+      - check_disk_min_free() => erreur journalisée si sous le seuil.
+    """
+    for mp in _default_monitor_mounts():
+        if not os.path.isdir(mp):
+            logger.error("[disk] mount introuvable : {} (non mesuré)", mp)
+            continue
+        st = os.stat(mp)
+        avail_gb, free_gb, total_gb = _statvfs_available_gb(mp)
+        fstype = _get_filesystem_type(mp)
+        delta_gb = free_gb - avail_gb
+        logger.info(
+            "[disk] {}: {} = {:.1f} GB avail / {:.1f} GB free / {:.1f} GB total "
+            "(dev={}, fstype={}, delta_reserved={:.1f} GB)",
+            service, mp, avail_gb, free_gb, total_gb, st.st_dev, fstype, delta_gb,
+        )
+        if fstype == "tmpfs":
+            raise RuntimeError(
+                f"[disk] FAIL : montage {mp} est un tmpfs (dev={st.st_dev}, "
+                f"fstype={fstype}, total={total_gb:.1f} GB). "
+                "Utiliser un disque persistant. Vérifier df -h /dev/sdb2 sur l'hôte."
+            )
+        if total_gb < 10.0:
+            logger.warning(
+                "[disk] montage {} : taille totale {:.1f} GB manifestement faible "
+                "pour un disque hôte. Vérifier l'identité du FS.",
+                mp, total_gb,
+            )
+        try:
+            check_disk_min_free(mp)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("[disk] mount {} KO : {}", mp, exc)
 
 
 class IngestionService:
@@ -81,6 +146,26 @@ class IngestionService:
                         "Retire l'une d'elles ou déclare-les explicitement comme redondantes."
                     )
                 seen_devs[dev] = mount
+                avail_gb, free_gb, total_gb = _statvfs_available_gb(mount)
+                fstype = _get_filesystem_type(mount)
+                if fstype == "tmpfs":
+                    raise DiskCapacityError(
+                        f"Montage disque {mount} est un tmpfs (dev={dev}, fstype={fstype}, "
+                        f"total={total_gb:.1f} GB). Utiliser un disque persistant. "
+                        "Vérifier df -h /dev/sdb2 sur l'hôte."
+                    )
+                if total_gb < 10.0:
+                    logger.warning(
+                        "[disk] montage {} : taille totale {:.1f} GB manifestement faible "
+                        "pour un disque hôte (dev={}, fstype={}). Vérifier l'identité du FS.",
+                        mount, total_gb, dev, fstype,
+                    )
+                delta_gb = free_gb - avail_gb
+                logger.info(
+                    "[disk] montage {} : avail={:.1f} GB, free={:.1f} GB, "
+                    "delta(reserved root)={:.1f} GB, total={:.1f} GB (dev={}, fstype={})",
+                    mount, avail_gb, free_gb, delta_gb, total_gb, dev, fstype,
+                )
                 check_disk_min_free(mount)
                 resolved.append(mount)
         if not resolved:
@@ -88,13 +173,6 @@ class IngestionService:
                 "Aucun point de montage de TRENDX_DISK_MONITOR_MOUNTS n'est résolvable "
                 f"depuis ce conteneur : {targets}. Ingestion arrêtée (fail-closed)."
             )
-        logger.info(
-            "[disk] points de montage surveillés résolus : {}",
-            ", ".join(
-                f"{m} (dev={os.stat(m).st_dev}, {shutil.disk_usage(m).free / (1024**3):.1f} GB libres)"
-                for m in resolved
-            ),
-        )
 
     @property
     def total_processed(self) -> int:

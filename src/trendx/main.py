@@ -107,6 +107,21 @@ async def require_auth_middleware(request: Request, call_next):
     return await call_next(request)
 
 
+@app.on_event("startup")
+async def _log_startup_disk_check() -> None:
+    # Sonde disque UNIQUE, partagée avec le worker (probe_disk_mounts) :
+    # _statvfs_available_gb + fstype + delta réservé, format de journal identique.
+    # tmpfs => fatal (fail-closed), cohérent avec le worker.
+    from trendx.services.ingestion import probe_disk_mounts
+    try:
+        probe_disk_mounts("api")
+    except RuntimeError as exc:
+        logger.error("[disk] {} : sonde disque fatale", exc)
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("API startup disk check failed: {}", exc)
+
+
 # ── Pydantic models ─────────────────────────────────────────────────────
 
 
@@ -781,7 +796,30 @@ async def get_telemetry_stats(
 
 
 @app.post("/api/v1/ingestion/trigger", tags=["telemetry"], response_model=DiscoveryTriggerOut)
-async def trigger_ingestion() -> JSONResponse:
+async def trigger_ingestion(request: Request) -> JSONResponse:
+    # Verrou d'ingestion : refus systématique tant que TRENDX_INGEST_ENABLED n'est
+    # pas explicitement true, et tant que l'authentification ThingsBoard n'est pas
+    # déclarée configurée (TB_AUTH_CONFIGURED=true). Toute tentative est journalisée
+    # avec son déclencheur et son horodatage (loguru).
+    trigger = request.client.host if request.client else "inconnu"
+    if not settings.trendx_ingest_enabled:
+        logger.warning(
+            "Ingestion REFUSÉE (verrou TRENDX_INGEST_ENABLED != true), déclencheur={}",
+            trigger,
+        )
+        raise HTTPException(
+            status_code=409,
+            detail="Ingestion verrouillée : TRENDX_INGEST_ENABLED doit être true",
+        )
+    if not settings.tb_auth_configured:
+        logger.warning(
+            "Ingestion REFUSÉE (TB_AUTH_CONFIGURED != true), déclencheur={}",
+            trigger,
+        )
+        raise HTTPException(
+            status_code=409,
+            detail="Ingestion verrouillée : TB_AUTH_CONFIGURED doit être true",
+        )
     try:
         svc = TaskService()
         task = svc.create_task(
@@ -790,7 +828,11 @@ async def trigger_ingestion() -> JSONResponse:
             json_job={"action": "incremental_ingest"},
             reference_type="MANUAL",
         )
-        logger.info("Ingestion triggered, task={}", task.id)
+        logger.info(
+            "Ingestion déclenchée par {} : task={}",
+            trigger,
+            task.id,
+        )
         return JSONResponse(
             content=DiscoveryTriggerOut(status="triggered", message="Ingestion scheduled", task_id=str(task.id)).model_dump(),
             status_code=202,

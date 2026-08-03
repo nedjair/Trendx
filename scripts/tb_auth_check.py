@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """Vérifie l'authentification ThingsBoard (compte service) SANS journaliser le mot de passe.
 
-Lit TB_BASE_URL / TB_USERNAME / TB_PASSWORD dans .env. Sort :
-- SKIP  si les identifiants sont encore des placeholders (code 0) ;
-- OK    si /api/auth/login répond 200 (code 0) ;
-- FAIL  sinon (code 1).
+Règle (post-signalement sécurité) :
+- TB_AUTH_CONFIGURED=true  => authentification OBLIGATOIREment réussie (code 0 = OK, code 1 = FAIL).
+- TB_AUTH_CONFIGURED absent/false/vide => SKIP (code 0) ; l'opérateur n'a pas activé l'auth.
 
 Ne jamais afficher ni le mot de passe ni le jeton JWT.
 """
 import json
+import os
 import ssl
 import sys
 import urllib.request
@@ -34,25 +34,23 @@ def main() -> int:
     username = get_env_var("TB_USERNAME") or ""
     password = get_env_var("TB_PASSWORD") or ""
 
-    is_placeholder = (
-        not username
-        or not password
-        or len(password) < 8
-        or password in ("CHANGE_ME",)
-    )
-    if is_placeholder:
-        # Fallback sur le coffre (TB_SERVICE_USER_EMAIL / TB_SERVICE_USER_PASSWORD)
+    # Fallback coffre si .env incomplet
+    if not username or not password:
         username = get_env_var("TB_SERVICE_USER_EMAIL", ".secrets/service-accounts.env") or username
         password = get_env_var("TB_SERVICE_USER_PASSWORD", ".secrets/service-accounts.env") or password
-        is_placeholder = (
-            not username
-            or not password
-            or len(password) < 8
-            or password in ("CHANGE_ME",)
-        )
-    if is_placeholder:
-        print("SKIP — identifiants ThingsBoard non fournis (TB_PASSWORD / TB_SERVICE_USER_PASSWORD placeholders)")
+
+    auth_configured = (
+        (get_env_var("TB_AUTH_CONFIGURED") or os.environ.get("TB_AUTH_CONFIGURED", "") or "")
+        .lower() in ("true", "1", "yes")
+    )
+
+    if not auth_configured:
+        print("SKIP — TB_AUTH_CONFIGURED non activé ; authentification ThingsBoard non vérifiée")
         return 0
+
+    if not username or not password:
+        print("FAIL — TB_AUTH_CONFIGURED=true mais TB_USERNAME/TB_PASSWORD manquants")
+        return 1
 
     ctx = ssl.create_default_context()
     ctx.check_hostname = False

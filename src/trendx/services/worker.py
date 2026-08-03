@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import socket
 import sys
 import threading
@@ -225,22 +226,13 @@ logger.info(
 )
 
 try:
-    from trendx.services.ingestion import _default_monitor_mounts, check_disk_min_free
-    for mp in _default_monitor_mounts():
-        if os.path.isdir(mp):
-            try:
-                st = os.stat(mp)
-                free = check_disk_min_free(mp)
-                logger.info(
-                    "[disk] mount {} = {:.1f} GB libres (dev={})",
-                    mp, free, st.st_dev,
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.error("[disk] mount {} KO : {}", mp, exc)
-        else:
-            logger.error("[disk] mount introuvable : {} (non mesuré)", mp)
+    from trendx.services.ingestion import probe_disk_mounts
+    probe_disk_mounts("worker")
 except Exception as exc:  # noqa: BLE001
     logger.error("[disk] impossible de valider les montages : {}", exc)
+    # Les erreurs tmpfs sont fatales au démarrage
+    if isinstance(exc, RuntimeError) and "tmpfs" in str(exc):
+        raise
 
 try:
     while True:

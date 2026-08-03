@@ -5,7 +5,7 @@
 
 SHELL := /bin/bash
 
-.PHONY: help setup install build build-images up up-minimal up-full status health logs logs-api logs-worker logs-ui logs-reverse-proxy down down-clean lint fmt format typecheck type-check test test-unit test-integration test-e2e migrate seed seed-test-data doctor backup restore-check clean shell venv dc-config
+.PHONY: help setup install build build-images up up-minimal up-full status health logs logs-api logs-worker logs-ui logs-reverse-proxy down down-clean lint fmt format typecheck type-check test test-unit test-integration test-e2e migrate seed seed-test-data doctor backup restore-check restore-test clean shell venv dc-config
 
 # Valeurs par défaut
 PYTHON ?= $(shell command -v python3 >/dev/null 2>&1 && echo python3 || (command -v python >/dev/null 2>&1 && echo python || echo python3))
@@ -25,6 +25,7 @@ PG_EXTERNAL_CONTAINER ?= mobili_dahsboard-postgres-1
 
 # Seuil disque dur (AGENTS §5) — lu depuis .env, défaut 50
 TRENDX_DISK_MIN_FREE_GB ?= $(shell grep -E '^TRENDX_DISK_MIN_FREE_GB=' .env 2>/dev/null | cut -d= -f2 || echo 50)
+TRENDX_DISK_MONITOR_MOUNTS ?= $(shell grep -E '^TRENDX_DISK_MONITOR_MOUNTS=' .env 2>/dev/null | cut -d= -f2 || echo /)
 
 .DEFAULT_GOAL := help
 
@@ -221,12 +222,13 @@ doctor: ## Vérifications pre-flight (réseau, ports, ressources, bases, disque)
 	  if [ "$$rc" -ne 0 ]; then fail=$$((fail+1)); fi; \
 	echo "│"; \
 	echo -n "│  Auth ThingsBoard (sans leak) ? : "; \
+	  tb_configured=$$(grep -E '^TB_AUTH_CONFIGURED=(true|1|yes|TRUE|YES)' .env 2>/dev/null | wc -l); \
 	  tbout=$$(python3 scripts/tb_auth_check.py 2>&1); rc=$$?; \
 	  echo "$$tbout"; \
-	  if [ "$$rc" -ne 0 ]; then fail=$$((fail+1)); fi; \
+	  if [ "$$tb_configured" -gt 0 ] && [ "$$rc" -ne 0 ]; then fail=$$((fail+1)); fi; \
 	echo "│"; \
 	echo -n "│  Whitelist ThingsBoard (GET + login only) ? : "; \
-	  wlout=$$(python3 scripts/tb_whitelist_check.py 2>&1); rc=$$?; \
+	  wlout=$$($(VENV)/bin/python scripts/tb_whitelist_check.py 2>&1); rc=$$?; \
 	  echo "$$wlout"; \
 	  if [ "$$rc" -ne 0 ]; then fail=$$((fail+1)); fi; \
 	echo "│"; \
@@ -259,9 +261,18 @@ doctor: ## Vérifications pre-flight (réseau, ports, ressources, bases, disque)
 	  dup=$$(ls -1 migrations/[0-9][0-9][0-9]_*.sql 2>/dev/null | sed 's|.*/\([0-9][0-9][0-9]\)_.*|\1|' | sort | uniq -d | wc -l); \
 	  [ "$$dup" -eq 0 ] && echo "OK" || { echo "FAIL — numéros en double: $$(ls -1 migrations/[0-9][0-9][0-9]_*.sql 2>/dev/null | sed 's|.*/\([0-9][0-9][0-9]\)_.*|\1|' | sort | uniq -d | tr '\n' ' ')"; fail=$$((fail+1)); }; \
 	echo "│"; \
+	echo -n "│  Devices enregistrés (catalogue) ? : "; \
+	  dev_count=$$(docker exec mobili_dahsboard-postgres-1 psql -U postgres -d trendx -tAc "SELECT count(*) FROM trendx_catalog.business_entity;" 2>/dev/null | tr -d ' '); \
+	  dev_count=$${dev_count:-0}; \
+	  echo "$$dev_count"; \
+	  if [ "$$dev_count" -gt 52 ] 2>/dev/null; then \
+	    echo "│  \033[33mWARN — projection > 150 GB (seuil de bascule rétention) atteinte avec $$dev_count devices. Considérer purge du brut à J+30.\033[0m"; \
+	  fi; \
+	echo "│"; \
 	echo -n "│  Python3 disponible : "; which python3 && python3 --version | head -1; \
-	echo -n "│  docker available    : "; docker --version 2>/dev/null || echo "NON"; \
-	echo -n "│  docker compose      : "; docker compose version 2>/dev/null || echo "NON"; \
+	echo -n "│  docker compose      : "; docker compose version --short 2>/dev/null || echo "NON"; \
+	echo -n "│  Compose file        : "; echo "/opt/trendx/docker-compose.trendx.yml (via \$$(DC))"; \
+	echo -n "│  Projet compose      : "; docker compose ls --format json 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print(next((p['Name'] for p in d if p['Name']=='trendx'), 'ABSENT'))" 2>/dev/null || echo "NON"; \
 	echo "└─────────────────────────────────────────────────────────────────────────┘"; \
 	exit $$fail
 
@@ -284,15 +295,22 @@ restore-check: ## Vérifier intégrité dumps les plus récents (AGENTS §17)
 	  gzip -t "$$f" 2>/dev/null && echo "OK gzip" || echo "FAIL gzip"; \
 	done
 
+restore-test: ## Rejouer restauration complète sur base jetable + preuves état canonique (docs/deployment.md §12bis)
+	@bash scripts/restore-test.sh
+
 # ————————————————————————————————————————
 # Nettoyage Docker (périmètre Trendx uniquement, pas de cron automatique)
 # ————————————————————————————————————————
 docker-cleanup: ## Nettoyer images/calques/cache Docker Trendx (hors volumes TB/PG)
 	@echo "[trendx] Nettoyage Docker (périmètre Trendx)..."
-	@docker image prune -f --filter "until=72h"
-	@docker builder prune -f --filter "until=72h"
+	@echo "[trendx] Images inutilisées (>72h, label com.trendx.project=trendx) :"
+	@docker image prune -f --filter "until=72h" --filter "label=com.trendx.project=trendx"
+	@echo "[trendx] Calques de construction (>72h, label com.trendx.project=trendx) :"
+	@docker builder prune -f --filter "until=72h" --filter "label=com.trendx.project=trendx"
+	@echo "[trendx] Nettoyage global (conteneurs arrêtés, réseaux, build cache) :"
 	@docker system prune -f --filter "until=72h" --filter "label=com.trendx.project=trendx"
-	@echo "[trendx] docker-cleanup terminé."
+	@echo "[trendx] Espace récupéré :"
+	@docker system df
 
 # ————————————————————————————————————————
 # Utilitaires

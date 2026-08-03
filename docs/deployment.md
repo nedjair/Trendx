@@ -117,7 +117,12 @@ services:
           memory: 1G
     pids_limit: 1024
     volumes:
-      - trendx_data:/opt/trendx/data
+      - ./src:/app/src:ro
+      - ./migrations:/app/migrations:ro
+      - ./scripts:/app/scripts:ro
+      - ./tests:/app/tests:ro
+      - ./.secrets:/app/.secrets:ro
+      - /opt/trendx/data:/opt/trendx/data:rw
 
   worker:
     build:
@@ -156,7 +161,7 @@ services:
           memory: 2G
     pids_limit: 2048
     volumes:
-      - trendx_data:/opt/trendx/data
+      - /opt/trendx/data:/opt/trendx/data:rw
 
 networks:
   trendx_internal:
@@ -169,10 +174,8 @@ networks:
     external: true
     name: mobili_dahsboard_default
 
-volumes:
-  trendx_data:
-    name: trendx_data
-    driver: local
+# Pas de volume nommé Trendx : bind mount direct /opt/trendx/data sur le worker
+# Les sauvegardes sont dans /opt/trendx/data/backups/ sur l'hôte
 
 secrets:
   tls_cert:
@@ -339,28 +342,114 @@ make down-clean    # ⚠ nécessite TRENDX_CONFIRM_APPLY=YES, détruit volumes
 
 ## 12. Volumes et chemins
 
-| Volume Docker | Point de montage | Rôle |
+| Volume / bind mount | Point de montage | Rôle |
 |---|---|---|
-| `trendx_data` | `/opt/trendx/data` | Données Trendx |
+| `/opt/trendx/data` (bind mount) | `/opt/trendx/data` (worker) | Données persistantes Trendx : backups, logs, données ingestion |
+| `/opt/trendx/data/reverse-proxy/logs` (bind mount) | `/var/log/nginx` (reverse-proxy) | Journaux nginx |
 | `tb-postgres-data` (partagé) | `/var/lib/postgresql/data` | Base `trendx` (schémas `trendx_catalog`, `trendx_analytics`) |
 
-**Correction B — Partage volume :** Les bases Trendx partagent le volume PostgreSQL existant de ThingsBoard. Ce choix est accepté pour Phase 2. Conséquences :
-- Performance : risque de contention si ThingsBoard est très chargé
-- Espace : ts_kv TB (~25–30 GB) + `trendx_analytics.ts_kv` (estimé 2–8 GB) sur même volume
-- Sauvegarde : la sauvegarde de `trendx` inclut le volume PostgreSQL partagé
+**Correction B — Montage direct host :** Le volume nommé `trendx_data` a été remplacé par un bind mount direct du chemin hôte `/opt/trendx/data`. Cela garantit que :
+- Les sauvegardes (`/opt/trendx/data/backups/`) sont accessibles depuis l'hôte ET les conteneurs
+- Le dernier dump connu est : `/opt/trendx/data/backups/20260802/trendx.dump.gz` (42 707 octets, 2026-08-02 15:44)
+- Pas de divergence entre chemin hôte et point de montage conteneur
 
 **Protection :** Arrêt automatique ingestion sous `TRENDX_DISK_MIN_FREE_GB` + alerte < 100 GB.
 
 ---
 
-## 12bis. Sauvegardes
+## 12bis. Sauvegardes et restauration
+
+### Sauvegarde
 
 - Cible : base `trendx` uniquement (jamais `thingsboard` — lecture seule)
 - Convention : `/opt/trendx/data/backups/YYYYMMDD/trendx.dump.gz`
   (`pg_dump -Fc --no-owner --clean` pipé dans `gzip -9`, cible `make backup`)
 - Droits : `chmod 700 /opt/trendx/data/backups` et tout son contenu
-- Vérification : `make restore-check` (intégrité gzip + restauration de test)
-- Le fichier plat hérité `trendx_2026-08-02.dump` (non compressé, à la racine) est obsolète : archivé dans `backups/archive/`
+- Vérification : `make restore-check` (intégrité gzip) puis `make restore-test`
+
+### Contenu du dump (vérifié sur le dump du jour)
+
+- `pg_dump -Fc` de la base `trendx` **entière** : schémas inclus.
+  Le dump contient `CREATE SCHEMA trendx_catalog` et `CREATE SCHEMA trendx_analytics`
+  (2 occurrences vérifiées) : la restauration crée donc elle-même les schémas,
+  aucune création manuelle préalable n'est nécessaire.
+- Le dump contient aussi les **ACL** (`ACL - SCHEMA`, `ACL - TABLE`, ...) :
+  les droits (REVOKE FROM PUBLIC + GRANT) sont rejoués par `pg_restore`.
+- Le dump est créé avec `--no-owner` : il ne contient **aucune** instruction
+  `OWNER TO` (0 occurrence vérifiée). La propriété est donc établie à la
+  restauration via `--role=trendx_migration` (voir ci-dessous), jamais à la main.
+
+### Restauration (procédure complète, exécutée par `make restore-test`)
+
+Objectif de l'état cible (état canonique, = prod vérifié) :
+- schémas `trendx_catalog` et `trendx_analytics` **propriété `trendx_migration`** ;
+- **tous** les objets (tables, fonctions, séquences, vues) **propriété `trendx_migration`** ;
+- `trendx_app` : **DML seul** (SELECT, INSERT, UPDATE, DELETE) + USAGE sur les
+  schémas, **sans** CREATE sur les schémas ;
+- ACL base `trendx` : `postgres` = CONNECT/CREATE/TEMPORARY, `trendx_app` =
+  CONNECT, PUBLIC = CONNECT/TEMPORARY.
+
+`make restore-test` (`scripts/restore-test.sh`) rejoue la procédure sur une base
+jetable `trendx_restore_test` (créée puis supprimée dans le conteneur PostgreSQL
+existant, base `trendx` jamais touchée) et échoue à la première preuve non
+vérifiée. La base jetable est conservée en cas d'échec pour diagnostic.
+
+Étapes (chaque étape est exécutée par `make restore-test`) :
+
+1. **Rôles prérequis** (idempotent, via docker exec sur le conteneur PostgreSQL) :
+   ```sql
+   DO $$ BEGIN
+     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='trendx_migration') THEN
+       CREATE ROLE trendx_migration LOGIN; END IF;
+     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='trendx_app') THEN
+       CREATE ROLE trendx_app LOGIN; END IF;
+   END $$;
+   ```
+2. **Base cible** (nom `trendx` en reprise réelle, `trendx_restore_test` en test) :
+   ```sql
+   CREATE DATABASE <cible> OWNER postgres;
+   GRANT CONNECT, CREATE, TEMPORARY ON DATABASE <cible> TO trendx_migration;
+   ```
+   (`CREATE` est accordé temporairement : indispensable pour que
+   `--role=trendx_migration` puisse créer les schémas contenus dans le dump.)
+3. **Restauration** (les schémas du dump sont créés ici). Le `pg_restore` du
+   conteneur PostgreSQL ne lit pas stdin (`could not open input file "-"`) :
+   le dump est copié dans le conteneur, décompressé puis restauré :
+   ```bash
+   docker cp /opt/trendx/data/backups/YYYYMMDD/trendx.dump.gz \
+     mobili_dahsboard-postgres-1:/tmp/trendx_restore_test.dump.gz
+   docker exec mobili_dahsboard-postgres-1 sh -c \
+     "gunzip -c /tmp/trendx_restore_test.dump.gz | pg_restore \
+        --clean --if-exists --no-owner --role=trendx_migration -d <cible>"
+   docker exec mobili_dahsboard-postgres-1 rm /tmp/trendx_restore_test.dump.gz
+   ```
+   `--role=trendx_migration` : tous les objets créés le sont **par** cette session
+   (SET ROLE), donc **propriété trendx_migration**, sans aucune instruction OWNER.
+   Les ACL du dump (GRANT à `trendx_app`) sont rejouées telles quelles.
+4. **Alignement ACL base** (retirer le CREATE temporaire) :
+   ```sql
+   REVOKE CREATE ON DATABASE <cible> FROM trendx_migration;
+   GRANT CONNECT ON DATABASE <cible> TO trendx_app;
+   ```
+5. **Preuves** (le `make restore-test` échoue si l'une échoue) :
+   - parité de structure avec la prod : même nombre de tables (154), de
+     fonctions (40, dont les 36 de l'extension `pgcrypto` restaurées via
+     l'entrée EXTENSION du dump) et de séquences ;
+   - `0` objet propriété autre que `trendx_migration` dans les deux schémas ;
+   - schémas propriété `trendx_migration` ;
+   - `trendx_app` : USAGE sur les deux schémas, **aucun** CREATE sur les schémas,
+      DML (SELECT/INSERT/UPDATE/DELETE) sur les tables ;
+   - négatif : `CREATE TABLE` exécuté en `trendx_app` échoue (permission refusée).
+6. **Nettoyage** : `DROP DATABASE <cible>` (en test) ; en reprise réelle, la base
+   `trendx` est remplacée puis les conteneurs Trendx sont recréés.
+
+### Écart constaté sur la prod (à corriger séparément, avec approbation)
+
+La prod actuelle a 3 objets propriété `postgres` au lieu de `trendx_migration` :
+`trendx_catalog.ingestion_checkpoints` (+ son index et sa contrainte PK), créés
+par la migration 005 exécutée en `postgres`. La restauration rétablit
+l'état canonique (tout `trendx_migration`) ; la prod reste en l'état tant que la
+correction n'a pas été approuvée.
 
 ---
 

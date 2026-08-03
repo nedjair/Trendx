@@ -75,6 +75,7 @@ services:
       - ./scripts:/app/scripts:ro
       - ./tests:/app/tests:ro
       - ./.secrets:/app/.secrets:ro
+      - /opt/trendx/data:/opt/trendx/data:rw
     env_file:
       - ./.env
 
@@ -120,6 +121,7 @@ services:
       - ./src:/app/src:ro
       - ./scripts:/app/scripts:ro
       - ./.secrets:/app/.secrets:ro
+      - /opt/trendx/data:/opt/trendx/data:rw
     env_file:
       - ./.env
 
@@ -134,6 +136,4 @@ networks:
     external: true
     name: mobili_dahsboard_default
 
-volumes:
-  trendx_data:
-    name: trendx_data
+volumes: {}
