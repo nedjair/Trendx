@@ -304,7 +304,17 @@ class CheckpointRepository(BaseRepository):
     def get_watermark(
         self, pipeline: str, entity_id: Any, metric_key: Optional[str] = None
     ) -> Optional[Any]:
-        return None
+        row = self._session.execute(
+            text(
+                "SELECT watermark_ts, records_processed, last_batch_id "
+                "FROM trendx_catalog.ingestion_checkpoints "
+                "WHERE pipeline = :pipeline AND entity_id = :entity_id AND metric_key = :metric_key"
+            ),
+            {"pipeline": pipeline, "entity_id": str(entity_id), "metric_key": metric_key},
+        ).fetchone()
+        if row is None:
+            return None
+        return {"watermark_ts": row[0], "records_processed": row[1], "last_batch_id": row[2]}
 
     def upsert_watermark(
         self,
@@ -316,10 +326,48 @@ class CheckpointRepository(BaseRepository):
         source: Optional[str] = None,
         last_batch_id: Optional[str] = None,
     ) -> Any:
-        return None
+        self._session.execute(
+            text(
+                "INSERT INTO trendx_catalog.ingestion_checkpoints "
+                "  (pipeline, entity_id, metric_key, watermark_ts, records_processed, last_batch_id, source, updated_at) "
+                "VALUES (:pipeline, :entity_id, :metric_key, :watermark_ts, :records_processed, :last_batch_id, :source, now()) "
+                "ON CONFLICT (pipeline, entity_id, metric_key) DO UPDATE SET "
+                "  watermark_ts = EXCLUDED.watermark_ts, "
+                "  records_processed = EXCLUDED.records_processed, "
+                "  last_batch_id = EXCLUDED.last_batch_id, "
+                "  source = EXCLUDED.source, "
+                "  updated_at = now()"
+            ),
+            {
+                "pipeline": pipeline,
+                "entity_id": str(entity_id),
+                "metric_key": metric_key,
+                "watermark_ts": watermark_ts,
+                "records_processed": records_processed,
+                "last_batch_id": last_batch_id,
+                "source": source,
+            },
+        )
+        return {"pipeline": pipeline, "entity_id": str(entity_id), "metric_key": metric_key}
 
     def list_by_pipeline(self, pipeline: str) -> Sequence[Any]:
-        return []
+        rows = self._session.execute(
+            text(
+                "SELECT entity_id, metric_key, watermark_ts, records_processed "
+                "FROM trendx_catalog.ingestion_checkpoints "
+                "WHERE pipeline = :pipeline"
+            ),
+            {"pipeline": pipeline},
+        ).fetchall()
+        return [
+            {
+                "entity_id": r[0],
+                "metric_key": r[1],
+                "watermark_ts": r[2],
+                "records_processed": r[3],
+            }
+            for r in rows
+        ]
 
 
 class TrendzTaskRepository(BaseRepository[TrendzTask]):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hmac
+import os
 import platform
 import sys
 import uuid
@@ -454,8 +455,10 @@ async def health() -> JSONResponse:
     status = "ok"
     detail = None
     try:
-        from trendx.services.ingestion import check_disk_min_free
-        check_disk_min_free("/")
+        from trendx.services.ingestion import _default_monitor_mounts, check_disk_min_free
+        for mp in _default_monitor_mounts():
+            if os.path.isdir(mp):
+                check_disk_min_free(mp)
     except Exception as exc:  # noqa: BLE001
         status = "degraded"
         detail = str(exc)

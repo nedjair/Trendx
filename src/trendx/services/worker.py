@@ -225,6 +225,20 @@ logger.info(
 )
 
 try:
+    from trendx.services.ingestion import _default_monitor_mounts, check_disk_min_free
+    for mp in _default_monitor_mounts():
+        if os.path.isdir(mp):
+            try:
+                free = check_disk_min_free(mp)
+                logger.info("[disk] mount {} = {:.1f} GB libres", mp, free)
+            except Exception as exc:  # noqa: BLE001
+                logger.error("[disk] mount {} KO : {}", mp, exc)
+        else:
+            logger.error("[disk] mount introuvable : {} (non mesuré)", mp)
+except Exception as exc:  # noqa: BLE001
+    logger.error("[disk] impossible de valider les montages : {}", exc)
+
+try:
     while True:
         time.sleep(3600)
 except KeyboardInterrupt:

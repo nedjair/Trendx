@@ -84,7 +84,10 @@ def test_error_isolation(service):
     service._reader.read_historical = failing_read
 
     with pytest.raises(ConnectionError):
-        service._reader.read_historical("DEVICE", "dev-001", ["temp"], 0, 1000)
+        import asyncio
+        asyncio.get_event_loop().run_until_complete(
+            service._reader.read_historical("DEVICE", "dev-001", ["temp"], 0, 1000)
+        )
 
 
 @pytest.mark.unit
@@ -160,6 +163,16 @@ def test_disk_monitor_mounts_env_override(monkeypatch):
 
 
 @pytest.mark.unit
+def test_ensure_disk_available_fail_closed_when_no_mount_resolvable(monkeypatch):
+    monkeypatch.setenv("TRENDX_DISK_MONITOR_MOUNTS", "/nonexistent1,/nonexistent2")
+    from importlib import reload
+    import trendx.services.ingestion as ing_mod
+    reload(ing_mod)
+    with pytest.raises(ing_mod.DiskCapacityError, match="fail-closed"):
+        ing_mod.IngestionService().ensure_disk_available()
+
+
+@pytest.mark.unit
 def test_lit_function():
     from datetime import datetime
 
@@ -171,3 +184,40 @@ def test_lit_function():
     dt = datetime(2024, 1, 1, 12, 0, 0)
     result = IngestionService._lit(dt)
     assert result.endswith("::timestamptz")
+
+
+@pytest.mark.unit
+def test_checkpoint_resume_after_interruption():
+    svc = IngestionService(
+        database_manager=MagicMock(),
+        telemetry_reader=MagicMock(),
+        batch_size=100,
+        window_hours=24,
+    )
+    mock_session = MagicMock()
+    mock_session.__enter__ = MagicMock(return_value=mock_session)
+    mock_session.__exit__ = MagicMock(return_value=None)
+    mock_repo = MagicMock()
+    svc._db.get_session.return_value = mock_session
+
+    watermark_ts = datetime(2024, 6, 1, 10, 0, 0, tzinfo=timezone.utc)
+    mock_repo.get_watermark.return_value = {
+        "watermark_ts": watermark_ts,
+        "records_processed": 500,
+        "last_batch_id": "batch-abc",
+    }
+
+    with patch("trendx.services.ingestion.CheckpointRepository", return_value=mock_repo):
+        cp = svc._get_checkpoint("dev-001", "temperature")
+        svc._update_checkpoint(
+            "dev-001", "temperature", watermark_ts, records_count=500, batch_id="batch-abc"
+        )
+
+    assert cp == watermark_ts
+    mock_repo.get_watermark.assert_called_once_with(
+        "ingestion", "dev-001", "temperature"
+    )
+    mock_repo.upsert_watermark.assert_called_once_with(
+        "ingestion", "dev-001", watermark_ts, "temperature",
+        records_processed=500, last_batch_id="batch-abc",
+    )

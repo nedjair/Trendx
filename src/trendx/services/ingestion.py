@@ -67,10 +67,21 @@ class IngestionService:
         self._total_errors: int = 0
 
     def ensure_disk_available(self, mounts: Sequence[str] | None = None) -> None:
-        targets = mounts if mounts is not None else _default_monitor_mounts()
+        targets = list(mounts if mounts is not None else _default_monitor_mounts())
+        resolved: list[str] = []
         for mount in targets:
             if os.path.isdir(mount):
                 check_disk_min_free(mount)
+                resolved.append(mount)
+        if not resolved:
+            raise DiskCapacityError(
+                "Aucun point de montage de TRENDX_DISK_MONITOR_MOUNTS n'est résolvable "
+                f"depuis ce conteneur : {targets}. Ingestion arrêtée (fail-closed)."
+            )
+        logger.info(
+            "[disk] points de montage surveillés résolus : {}",
+            ", ".join(f"{m}={shutil.disk_usage(m).free / (1024**3):.1f} GB libres" for m in resolved),
+        )
 
     @property
     def total_processed(self) -> int:
@@ -115,14 +126,14 @@ class IngestionService:
     def _get_checkpoint(
         self, entity_id: str, metric_key: str
     ) -> Optional[datetime]:
-        logger.debug(
-            "Checkpoint skipped for {eid}/{key} (table missing)",
-            eid=entity_id[:12],
-            key=metric_key,
-        )
-        return None
+        with self._db.get_session("catalog") as session:
+            repo = CheckpointRepository(session)
+            row = repo.get_watermark("ingestion", entity_id, metric_key)
+            if row is None:
+                return None
+            ts = row.get("watermark_ts") if isinstance(row, dict) else getattr(row, "watermark_ts", None)
+            return ts if ts is None else (ts if isinstance(ts, datetime) else datetime.fromisoformat(str(ts)))
 
-    # TODO: checkpoint table does not exist in Trendz 1.15.0 schema.
     def _update_checkpoint(
         self,
         entity_id: str,
@@ -131,11 +142,16 @@ class IngestionService:
         records_count: int,
         batch_id: str | None = None,
     ) -> None:
-        logger.debug(
-            "Checkpoint update skipped for {eid}/{key} (table missing)",
-            eid=entity_id[:12],
-            key=metric_key,
-        )
+        with self._db.get_session("catalog") as session:
+            repo = CheckpointRepository(session)
+            repo.upsert_watermark(
+                "ingestion",
+                entity_id,
+                watermark_ts,
+                metric_key,
+                records_processed=records_count,
+                last_batch_id=batch_id,
+            )
 
     def _validate_data(self, df: pd.DataFrame) -> pd.DataFrame:
         if df.empty:
