@@ -225,6 +225,11 @@ doctor: ## Vérifications pre-flight (réseau, ports, ressources, bases, disque)
 	  echo "$$tbout"; \
 	  if [ "$$rc" -ne 0 ]; then fail=$$((fail+1)); fi; \
 	echo "│"; \
+	echo -n "│  Whitelist ThingsBoard (GET + login only) ? : "; \
+	  wlout=$$(python3 scripts/tb_whitelist_check.py 2>&1); rc=$$?; \
+	  echo "$$wlout"; \
+	  if [ "$$rc" -ne 0 ]; then fail=$$((fail+1)); fi; \
+	echo "│"; \
 	echo -n "│  Partitions trendx_analytics à +3 mois ? : "; \
 	  cov=$$(docker exec mobili_dahsboard-postgres-1 psql -U postgres -d trendx -tAc "SELECT trendx_analytics.partition_coverage(3);" 2>/dev/null | tr -d '\n'); \
 	  miss=$$(printf '%s' "$$cov" | grep -o '"missing":[^,]*' | cut -d: -f2 | tr -d ' '); \

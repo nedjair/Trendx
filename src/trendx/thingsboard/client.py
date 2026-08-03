@@ -142,6 +142,10 @@ class ThingsBoardRateLimitError(ThingsBoardError):
     pass
 
 
+class ThingsBoardWriteDisabledError(ThingsBoardError):
+    """Ecriture ThingsBoard bloquée par la whitelist client."""
+
+
 def _raise_on_status(status: int, body: Any = None) -> None:
     if status == 401:
         raise ThingsBoardAuthError(status, body)
@@ -274,6 +278,24 @@ class ThingsBoardClient:
         except Exception:
             return response.text[:500]
 
+    def _check_method_allowed(self, method: str, path: str) -> None:
+        """Whitelist client-side : GET autorisé, POST /api/auth/login autorisé, tout le reste bloqué."""
+        method_upper = method.upper()
+        if method_upper == "GET":
+            return
+        if method_upper == "POST" and path.rstrip("/") == "/api/auth/login":
+            return
+        logger.error(
+            "ThingsBoard whitelist violation: {method} {path} blocked (GET + POST /api/auth/login only)",
+            method=method_upper,
+            path=path,
+        )
+        raise ThingsBoardWriteDisabledError(
+            403,
+            f"Whitelist violation: {method_upper} {path} is not allowed. "
+            "Only GET and POST /api/auth/login are permitted.",
+        )
+
     @retry(
         retry=retry_if_exception_type((httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError, ThingsBoardRateLimitError)),
         wait=wait_exponential(multiplier=2, min=1, max=30),
@@ -288,6 +310,8 @@ class ThingsBoardClient:
         params: dict[str, Any] | None = None,
         json_data: Any = None,
     ) -> httpx.Response:
+        self._check_method_allowed(method, path)
+
         headers = await self._ensure_auth_header()
 
         logger.debug(

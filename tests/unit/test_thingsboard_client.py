@@ -16,6 +16,7 @@ from trendx.thingsboard.client import (
     ThingsBoardClient,
     ThingsBoardError,
     ThingsBoardRateLimitError,
+    ThingsBoardWriteDisabledError,
     TimeseriesEntry,
 )
 
@@ -199,3 +200,56 @@ async def test_context_manager(mock_client):
         assert cm is mock_client
 
     mock_client._client.aclose.assert_awaited_once()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_whitelist_allows_get(mock_client):
+    mock_resp = Mock(spec=httpx.Response)
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {"data": [], "totalPages": 0, "totalElements": 0, "hasNext": False}
+
+    with patch.object(mock_client._http_client, "request", new=AsyncMock(return_value=mock_resp)):
+        result = await mock_client.get_devices()
+
+    assert isinstance(result, PageData)
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_whitelist_allows_login_post(mock_client):
+    login_data = LoginResponse(token="jwt_token_abc", refreshToken="refresh_xyz")
+    mock_resp = Mock(spec=httpx.Response)
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = login_data.model_dump()
+
+    with patch.object(mock_client._http_client, "post", new=AsyncMock(return_value=mock_resp)):
+        result = await mock_client.login()
+
+    assert result.token == "jwt_token_abc"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_whitelist_blocks_telemetry_post(mock_client):
+    # post_telemetry short-circuits on tb_writeback_enabled=False; test the whitelist at _request level
+    with pytest.raises(ThingsBoardWriteDisabledError, match="Whitelist violation"):
+        await mock_client._request(
+            "POST",
+            "/api/plugins/telemetry/DEVICE/dev-001/timeseries/ANY",
+            json_data=[{"ts": 1700000000000, "value": 22.5}],
+        )
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_whitelist_blocks_put(mock_client):
+    with pytest.raises(ThingsBoardWriteDisabledError, match="Whitelist violation"):
+        await mock_client._request("PUT", "/api/alarm/alarm-id/ack")
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_whitelist_blocks_delete(mock_client):
+    with pytest.raises(ThingsBoardWriteDisabledError, match="Whitelist violation"):
+        await mock_client._request("DELETE", "/api/device/dev-id")
