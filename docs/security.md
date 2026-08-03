@@ -95,5 +95,30 @@ Dernière rotation : 2026-08-02 (rôles `trendx_app`, `trendx_migration`, `trend
 - Politique de rotation : jeton statique partagé, rotation recommandée tous les
   90 jours. L'ancien jeton reste valide pendant une fenêtre de transition de 24 h
   (double acceptation) puis est révoqué.
+- Dernière rotation : 2026-08-03 — le jeton précédent a été révoqué après avoir
+  été exposé en clair dans une sortie de rapport (incident de fuite).
 - Les tokens ThingsBoard (JWT) ne transitent jamais par l'API Trendx publique ;
   ils restent confinés au worker (Canal 1) et au moteur `tb_readonly` (Canal 2).
+
+## 7. Constat : compte tenant ThingsBoard et mot de passe d'usine (2026-08-03)
+
+Lors de l'investigation STOP du 2026-08-03, il a été constaté que le compte
+tenant ThingsBoard (compte d'administration du tenant, fonctionnel sur la
+production) s'authentifie encore avec le **mot de passe d'usine** de ThingsBoard,
+c'est-à-dire le défaut de fabrication du produit.
+
+- **Rotation à la charge de l'opérateur humain** : le mot de passe du compte
+  tenant est changé dans ThingsBoard par l'utilisateur lui-même. Ni l'agent ni
+  aucun script Trendx ne le modifie. Cette section ne contient volontairement
+  aucune valeur (ni intégrale, ni partielle).
+- **Purge effectuée** : la seule référence littérale au mot de passe d'usine dans
+  le code (une blacklist de placeholders) a été retirée, puis l'historique git a
+  été réécrit (2026-08-03) pour purger le commit qui l'introduisait. Aucune
+  occurrence ne subsiste dans le dépôt ni dans `/opt/trendx`.
+- **Règle de code** : aucune heuristique ne spécialise un mot de passe réel. La
+  blacklist des placeholders ne contient que `CHANGE_ME`. La source de vérité de
+  l'authentification ThingsBoard est le drapeau `TB_AUTH_CONFIGURED` (défaut
+  `false`) : il n'est mis à `true` que lorsque des identifiants vérifiés d'un
+  compte de service sont en place (voir `docs/service-accounts.md`).
+- **Verrou d'ingestion** : tant que `TB_AUTH_CONFIGURED != true`, toute tentative
+  d'ingestion est refusée (HTTP 409) par l'endpoint `/api/v1/ingestion/trigger`.
