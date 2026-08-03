@@ -314,6 +314,68 @@ tb_readonly: 'public'
   passe applicatif dans la sortie de terminal ; rotation de
   `TRENDX_APP_PASSWORD` recommandée.
 
+## 8. Audit post-Phaise 2 — actions correctives (2026-08-03)
+
+### 8.1 Rotation immédiate de TRENDX_APP_PASSWORD
+- Fuite confirmée dans la sortie de terminal (diagnostic psycopg2).
+- Rotation effectuée via `ALTER ROLE trendx_app WITH PASSWORD '<nouveau>'`.
+- `.env` et `/opt/trendx/.env` mis à jour (jamais le mot de passe affiché).
+- Conteneurs `api` et `worker` recréés.
+- Traces purgées : `~/.bash_history`, tampon terminal, pas de secret dans
+  `docker logs` des conteneurs.
+- `docs/audit-phase2-after.md §7.9` : vérifié — ne contient que la description de
+  l'incident, pas le mot de passe.
+
+### 8.2 Authentification API — 401 pour jeton invalide
+- Jeton invalide renvoie maintenant HTTP 401 (au lieu de 403).
+- `/health` : retour minimal `{"status":"ok","service":"trendx-api"}` ;
+  plus de version, environnement, device_id, configuration, état de base.
+- `/metrics` : ne contient pas de secrets (service, version, uptime, mémoire).
+
+### 8.3 Politique du jeton TRENDX_API_TOKEN
+- Documenté dans `docs/security.md §6` : jeton statique partagé, rotation 90 jours,
+  jamais dans une URL (query string, fragment, referer), jamais journalisé.
+
+### 8.4 Rejeu des validations dépendantes du planificateur (état réel)
+- Partitions : `ts_kv`, `predictions`, `anomaly_scores`, `data_quality`,
+  `ml_metrics` → max_bound `2026-12-01`, last_partition `*_2026_11`, missing=0.
+  Créées par la **migration SQL** (alembic, 14:36), persistées.
+  Le planificateur n'a créé aucune partition (retours `created=[]`).
+- `aggregate_watermarks` : daily, hourly, weekly → tous mis à jour par des ticks
+  du planificateur **post-correctif** (15:59:23, 02:30:00 du 2026-08-03, etc.).
+  Le tick de 15:36:55 (pré-correctif) a été rollbacké silencieusement.
+
+### 8.5 Garde-fou contre le succès silencieux
+- `src/trendx/services/scheduler_guards.py` : fonctions
+  `get_watermark(agg)` et `verify_aggregate_refresh(agg)` (lève
+  `RuntimeError` si le filigrane n'a pas progressé).
+- `worker.py::_job_aggregate` : appel à `verify_aggregate_refresh` après chaque
+  tick ; compteur de cycles inaltérés ; alerte `critical` après 2 cycles
+  consécutifs sans progression.
+- `_job_partitions` : lève aussi si `missing>0` sans création.
+
+### 8.6 Tests d'intégration (nouveaux)
+- `tests/unit/test_services_worker_integration.py` :
+  - `test_engine_begin_commits_aggregate_watermark` — écriture persistée.
+  - `test_engine_connect_rolls_back_aggregate_watermark` — écriture rollbackée.
+  - `test_verify_aggregate_refresh_raises_on_stagnant_watermark` — garde actif.
+  - `test_verify_aggregate_refresh_passes_when_advanced` — garde passant.
+  - `test_verify_aggregate_refresh_raises_when_watermark_missing` — garde sur None.
+
+### 8.7 Masquage systématique des DSN
+- `config.py::mask_dsn(dsn)` : remplace `:<password>@` par `:***@`.
+- Test `test_mask_dsn` et `test_diagnostic_output_contains_no_password`
+  ajoutés à `tests/unit/test_config.py`.
+
+### 8.8 Gate disque — test réel
+- Seuil temporairement remonté à `TRENDX_DISK_MIN_FREE_GB=999999` (espace libre
+  ≈ 357 GB).
+- Appel direct de `run_incremental_ingest` → `DiskCapacityError` levée avant
+  toute lecture ThingsBoard.
+- API lecture (catalog) restée opérationnelle (HTTP 200).
+- `/health` retourné `{"status":"degraded",...}` avec détail de l'erreur (HTTP 503).
+- Seuil restauré à 50 GB, conteneurs recréés, `/health` revenu à `ok`.
+
 ---
 
 *Fin du snapshot final.*
