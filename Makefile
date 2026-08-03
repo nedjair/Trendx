@@ -240,10 +240,17 @@ doctor: ## Vérifications pre-flight (réseau, ports, ressources, bases, disque)
 	  mixed=$$(grep -E '^(TB_DB|TRENDX_DB)_' .env 2>/dev/null | grep -c 'mobili_dahsboard-postgres-1'); \
 	  [ "$$mixed" -le 2 ] && echo "OK" || { echo "FAIL — même hôte pour les deux pools sans séparation"; fail=$$((fail+1)); }; \
 	echo "│"; \
-	for mp in / /var/lib/docker; do \
-	  echo -n "│  Espace libre $$mp >= $(TRENDX_DISK_MIN_FREE_GB) GB ? : "; \
+	PG_VOL=$$(docker volume inspect tb-postgres-data --format '{{.Mountpoint}}' 2>/dev/null || echo /var/lib/docker/volumes/tb-postgres-data/_data); \
+	DOCKER_ROOT=$$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || echo /var/lib/docker); \
+	echo -n "│  Points de montage surveillés : "; \
+	echo "PG=$$PG_VOL DockerRoot=$$DOCKER_ROOT"; \
+	echo "│"; \
+	for mp in $$PG_VOL $$DOCKER_ROOT; do \
+	  label=$$mp; \
+	  [ "$$mp" = "$$DOCKER_ROOT" ] && label="DockerRoot ($$mp)"; \
+	  echo -n "│  Espace libre $$label >= $(TRENDX_DISK_MIN_FREE_GB) GB ? : "; \
 	    avail=$$(df -BG --output=avail "$$mp" 2>/dev/null | tail -1 | tr -dc '0-9'); \
-	    [ "$$avail" -ge 50 ] && echo "OK ($${avail} GB)" || { echo "FAIL ($${avail} GB)"; fail=$$((fail+1)); }; \
+	    [ -n "$$avail" ] && [ "$$avail" -ge $(TRENDX_DISK_MIN_FREE_GB) ] && echo "OK ($${avail} GB)" || { echo "FAIL ($${avail:-?} GB)"; fail=$$((fail+1)); }; \
 	done; \
 	echo "│"; \
 	echo -n "│  Python3 disponible : "; which python3 && python3 --version | head -1; \

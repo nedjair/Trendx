@@ -151,6 +151,15 @@ def test_disk_min_free_gate(service, monkeypatch):
 
 
 @pytest.mark.unit
+def test_disk_monitor_mounts_env_override(monkeypatch):
+    monkeypatch.setenv("TRENDX_DISK_MONITOR_MOUNTS", "/tmp,/var")
+    from importlib import reload
+    import trendx.services.ingestion as ing_mod
+    reload(ing_mod)
+    assert ing_mod._default_monitor_mounts() == ("/tmp", "/var")
+
+
+@pytest.mark.unit
 def test_lit_function():
     from datetime import datetime
 

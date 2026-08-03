@@ -27,6 +27,13 @@ class DiskCapacityError(RuntimeError):
     """Espace disque libre sous le seuil : ingestion arrêtée automatiquement."""
 
 
+def _default_monitor_mounts() -> tuple[str, ...]:
+    mounts_env = os.environ.get("TRENDX_DISK_MONITOR_MOUNTS", "").strip()
+    if mounts_env:
+        return tuple(m.strip() for m in mounts_env.split(",") if m.strip())
+    return ("/",)
+
+
 def check_disk_min_free(mount: str = "/") -> float:
     """Retourne l'espace libre (GB) sur `mount`, ou lève DiskCapacityError sous le seuil."""
     usage = shutil.disk_usage(mount)
@@ -59,8 +66,9 @@ class IngestionService:
         self._total_processed: int = 0
         self._total_errors: int = 0
 
-    def ensure_disk_available(self, mounts: Sequence[str] = ("/", "/var/lib/docker")) -> None:
-        for mount in mounts:
+    def ensure_disk_available(self, mounts: Sequence[str] | None = None) -> None:
+        targets = mounts if mounts is not None else _default_monitor_mounts()
+        for mount in targets:
             if os.path.isdir(mount):
                 check_disk_min_free(mount)
 

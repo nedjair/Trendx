@@ -8,7 +8,11 @@ from sqlalchemy import text
 
 from trendx.database.connection import get_analytics_engine
 from trendx.services import scheduler_guards
-from trendx.services.scheduler_guards import verify_aggregate_refresh
+from trendx.services.scheduler_guards import (
+    check_source_rows_exist,
+    verify_aggregate_refresh,
+    verify_aggregate_rows,
+)
 
 
 _WATERMARK_ROW = {
@@ -129,3 +133,25 @@ def test_verify_aggregate_refresh_raises_when_watermark_missing() -> None:
     with patch.object(scheduler_guards, "get_watermark", return_value=None):
         with pytest.raises(RuntimeError, match="filigrane introuvable"):
             verify_aggregate_refresh(_WATERMARK_ROW["aggregate_name"])
+
+
+def test_verify_aggregate_rows_raises_when_source_rows_exist() -> None:
+    with patch.object(
+        scheduler_guards, "check_source_rows_exist", return_value=True
+    ):
+        with pytest.raises(RuntimeError, match="zéro ligne traitée"):
+            verify_aggregate_rows(_WATERMARK_ROW["aggregate_name"], 0, "2026-08-03T08:00:00+00:00")
+
+
+def test_verify_aggregate_rows_passes_when_no_source_rows() -> None:
+    with patch.object(
+        scheduler_guards, "check_source_rows_exist", return_value=False
+    ):
+        verify_aggregate_rows(_WATERMARK_ROW["aggregate_name"], 0, "2026-08-03T08:00:00+00:00")
+
+
+def test_verify_aggregate_rows_passes_when_rows_upserted() -> None:
+    with patch.object(
+        scheduler_guards, "check_source_rows_exist", return_value=True
+    ):
+        verify_aggregate_rows(_WATERMARK_ROW["aggregate_name"], 5, "2026-08-03T08:00:00+00:00")

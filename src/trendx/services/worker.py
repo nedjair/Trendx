@@ -106,7 +106,11 @@ if HAS_APSCHEDULER:
     from sqlalchemy import text
 
     from trendx.database.connection import get_analytics_engine
-    from trendx.services.scheduler_guards import verify_aggregate_refresh
+    from trendx.services.scheduler_guards import (
+        check_source_rows_exist,
+        verify_aggregate_refresh,
+        verify_aggregate_rows,
+    )
 
     _agg_unchanged_cycles: dict[str, int] = {}
     _AGG_ALERT_THRESHOLD = 2
@@ -135,6 +139,11 @@ if HAS_APSCHEDULER:
                 "SELECT trendx_analytics.refresh_aggregate(:agg)", {"agg": agg}
             )
             verify_aggregate_refresh(agg)
+            verify_aggregate_rows(
+                agg,
+                result.get("rows_upserted", 0),
+                result.get("window_start", ""),
+            )
             _agg_unchanged_cycles[agg] = 0
             logger.info(f"[scheduler] refresh_aggregate('{agg}') -> {result}")
         except Exception as exc:  # noqa: BLE001
