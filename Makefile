@@ -285,6 +285,16 @@ restore-check: ## Vérifier intégrité dumps les plus récents (AGENTS §17)
 	done
 
 # ————————————————————————————————————————
+# Nettoyage Docker (périmètre Trendx uniquement, pas de cron automatique)
+# ————————————————————————————————————————
+docker-cleanup: ## Nettoyer images/calques/cache Docker Trendx (hors volumes TB/PG)
+	@echo "[trendx] Nettoyage Docker (périmètre Trendx)..."
+	@docker image prune -f --filter "until=72h"
+	@docker builder prune -f --filter "until=72h"
+	@docker system prune -f --filter "until=72h" --filter "label=com.trendx.project=trendx"
+	@echo "[trendx] docker-cleanup terminé."
+
+# ————————————————————————————————————————
 # Utilitaires
 # ————————————————————————————————————————
 dc-config: ## Valider docker compose config + variables résolues
