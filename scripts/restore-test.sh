@@ -149,15 +149,17 @@ dml="$(run_q "${TEST_DB}" "${Q_APP_DML}")"
 [ "${dml}" = "0" ] || fatal "trendx_app sans DML complet sur ${dml} table(s)"
 ok "trendx_app : USAGE OK, CREATE absent, DML complet"
 
-# 5.4 Négatif : CREATE TABLE en trendx_app doit échouer
-if docker exec "${PG}" psql -U postgres -d "${TEST_DB}" -q -c \
-    "SET ROLE trendx_app; CREATE TABLE trendx_catalog.t_probe(id integer);" \
-    >/dev/null 2>&1; then
-  docker exec "${PG}" psql -U postgres -d "${TEST_DB}" -q -c \
-    "DROP TABLE IF EXISTS trendx_catalog.t_probe;" >/dev/null 2>&1 || true
-  fatal "négatif KO : CREATE TABLE en trendx_app a été accepté"
-fi
-ok "négatif : CREATE TABLE en trendx_app refusé (permission denied)"
+# 5.4 Négatif : CREATE TABLE en trendx_app doit échouer sur les 3 schémas
+for sch in trendx_catalog trendx_analytics public; do
+  if docker exec "${PG}" psql -U postgres -d "${TEST_DB}" -q -c \
+      "SET ROLE trendx_app; CREATE TABLE ${sch}.t_probe(id integer);" \
+      >/dev/null 2>&1; then
+    docker exec "${PG}" psql -U postgres -d "${TEST_DB}" -q -c \
+      "DROP TABLE IF EXISTS ${sch}.t_probe;" >/dev/null 2>&1 || true
+    fatal "négatif KO : CREATE TABLE en trendx_app accepté sur ${sch}"
+  fi
+done
+ok "négatif : CREATE TABLE en trendx_app refusé sur trendx_catalog, trendx_analytics et public"
 
 step "6/6 nettoyage (base jetable)"
 docker exec "${PG}" psql -U postgres -v ON_ERROR_STOP=1 -q -c \
