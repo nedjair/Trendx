@@ -106,6 +106,10 @@ if HAS_APSCHEDULER:
     from sqlalchemy import text
 
     from trendx.database.connection import get_analytics_engine
+    from trendx.services.scheduler_guards import verify_aggregate_refresh
+
+    _agg_unchanged_cycles: dict[str, int] = {}
+    _AGG_ALERT_THRESHOLD = 2
 
     def _call_db_function(sql: str, params: dict[str, Any]) -> Any:
         engine = get_analytics_engine()
@@ -117,6 +121,10 @@ if HAS_APSCHEDULER:
             result = _call_db_function(
                 "SELECT trendx_analytics.ensure_partitions_forward(:months)", {"months": 3}
             )
+            if result.get("missing", 0) > 0 and not result.get("created"):
+                raise RuntimeError(
+                    f"ensure_partitions_forward a échoué : missing={result.get('missing')} sans création"
+                )
             logger.info(f"[scheduler] ensure_partitions_forward(3) -> {result}")
         except Exception as exc:  # noqa: BLE001
             logger.error(f"[scheduler] ensure_partitions_forward(3) échec: {exc}")
@@ -126,9 +134,21 @@ if HAS_APSCHEDULER:
             result = _call_db_function(
                 "SELECT trendx_analytics.refresh_aggregate(:agg)", {"agg": agg}
             )
+            verify_aggregate_refresh(agg)
+            _agg_unchanged_cycles[agg] = 0
             logger.info(f"[scheduler] refresh_aggregate('{agg}') -> {result}")
         except Exception as exc:  # noqa: BLE001
-            logger.error(f"[scheduler] refresh_aggregate('{agg}') échec: {exc}")
+            _agg_unchanged_cycles[agg] = _agg_unchanged_cycles.get(agg, 0) + 1
+            logger.error(
+                "[scheduler] refresh_aggregate('{}') échec: {} (cycles inaltérés={}/{})",
+                agg, exc, _agg_unchanged_cycles[agg], _AGG_ALERT_THRESHOLD,
+            )
+            if _agg_unchanged_cycles[agg] >= _AGG_ALERT_THRESHOLD:
+                logger.critical(
+                    "[scheduler] refresh_aggregate('{}') : AUCUNE progression "
+                    "pendant {} cycles consécutifs — maintenance requise",
+                    agg, _agg_unchanged_cycles[agg],
+                )
 
     def _start_scheduler() -> BackgroundScheduler:
         sched = BackgroundScheduler(timezone=settings.trendx_timezone)

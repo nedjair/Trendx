@@ -38,16 +38,7 @@ from trendx.services.tasks import TaskService
 class HealthResponse(BaseModel):
     status: str = Field(default="ok")
     service: str = Field(default="trendx-api")
-    version: str = Field(default="0.1.0")
-    environment: str = Field()
-    timezone: str = Field()
-    device_id: str = Field()
-    primary_metric: str = Field()
-    writeback_enabled: bool = Field()
-    alarms_enabled: bool = Field()
-    python_version: str = Field()
-    platform: str = Field()
-    timestamp: str = Field()
+    detail: str | None = None
 
 
 logger.remove()
@@ -109,8 +100,8 @@ async def require_auth_middleware(request: Request, call_next):
         if not hmac.compare_digest(provided.encode("utf-8"), expected.encode("utf-8")):
             logger.warning("API auth refusée (jeton invalide) : {}", path)
             return JSONResponse(
-                content={"detail": "Invalid authentication token"},
-                status_code=403,
+                content={"detail": "Invalid authentication credentials"},
+                status_code=401,
             )
     return await call_next(request)
 
@@ -460,23 +451,19 @@ def _to_metric_out(m: Any) -> dict[str, Any]:
 
 @app.get("/health", tags=["system"], response_model=HealthResponse)
 async def health() -> JSONResponse:
-    payload = HealthResponse(
-        status="ok",
-        service="trendx-api",
-        version=APP_VERSION,
-        environment=settings.trendx_env,
-        timezone=settings.trendx_timezone,
-        device_id=settings.tb_device_id,
-        primary_metric=settings.tb_metric_name,
-        writeback_enabled=settings.tb_writeback_enabled,
-        alarms_enabled=settings.tb_alarms_enabled,
-        python_version=platform.python_version(),
-        platform=f"{platform.system()} {platform.release()}".strip(),
-        timestamp=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-    )
-    logger.info("Health check OK : service={service}, env={env}, device={dev}",
-                service=payload.service, env=payload.environment, dev=payload.device_id)
-    return JSONResponse(content=payload.model_dump(), status_code=200)
+    status = "ok"
+    detail = None
+    try:
+        from trendx.services.ingestion import check_disk_min_free
+        check_disk_min_free("/")
+    except Exception as exc:  # noqa: BLE001
+        status = "degraded"
+        detail = str(exc)
+        logger.warning("Health dégradé : {}", exc)
+    payload = HealthResponse(status=status, service="trendx-api", detail=detail)
+    logger.debug("Health check : status={}", status)
+    code = 200 if status == "ok" else 503
+    return JSONResponse(content=payload.model_dump(exclude_none=True), status_code=code)
 
 
 @app.get("/metrics", tags=["system"])

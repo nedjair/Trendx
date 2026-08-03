@@ -138,6 +138,16 @@ class Settings(BaseSettings):
             f"@{self.pg_admin_host}:{self.pg_admin_port}/{dbname}"
         )
 
+    @staticmethod
+    def mask_dsn(dsn: str) -> str:
+        import re
+
+        return re.sub(
+            r"(:[^:@/]+)(@)",
+            r":***\2",
+            dsn,
+        )
+
     def catalog_dsn_app(self) -> str:
         return self.pg_dsn(self.trendx_db_name, self.trendx_app_user, self.trendx_app_password)
 

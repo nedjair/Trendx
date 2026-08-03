@@ -130,3 +130,67 @@ def test_secret_str_not_in_repr():
     )
     rep = repr(s)
     assert "super-secret-value" not in rep
+
+
+@pytest.mark.unit
+def test_mask_dsn():
+    s = Settings(
+        TRENDX_ENV="testing",
+        TB_BASE_URL="http://test:8080",
+        TB_USERNAME="test",
+        TB_PASSWORD="test",
+        PG_ADMIN_HOST="pg-host",
+        PG_ADMIN_PORT=5432,
+        TRENDX_APP_PASSWORD="leaked_password_123",
+    )
+    raw = s.catalog_dsn_app()
+    masked = s.mask_dsn(raw)
+    assert "leaked_password_123" not in masked
+    assert "***" in masked
+    assert "trendx_app" in masked
+    assert "pg-host" in masked
+    assert "trendx" in masked
+
+
+@pytest.mark.unit
+def test_tb_login_fallback_reads_vault(tmp_path: Path):
+    vault = tmp_path / "service-accounts.env"
+    vault.write_text(
+        "TB_SERVICE_USER_EMAIL=vault@test.com\nTB_SERVICE_USER_PASSWORD=vault_pass_42\n"
+    )
+    s = Settings(
+        TRENDX_ENV="testing",
+        TB_BASE_URL="http://test:8080",
+        TB_USERNAME="",
+        TB_PASSWORD="",
+        TRENDX_CREDENTIALS_FILE=vault,
+    )
+    email, password = s.tb_login
+    assert email == "vault@test.com"
+    assert password == "vault_pass_42"
+
+
+@pytest.mark.unit
+def test_diagnostic_output_contains_no_password():
+    s = Settings(
+        TRENDX_ENV="testing",
+        TB_BASE_URL="http://test:8080",
+        TB_USERNAME="test",
+        TB_PASSWORD="super-secret-pw",
+        PG_ADMIN_HOST="pg-host",
+        PG_ADMIN_PORT=5432,
+        TRENDX_APP_PASSWORD="app_secret_123",
+        TB_DB_READONLY_USER="ro",
+        TB_DB_READONLY_PASSWORD="ro_secret_456",
+    )
+    masked = "\n".join(
+        [
+            s.mask_dsn(s.catalog_dsn_app()),
+            s.mask_dsn(s.analytics_dsn_app()),
+            s.mask_dsn(s.tb_db_readonly_dsn() or ""),
+        ]
+    )
+    assert "super-secret-pw" not in masked
+    assert "app_secret_123" not in masked
+    assert "ro_secret_456" not in masked
+    assert "***" in masked

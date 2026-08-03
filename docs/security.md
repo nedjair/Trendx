@@ -81,10 +81,19 @@ Dernière rotation : 2026-08-02 (rôles `trendx_app`, `trendx_migration`, `trend
 
 - Tous les endpoints `/api/v1/*` exigent un jeton (`Authorization: Bearer <jeton>`
   ou `X-API-Key: <jeton>`) vérifié en temps constant (`hmac.compare_digest`).
-- Absence de jeton → HTTP 401 ; jeton invalide → HTTP 403.
+- Absence de jeton → HTTP 401 ; jeton invalide → HTTP 401 (jamais 403 ;
+  la réponse ne doit pas révéler que le jeton existe).
 - Endpoints publics pour l'infrastructure uniquement : `/health`, `/metrics`, `/`,
   `/docs`, `/redoc`, `/openapi.json` (healthchecks Docker et reverse-proxy).
+- `/health` ne divulgue ni version, ni environnement, ni configuration, ni état de
+  la base : retour minimal `{"status":"ok","service":"trendx-api"}`.
+- `/metrics` ne divulgue pas de secrets (seul `service`, `version`, `uptime_seconds`,
+  `memory_bytes_approx`).
 - Clé : `TRENDX_API_TOKEN` dans `.env` (mode 600, hors dépôt), générée par
-  `openssl rand -hex 32`. Jamais journalisée.
+  `openssl rand -hex 32`. Jamais journalisée, jamais transmise dans une URL
+  (query string, fragment, referer).
+- Politique de rotation : jeton statique partagé, rotation recommandée tous les
+  90 jours. L'ancien jeton reste valide pendant une fenêtre de transition de 24 h
+  (double acceptation) puis est révoqué.
 - Les tokens ThingsBoard (JWT) ne transitent jamais par l'API Trendx publique ;
   ils restent confinés au worker (Canal 1) et au moteur `tb_readonly` (Canal 2).
