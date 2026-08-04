@@ -82,8 +82,10 @@ ThingsBoard CE   TB PostgreSQL   Trendx
 
 **Correction C — APScheduler :** Pas de Redis en Phase 2. Le worker utilise APScheduler en mode standalone, sans broker externe.
 
+**Airflow — environnement séparé (reporté) :** Airflow n'est pas installé dans le venv de l'application ni dans les conteneurs du profil minimal. Il possède sa propre image Docker (`docker/Dockerfile.airflow`) construite depuis `requirements-airflow.txt`, qui installe les dépendances ML nécessaires aux DAGs sans toucher au package `trendx` du profil minimal. Les DAGs importent le code source via `PYTHONPATH=/opt/airflow/src`. Cette isolation garantit qu'Airflow ne peut pas introduire de conflit de dépendances (ex. SQLAlchemy < 2.0) dans le profil minimal.
+
 **Optionnels (non dans profil minimal) :**
-- Airflow (reporté)
+- Airflow (reporté — environnement séparé, jamais installé dans le venv de l'application)
 - MLflow (fichier local, puis conteneur)
 - Grafana (optionnel)
 

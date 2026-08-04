@@ -357,6 +357,19 @@ make down-clean    # ⚠ nécessite TRENDX_CONFIRM_APPLY=YES, détruit volumes
 
 ---
 
+## 12bis. Airflow (environnement séparé, reporté)
+
+Airflow n'est pas installé dans le venv de l'application ni dans les conteneurs du profil minimal. Il dispose de sa propre image Docker (`docker/Dockerfile.airflow`) construite depuis `requirements-airflow.txt`.
+
+**Isolation des dépendances :**
+- `requirements-airflow.txt` installe Airflow 2.9.0 avec les contraintes officielles Apache (`constraints-2.9.0/constraints-3.11.txt`), sans toucher au venv de l'application.
+- Les DAGs (dans `attic/dags/`) importent le code source Trendx via `PYTHONPATH=/opt/airflow/src`. Aucun `pip install -e .` de Trendx n'est effectué dans l'image Airflow.
+- Cette isolation empêche tout conflit de dépendances (ex. SQLAlchemy < 2.0 requis par Airflow 2.9.0) avec le profil minimal qui utilise SQLAlchemy 2.0.x.
+
+**Réactivation ultérieure :** Pour réactiver Airflow, construire l'image `docker/Dockerfile.airflow` et ajouter le service au `docker-compose.trendx.yml`. Aucune modification des dépendances du profil minimal n'est nécessaire.
+
+---
+
 ## 12bis. Sauvegardes et restauration
 
 ### Sauvegarde

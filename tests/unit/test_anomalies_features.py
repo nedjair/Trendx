@@ -96,3 +96,35 @@ def test_extract_all_nan_window():
     features = extractor.extract_features(series)
     assert not features.empty
     assert features["nan_ratio"].iloc[0] == 1.0
+
+
+@pytest.mark.unit
+def test_multivariate_prefix_columns():
+    """Verify each source column gets its own prefix in multivariate output.
+
+    DataFrame.rename(columns=lambda c, _col=col: f"{_col}_{c}") binds the
+    loop variable ``col`` as a default argument to avoid late-binding
+    (B023).  While ``DataFrame.rename`` consumes the lambda synchronously
+    (so the violation is a linter false positive at runtime), the explicit
+    binding is a defensive hardening that keeps the prefix correct if the
+    callable is ever deferred or stored.
+    """
+    extractor = FeatureExtractor(window_size=12, step_size=6)
+    rng = np.random.default_rng(42)
+    n = 100
+    idx = pd.date_range("2024-01-01", periods=n, freq="1h")
+    df = pd.DataFrame(
+        {
+            "alpha": rng.normal(50, 1, n),
+            "beta": rng.normal(60, 1, n),
+            "gamma": rng.normal(70, 1, n),
+        },
+        index=idx,
+    )
+    features = extractor.extract_features_multivariate(df)
+    assert not features.empty
+    for prefix in ("alpha_", "beta_", "gamma_"):
+        assert any(c.startswith(prefix) for c in features.columns), (
+            f"Missing features with prefix '{prefix}' — "
+            "B023 closure bug would assign the wrong prefix"
+        )

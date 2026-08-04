@@ -231,7 +231,7 @@ class FeatureExtractor:
                 )
                 continue
             feat = self.extract_features(series, window_size=w)
-            feat = feat.rename(columns=lambda c: f"{col}_{c}" if not c.startswith("_") else c)
+            feat = feat.rename(columns=lambda c, _col=col: f"{_col}_{c}" if not c.startswith("_") else c)
             all_features.append(feat)
 
         if not all_features:
