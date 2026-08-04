@@ -44,6 +44,7 @@ dependencies = [
   "pmdarima>=2.0,<2.1",
   "pyod>=1.1,<1.2",
   "mlflow>=2.14,<2.15",
+  "setuptools>=68.0,<81.0",
 ]
 
 [project.optional-dependencies]
