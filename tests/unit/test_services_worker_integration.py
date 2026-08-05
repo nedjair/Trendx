@@ -1,21 +1,17 @@
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import patch
 
 import pytest
-
 from sqlalchemy import text
-
-from trendx.database.connection import get_analytics_engine
+from trendx.database.connection import get_analytics_engine, get_catalog_engine
+from trendx.database.repositories import CheckpointRepository
 from trendx.services import scheduler_guards
 from trendx.services.scheduler_guards import (
-    check_source_rows_exist,
     verify_aggregate_refresh,
     verify_aggregate_rows,
 )
-from trendx.database.connection import get_catalog_engine
-from trendx.database.repositories import CheckpointRepository
-
 
 _WATERMARK_ROW = {
     "aggregate_name": "hourly",
@@ -59,6 +55,7 @@ def _restore_watermark(saved: dict[str, Any] | None) -> None:
         )
 
 
+@pytest.mark.integration
 def test_engine_begin_commits_aggregate_watermark() -> None:
     saved = _save_watermark()
     try:
@@ -84,6 +81,7 @@ def test_engine_begin_commits_aggregate_watermark() -> None:
         _restore_watermark(saved)
 
 
+@pytest.mark.integration
 def test_engine_connect_rolls_back_aggregate_watermark() -> None:
     saved = _save_watermark()
     try:
@@ -104,9 +102,9 @@ def test_engine_connect_rolls_back_aggregate_watermark() -> None:
                 ),
                 {"agg": _WATERMARK_ROW["aggregate_name"]},
             ).scalar_one()
-            assert row == saved["last_refresh_rows"], (
-                f"engine.connect() a commité alors qu'il ne devrait pas (lu {row})"
-            )
+            assert (
+                row == saved["last_refresh_rows"]
+            ), f"engine.connect() a commité alors qu'il ne devrait pas (lu {row})"
     finally:
         _restore_watermark(saved)
 
@@ -138,27 +136,22 @@ def test_verify_aggregate_refresh_raises_when_watermark_missing() -> None:
 
 
 def test_verify_aggregate_rows_raises_when_source_rows_exist() -> None:
-    with patch.object(
-        scheduler_guards, "check_source_rows_exist", return_value=True
-    ):
+    with patch.object(scheduler_guards, "check_source_rows_exist", return_value=True):
         with pytest.raises(RuntimeError, match="zéro ligne traitée"):
             verify_aggregate_rows(_WATERMARK_ROW["aggregate_name"], 0, "2026-08-03T08:00:00+00:00")
 
 
 def test_verify_aggregate_rows_passes_when_no_source_rows() -> None:
-    with patch.object(
-        scheduler_guards, "check_source_rows_exist", return_value=False
-    ):
+    with patch.object(scheduler_guards, "check_source_rows_exist", return_value=False):
         verify_aggregate_rows(_WATERMARK_ROW["aggregate_name"], 0, "2026-08-03T08:00:00+00:00")
 
 
 def test_verify_aggregate_rows_passes_when_rows_upserted() -> None:
-    with patch.object(
-        scheduler_guards, "check_source_rows_exist", return_value=True
-    ):
+    with patch.object(scheduler_guards, "check_source_rows_exist", return_value=True):
         verify_aggregate_rows(_WATERMARK_ROW["aggregate_name"], 5, "2026-08-03T08:00:00+00:00")
 
 
+@pytest.mark.integration
 def test_checkpoint_write_then_read_distinct_connection() -> None:
     engine = get_catalog_engine()
     test_pipeline = "integration_test"
@@ -178,7 +171,12 @@ def test_checkpoint_write_then_read_distinct_connection() -> None:
     with engine.begin() as conn:
         repo = CheckpointRepository(conn)
         repo.upsert_watermark(
-            test_pipeline, test_entity, test_ts, test_metric, records_processed=1000, last_batch_id="batch-1"
+            test_pipeline,
+            test_entity,
+            test_ts,
+            test_metric,
+            records_processed=1000,
+            last_batch_id="batch-1",
         )
 
     with engine.connect() as conn:
@@ -200,6 +198,7 @@ def test_checkpoint_write_then_read_distinct_connection() -> None:
         )
 
 
+@pytest.mark.integration
 def test_checkpoint_upsert_concurrent_same_key() -> None:
     engine = get_catalog_engine()
     test_pipeline = "integration_test"
@@ -218,13 +217,23 @@ def test_checkpoint_upsert_concurrent_same_key() -> None:
     with engine.begin() as conn1:
         repo1 = CheckpointRepository(conn1)
         repo1.upsert_watermark(
-            test_pipeline, test_entity, "2026-06-15T12:00:00+00:00", test_metric, records_processed=500, last_batch_id="batch-a"
+            test_pipeline,
+            test_entity,
+            "2026-06-15T12:00:00+00:00",
+            test_metric,
+            records_processed=500,
+            last_batch_id="batch-a",
         )
 
     with engine.begin() as conn2:
         repo2 = CheckpointRepository(conn2)
         repo2.upsert_watermark(
-            test_pipeline, test_entity, "2026-06-15T13:00:00+00:00", test_metric, records_processed=1500, last_batch_id="batch-b"
+            test_pipeline,
+            test_entity,
+            "2026-06-15T13:00:00+00:00",
+            test_metric,
+            records_processed=1500,
+            last_batch_id="batch-b",
         )
 
     with engine.connect() as conn3:

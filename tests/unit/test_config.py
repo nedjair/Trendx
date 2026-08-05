@@ -6,8 +6,17 @@ from unittest.mock import patch
 
 import pytest
 from pydantic import SecretStr
-
+from pydantic_settings import SettingsConfigDict
 from trendx.config import Settings, settings
+
+
+class _TestSettings(Settings):
+    model_config = SettingsConfigDict(
+        env_file=None,
+        env_file_encoding="utf-8",
+        case_sensitive=True,
+        extra="ignore",
+    )
 
 
 @pytest.mark.unit
@@ -19,7 +28,7 @@ def test_settings_loading():
 
 @pytest.mark.unit
 def test_dsn_generation():
-    s = Settings(
+    s = _TestSettings(
         TRENDX_ENV="testing",
         TB_BASE_URL="http://test:8080",
         TB_USERNAME="test",
@@ -47,7 +56,7 @@ def test_dsn_generation():
 @pytest.mark.unit
 def test_tb_readonly_dsn():
     with patch.dict(os.environ, {}, clear=True):
-        s = Settings(
+        s = _TestSettings(
             TRENDX_ENV="testing",
             TB_BASE_URL="http://test:8080",
             TB_USERNAME="test",
@@ -60,7 +69,7 @@ def test_tb_readonly_dsn():
         assert dsn is None
 
     with patch.dict(os.environ, {}, clear=True):
-        s = Settings(
+        s = _TestSettings(
             TRENDX_ENV="testing",
             TB_BASE_URL="http://test:8080",
             TB_USERNAME="test",
@@ -79,15 +88,19 @@ def test_tb_readonly_dsn():
 
 @pytest.mark.unit
 def test_settings_from_env():
-    with patch.dict(os.environ, {
-        "TRENDX_ENV": "testing",
-        "TB_BASE_URL": "https://custom:8081",
-        "TB_USERNAME": "custom@test.com",
-        "TB_PASSWORD": "custom_pass",
-        "FORECAST_HORIZON": "48",
-        "ANOMALY_CONTAMINATION": "0.05",
-    }, clear=True):
-        s = Settings()
+    with patch.dict(
+        os.environ,
+        {
+            "TRENDX_ENV": "testing",
+            "TB_BASE_URL": "https://custom:8081",
+            "TB_USERNAME": "custom@test.com",
+            "TB_PASSWORD": "custom_pass",
+            "FORECAST_HORIZON": "48",
+            "ANOMALY_CONTAMINATION": "0.05",
+        },
+        clear=True,
+    ):
+        s = _TestSettings()
         assert s.trendx_env == "testing"
         assert s.tb_base_url == "https://custom:8081"
         assert s.tb_password.get_secret_value() == "custom_pass"
@@ -97,7 +110,7 @@ def test_settings_from_env():
 
 @pytest.mark.unit
 def test_settings_defaults():
-    s = Settings(
+    s = _TestSettings(
         TRENDX_ENV="testing",
         TB_BASE_URL="http://test:8080",
         TB_USERNAME="test",
@@ -110,7 +123,7 @@ def test_settings_defaults():
 
 @pytest.mark.unit
 def test_log_level_uppercased():
-    s = Settings(
+    s = _TestSettings(
         TRENDX_ENV="testing",
         TRENDX_LOG_LEVEL="debug",
         TB_BASE_URL="http://test:8080",
@@ -122,7 +135,7 @@ def test_log_level_uppercased():
 
 @pytest.mark.unit
 def test_secret_str_not_in_repr():
-    s = Settings(
+    s = _TestSettings(
         TRENDX_ENV="testing",
         TB_BASE_URL="http://test:8080",
         TB_USERNAME="test",
@@ -134,7 +147,7 @@ def test_secret_str_not_in_repr():
 
 @pytest.mark.unit
 def test_mask_dsn():
-    s = Settings(
+    s = _TestSettings(
         TRENDX_ENV="testing",
         TB_BASE_URL="http://test:8080",
         TB_USERNAME="test",
@@ -158,7 +171,7 @@ def test_tb_login_fallback_reads_vault(tmp_path: Path):
     vault.write_text(
         "TB_SERVICE_USER_EMAIL=vault@test.com\nTB_SERVICE_USER_PASSWORD=vault_pass_42\n"
     )
-    s = Settings(
+    s = _TestSettings(
         TRENDX_ENV="testing",
         TB_BASE_URL="http://test:8080",
         TB_USERNAME="",
@@ -172,7 +185,7 @@ def test_tb_login_fallback_reads_vault(tmp_path: Path):
 
 @pytest.mark.unit
 def test_diagnostic_output_contains_no_password():
-    s = Settings(
+    s = _TestSettings(
         TRENDX_ENV="testing",
         TB_BASE_URL="http://test:8080",
         TB_USERNAME="test",

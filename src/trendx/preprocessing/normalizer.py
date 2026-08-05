@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -10,7 +10,11 @@ from loguru import logger
 from scipy import stats as scipy_stats
 from sklearn.preprocessing import (
     MinMaxScaler as SkMinMaxScaler,
+)
+from sklearn.preprocessing import (
     RobustScaler as SkRobustScaler,
+)
+from sklearn.preprocessing import (
     StandardScaler as SkStandardScaler,
 )
 
@@ -24,7 +28,9 @@ class Normalizer:
 
     def __init__(self, method: str = "auto") -> None:
         if method not in ("auto", "standard", "robust", "minmax"):
-            msg = f"Unknown scaler method '{method}'. Use 'auto', 'standard', 'robust', or 'minmax'."
+            msg = (
+                f"Unknown scaler method '{method}'. Use 'auto', 'standard', 'robust', or 'minmax'."
+            )
             raise ValueError(msg)
         self._method = method
         self._selected_method: str | None = None
@@ -62,17 +68,22 @@ class Normalizer:
 
         logger.debug(
             "Auto-select: kurtosis={k:.2f}, skewness={s:.2f}, outlier_ratio={o:.4f}",
-            k=kurtosis, s=skewness, o=outlier_ratio,
+            k=kurtosis,
+            s=skewness,
+            o=outlier_ratio,
         )
-
-        if abs(kurtosis) > 3.0 or outlier_ratio > 0.05:
-            logger.info("High kurtosis ({k:.2f}) or outliers ({o:.2%}), selecting RobustScaler",
-                        k=kurtosis, o=outlier_ratio)
-            return "robust"
 
         if abs(skewness) > 1.5:
             logger.info("Highly skewed ({s:.2f}), selecting MinMaxScaler", s=skewness)
             return "minmax"
+
+        if abs(kurtosis) > 3.0 or outlier_ratio > 0.05:
+            logger.info(
+                "High kurtosis ({k:.2f}) or outliers ({o:.2%}), selecting RobustScaler",
+                k=kurtosis,
+                o=outlier_ratio,
+            )
+            return "robust"
 
         logger.info("Stable distribution, selecting StandardScaler")
         return "standard"

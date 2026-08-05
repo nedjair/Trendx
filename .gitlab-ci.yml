@@ -1,0 +1,120 @@
+# GitLab CI for Trendx — master branch
+# Merge with main's SAST/Secret-Detection (see §6 governance recommendation)
+stages:
+  - security
+  - test
+
+# ── SAST & Secret Detection (imported from main) ──────────────────────
+sast:
+  stage: security
+  include:
+    - template: Security/SAST.gitlab-ci.yml
+  variables:
+    SAST_ENABLED: 'true'
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+
+secret_detection:
+  stage: security
+  include:
+    - template: Security/Secret-Detection.gitlab-ci.yml
+  variables:
+    SECRET_DETECTION_ENABLED: 'true'
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+
+# ── Unit tests (no external services) ────────────────────────────────
+test-unit:
+  stage: test
+  image: python:3.12-slim
+  variables:
+    PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  before_script:
+    - python -m pip install --upgrade pip
+    - pip install -e ".[dev]"
+  script:
+    - pytest -m unit -ra --no-header --tb=short
+  coverage: '/TOTAL.*\s+(\d+\%)$/'
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+
+# ── Integration tests (PostgreSQL service) ────────────────────────────
+# Exécute les 4 tests checkpoint/idempotence sur une vraie base PostgreSQL.
+# Sans cela, la Phase 3 (ingestion incrémentale) n'est pas validable.
+test-integration:
+  stage: test
+  image: python:3.12-slim
+  services:
+    - name: postgres:16-alpine
+      alias: postgres
+  variables:
+    PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+    POSTGRES_DB: trendx
+    POSTGRES_USER: trendx_app
+    POSTGRES_PASSWORD: trendx_app_pass
+    PG_ADMIN_HOST: postgres
+    PG_ADMIN_PORT: "5432"
+    PG_ADMIN_DB: trendx
+    PG_ADMIN_USER: trendx_app
+    PG_ADMIN_PASSWORD: trendx_app_pass
+    TRENDX_DB_NAME: trendx
+    TRENDX_DB_HOST: postgres
+    TRENDX_DB_PORT: "5432"
+    TRENDX_DB_USER: trendx_app
+    TRENDX_DB_PASSWORD: trendx_app_pass
+    TRENDX_DEFAULT_TENANT_ID: df634b20-d6b0-11f0-bed9-45e34e17c7de
+    TRENDX_DEFAULT_CUSTOMER_ID: 8a40b580-9b9e-11f0-8e3f-c909dc64d424
+    TRENDX_DEFAULT_USER_ID: 8a513040-9b9e-11f0-8e3f-c909dc64d424
+    TB_BASE_URL: http://localhost:8080
+    TB_USERNAME: test@example.com
+    TB_PASSWORD: test
+    TB_AUTH_CONFIGURED: "false"
+  before_script:
+    - python -m pip install --upgrade pip
+    - pip install -e ".[dev]"
+    - |
+      # Wait for PostgreSQL
+      for i in $(seq 1 30); do
+        pg_isready -h postgres -p 5432 && break
+        sleep 1
+      done
+    - |
+      # Create schemas and tables needed by integration tests
+      psql -h postgres -U trendx_app -d trendx -v ON_ERROR_STOP=1 <<'SQL'
+      CREATE SCHEMA IF NOT EXISTS trendx_catalog;
+      CREATE SCHEMA IF NOT EXISTS trendx_analytics;
+
+      CREATE TABLE IF NOT EXISTS trendx_analytics.aggregate_watermarks (
+          aggregate_name      text PRIMARY KEY,
+          watermark           timestamptz,
+          last_refresh_start  timestamptz,
+          last_refresh_end    timestamptz,
+          last_refresh_rows   bigint NOT NULL DEFAULT 0,
+          updated_at          timestamptz NOT NULL DEFAULT now()
+      );
+
+      CREATE TABLE IF NOT EXISTS trendx_catalog.ingestion_checkpoints (
+          pipeline      text NOT NULL,
+          entity_id     text NOT NULL,
+          metric_key    text NOT NULL,
+          watermark_ts  timestamptz NOT NULL,
+          records_processed bigint NOT NULL DEFAULT 0,
+          last_batch_id text,
+          source        text,
+          updated_at    timestamptz NOT NULL DEFAULT now(),
+          PRIMARY KEY (pipeline, entity_id, metric_key)
+      );
+      CREATE INDEX IF NOT EXISTS ingestion_checkpoints_entity_idx
+          ON trendx_catalog.ingestion_checkpoints (entity_id, metric_key);
+
+      INSERT INTO trendx_analytics.aggregate_watermarks
+          (aggregate_name, last_refresh_start, last_refresh_rows)
+      VALUES ('hourly', '2026-01-01T00:00:00+00:00', 0)
+      ON CONFLICT (aggregate_name) DO UPDATE
+          SET last_refresh_start = EXCLUDED.last_refresh_start,
+              last_refresh_rows = EXCLUDED.last_refresh_rows;
+      SQL
+  script:
+    - pytest -m integration -ra --no-header --tb=short
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -44,7 +43,9 @@ class Settings(BaseSettings):
     trendx_python_executor_port: int = Field(default=8181, alias="TRENDX_PYTHON_EXECUTOR_PORT")
     trendx_workers: int = Field(default=2, alias="TRENDX_WORKERS")
 
-    tb_base_url: str = Field(default="http://thingsboard_thingsboard-ce_1:8080", alias="TB_BASE_URL")
+    tb_base_url: str = Field(
+        default="http://thingsboard_thingsboard-ce_1:8080", alias="TB_BASE_URL"
+    )
     tb_username: str = Field(default="tenant@example.com", alias="TB_USERNAME")
     tb_password: SecretStr = Field(default=SecretStr("CHANGE_ME"), alias="TB_PASSWORD")
     tb_request_timeout_seconds: int = Field(default=30, alias="TB_REQUEST_TIMEOUT_SECONDS")
@@ -58,9 +59,7 @@ class Settings(BaseSettings):
     # quand des identifiants vérifiés sont en place. Verrou d'ingestion : absent => false.
     tb_auth_configured: bool = Field(default=False, alias="TB_AUTH_CONFIGURED")
     tb_device_id: str = Field(default="ALG16025001", alias="TB_DEVICE_ID")
-    tb_metric_name: str = Field(
-        default="mppt_main_battery_voltage_v", alias="TB_METRIC_NAME"
-    )
+    tb_metric_name: str = Field(default="mppt_main_battery_voltage_v", alias="TB_METRIC_NAME")
     tb_secondary_metric_name: str = Field(
         default="mppt_main_battery_current_a", alias="TB_SECONDARY_METRIC_NAME"
     )
@@ -68,31 +67,37 @@ class Settings(BaseSettings):
     tb_db_host: str = Field(default="mobili_dahsboard-postgres-1", alias="TB_DB_HOST")
     tb_db_port: int = Field(default=32768, alias="TB_DB_PORT")
     tb_db_name: str = Field(default="thingsboard", alias="TB_DB_NAME")
-    tb_db_readonly_user: Optional[str] = Field(default=None, alias="TB_DB_READONLY_USER")
-    tb_db_readonly_password: Optional[SecretStr] = Field(
-        default=None, alias="TB_DB_READONLY_PASSWORD"
-    )
+    tb_db_readonly_user: str | None = Field(default=None, alias="TB_DB_READONLY_USER")
+    tb_db_readonly_password: SecretStr | None = Field(default=None, alias="TB_DB_READONLY_PASSWORD")
 
     pg_admin_host: str = Field(default="mobili_dahsboard-postgres-1", alias="PG_ADMIN_HOST")
     pg_admin_port: int = Field(default=5432, alias="PG_ADMIN_PORT")
     pg_admin_db: str = Field(default="postgres", alias="PG_ADMIN_DB")
     pg_admin_user: str = Field(default="postgres", alias="PG_ADMIN_USER")
-    pg_admin_password: SecretStr = Field(
-        default=SecretStr("postgres"), alias="PG_ADMIN_PASSWORD"
-    )
+    pg_admin_password: SecretStr = Field(default=SecretStr("postgres"), alias="PG_ADMIN_PASSWORD")
 
     trendx_db_name: str = Field(default="trendx", alias="TRENDX_DB_NAME")
     trendx_db_host: str = Field(default="mobili_dahsboard-postgres-1", alias="TRENDX_DB_HOST")
     trendx_db_port: int = Field(default=5432, alias="TRENDX_DB_PORT")
     trendx_db_user: str = Field(default="trendx_app", alias="TRENDX_DB_USER")
-    trendx_db_password: SecretStr = Field(default=SecretStr("CHANGE_ME"), alias="TRENDX_DB_PASSWORD")
+    trendx_db_password: SecretStr = Field(
+        default=SecretStr("CHANGE_ME"), alias="TRENDX_DB_PASSWORD"
+    )
 
     trendx_migration_user: str = Field(default="trendx_migration", alias="TRENDX_MIGRATION_USER")
-    trendx_migration_password: SecretStr = Field(default=SecretStr("CHANGE_ME"), alias="TRENDX_MIGRATION_PASSWORD")
+    trendx_migration_password: SecretStr = Field(
+        default=SecretStr("CHANGE_ME"), alias="TRENDX_MIGRATION_PASSWORD"
+    )
     trendx_app_user: str = Field(default="trendx_app", alias="TRENDX_APP_USER")
-    trendx_app_password: SecretStr = Field(default=SecretStr("CHANGE_ME"), alias="TRENDX_APP_PASSWORD")
+    trendx_app_password: SecretStr = Field(
+        default=SecretStr("CHANGE_ME"), alias="TRENDX_APP_PASSWORD"
+    )
 
     trendx_profile: str = Field(default="minimal", alias="TRENDX_PROFILE")
+
+    trendx_default_tenant_id: str = Field(default="", alias="TRENDX_DEFAULT_TENANT_ID")
+    trendx_default_customer_id: str = Field(default="", alias="TRENDX_DEFAULT_CUSTOMER_ID")
+    trendx_default_user_id: str = Field(default="", alias="TRENDX_DEFAULT_USER_ID")
 
     forecast_frequency: str = Field(default="1h", alias="FORECAST_FREQUENCY")
     forecast_horizon: int = Field(default=24, alias="FORECAST_HORIZON")
@@ -100,9 +105,7 @@ class Settings(BaseSettings):
     forecast_min_value: float = Field(default=0.0, alias="FORECAST_MIN_VALUE")
     forecast_max_value: float = Field(default=60.0, alias="FORECAST_MAX_VALUE")
 
-    anomaly_detection_enabled: bool = Field(
-        default=False, alias="ANOMALY_DETECTION_ENABLED"
-    )
+    anomaly_detection_enabled: bool = Field(default=False, alias="ANOMALY_DETECTION_ENABLED")
     anomaly_contamination: float = Field(default=0.01, alias="ANOMALY_CONTAMINATION")
     anomaly_window_size: int = Field(default=24, alias="ANOMALY_WINDOW_SIZE")
 

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-from typing import Any, Optional, Self
+from datetime import UTC, datetime, timedelta
+from typing import Any, Self
 
 import httpx
 from loguru import logger
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from tenacity import (
     before_sleep_log,
     retry,
@@ -13,7 +13,6 @@ from tenacity import (
     stop_after_attempt,
     wait_exponential,
 )
-
 from trendx.config import settings
 
 
@@ -33,18 +32,18 @@ class EntityId(BaseModel):
 
 
 class Device(BaseModel):
-    id: Optional[EntityId] = None
+    id: EntityId | None = None
     name: str = ""
     type: str = ""
     label: str = ""
-    tenantId: Optional[EntityId] = None
-    customerId: Optional[EntityId] = None
-    deviceProfileId: Optional[EntityId] = None
-    additionalInfo: Optional[dict[str, Any]] = None
+    tenantId: EntityId | None = None
+    customerId: EntityId | None = None
+    deviceProfileId: EntityId | None = None
+    additionalInfo: dict[str, Any] | None = None
 
 
 class DeviceProfile(BaseModel):
-    id: Optional[EntityId] = None
+    id: EntityId | None = None
     name: str = ""
     type: str = ""
     description: str = ""
@@ -53,37 +52,39 @@ class DeviceProfile(BaseModel):
 
 
 class Asset(BaseModel):
-    id: Optional[EntityId] = None
+    id: EntityId | None = None
     name: str = ""
     type: str = ""
     label: str = ""
-    tenantId: Optional[EntityId] = None
-    customerId: Optional[EntityId] = None
-    additionalInfo: Optional[dict[str, Any]] = None
+    tenantId: EntityId | None = None
+    customerId: EntityId | None = None
+    additionalInfo: dict[str, Any] | None = None
 
 
 class Relation(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     from_: EntityId = Field(alias="from")
     to: EntityId
     type: str = ""
     typeGroup: str = "COMMON"
-    additionalInfo: Optional[dict[str, Any]] = None
+    additionalInfo: dict[str, Any] | None = None
 
 
 class Tenant(BaseModel):
-    id: Optional[EntityId] = None
+    id: EntityId | None = None
     title: str = ""
     email: str = ""
     region: str = ""
-    additionalInfo: Optional[dict[str, Any]] = None
+    additionalInfo: dict[str, Any] | None = None
 
 
 class Customer(BaseModel):
-    id: Optional[EntityId] = None
+    id: EntityId | None = None
     title: str = ""
     email: str = ""
-    tenantId: Optional[EntityId] = None
-    additionalInfo: Optional[dict[str, Any]] = None
+    tenantId: EntityId | None = None
+    additionalInfo: dict[str, Any] | None = None
 
 
 class PageData(BaseModel):
@@ -105,7 +106,7 @@ class AttributeEntry(BaseModel):
 
 
 class AlarmData(BaseModel):
-    id: Optional[EntityId] = None
+    id: EntityId | None = None
     type: str = ""
     originator: EntityId
     severity: str = "CRITICAL"
@@ -202,7 +203,7 @@ class ThingsBoardClient:
     def is_authenticated(self) -> bool:
         if self._token is None or self._token_expiry is None:
             return False
-        return datetime.now(timezone.utc) < self._token_expiry
+        return datetime.now(UTC) < self._token_expiry
 
     @property
     def token_expiry(self) -> datetime | None:
@@ -234,10 +235,10 @@ class ThingsBoardClient:
                 padded = parts[1] + "=" * (4 - len(parts[1]) % 4)
                 payload = json.loads(base64.urlsafe_b64decode(padded))
                 exp = payload.get("exp", 0)
-                return datetime.fromtimestamp(exp, tz=timezone.utc)
+                return datetime.fromtimestamp(exp, tz=UTC)
         except Exception:
             logger.warning("Could not decode JWT to extract expiry")
-        return datetime.now(timezone.utc) + timedelta(hours=1)
+        return datetime.now(UTC) + timedelta(hours=1)
 
     async def login(self) -> LoginResponse:
         url = "/api/auth/login"
@@ -271,9 +272,13 @@ class ThingsBoardClient:
         self._token_expiry = None
         self._auth_retry_count += 1
         if self._auth_retry_count > 1:
-            logger.error("Re-authentication failed after {count} attempts", count=self._auth_retry_count)
+            logger.error(
+                "Re-authentication failed after {count} attempts", count=self._auth_retry_count
+            )
             raise ThingsBoardAuthError(401, "Re-authentication failed")
-        logger.info("Re-authenticating to ThingsBoard (attempt {count})", count=self._auth_retry_count)
+        logger.info(
+            "Re-authenticating to ThingsBoard (attempt {count})", count=self._auth_retry_count
+        )
         await self.login()
 
     def _safe_body(self, response: httpx.Response) -> Any:
@@ -301,7 +306,14 @@ class ThingsBoardClient:
         )
 
     @retry(
-        retry=retry_if_exception_type((httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError, ThingsBoardRateLimitError)),
+        retry=retry_if_exception_type(
+            (
+                httpx.TimeoutException,
+                httpx.NetworkError,
+                httpx.RemoteProtocolError,
+                ThingsBoardRateLimitError,
+            )
+        ),
         wait=wait_exponential(multiplier=2, min=1, max=30),
         stop=stop_after_attempt(3),
         before_sleep=before_sleep_log(logger, "DEBUG"),
@@ -377,7 +389,9 @@ class ThingsBoardClient:
         data = await self._get("/api/tenants", params=params)
         return PageData.model_validate(data)
 
-    async def get_customers(self, tenant_id: str, page: int = 0, page_size: int | None = None) -> PageData:
+    async def get_customers(
+        self, tenant_id: str, page: int = 0, page_size: int | None = None
+    ) -> PageData:
         params = {"tenantId": tenant_id, "pageSize": page_size or self._page_size, "page": page}
         data = await self._get("/api/customers", params=params)
         return PageData.model_validate(data)
@@ -508,7 +522,9 @@ class ThingsBoardClient:
             entity_type=alarm_data.originator.entityType,
             entity_id=alarm_data.originator.id,
         )
-        result = await self._post("/api/alarm", json_data=alarm_data.model_dump(exclude={"id"}, by_alias=True))
+        result = await self._post(
+            "/api/alarm", json_data=alarm_data.model_dump(exclude={"id"}, by_alias=True)
+        )
         return result or {}
 
     async def get_alarms(

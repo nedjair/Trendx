@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import time
 import uuid
+from contextlib import contextmanager
 from typing import Any
 
 from loguru import logger
 from sqlalchemy import text
-
+from trendx.config import settings
 from trendx.database.connection import manager as db_manager
 from trendx.database.models import TrendzTask
 from trendx.database.repositories import TrendzTaskRepository
@@ -28,6 +29,12 @@ class TaskService:
     def __init__(self) -> None:
         pass
 
+    @contextmanager
+    def _get_session_and_repo(self):
+        with db_manager.get_session("catalog") as session:
+            repo = TrendzTaskRepository(session)
+            yield session, repo
+
     def create_task(
         self,
         name: str,
@@ -37,13 +44,24 @@ class TaskService:
         reference_type: str = "MANUAL",
         reference_key: str | None = None,
     ) -> TrendzTask:
-        with db_manager.get_session("catalog") as session:
-            repo = TrendzTaskRepository(session)
+        tenant_id_str = settings.trendx_default_tenant_id
+        customer_id_str = settings.trendx_default_customer_id
+        user_id_str = settings.trendx_default_user_id
+        if not tenant_id_str or not customer_id_str or not user_id_str:
+            msg = (
+                "TRENDX_DEFAULT_TENANT_ID / TRENDX_DEFAULT_CUSTOMER_ID / "
+                "TRENDX_DEFAULT_USER_ID must be configured to create a task."
+            )
+            raise ValueError(msg)
+        tenant_id = uuid.UUID(tenant_id_str)
+        customer_id = uuid.UUID(customer_id_str)
+        user_id = uuid.UUID(user_id_str)
+        with self._get_session_and_repo() as (session, repo):
             task = repo.create(
                 name=name,
-                tenant_id=uuid.UUID("df634b20-d6b0-11f0-bed9-45e34e17c7de"),
-                customer_id=uuid.UUID("8a40b580-9b9e-11f0-8e3f-c909dc64d424"),
-                user_id=uuid.UUID("8a513040-9b9e-11f0-8e3f-c909dc64d424"),
+                tenant_id=tenant_id,
+                customer_id=customer_id,
+                user_id=user_id,
                 created_ts=int(time.time() * 1000),
                 updated_ts=int(time.time() * 1000),
                 enabled=True,
@@ -98,8 +116,7 @@ class TaskService:
         return None
 
     def cancel_task(self, task_id: str) -> TrendzTask | None:
-        with db_manager.get_session("catalog") as session:
-            repo = TrendzTaskRepository(session)
+        with self._get_session_and_repo() as (session, repo):
             task = repo.get(task_id)
             if task is None:
                 return None
@@ -109,8 +126,7 @@ class TaskService:
             return task
 
     def retry_task(self, task_id: str) -> TrendzTask | None:
-        with db_manager.get_session("catalog") as session:
-            repo = TrendzTaskRepository(session)
+        with self._get_session_and_repo() as (session, repo):
             task = repo.get(task_id)
             if task is not None:
                 task.enabled = True

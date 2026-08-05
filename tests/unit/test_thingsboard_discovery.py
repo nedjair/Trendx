@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import re
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from faker import Faker
-
 from trendx.thingsboard.client import Asset, Device, DeviceProfile, EntityId, PageData, Relation
 from trendx.thingsboard.discovery import InclusionRules, TopologyDiscoveryService
 
@@ -42,9 +41,15 @@ def _fake_relation(from_id, to_id):
 def service():
     client = Mock()
     client.login = AsyncMock()
-    client.get_devices = AsyncMock(return_value=PageData(data=[], totalPages=1, totalElements=0, hasNext=False))
-    client.get_assets = AsyncMock(return_value=PageData(data=[], totalPages=1, totalElements=0, hasNext=False))
-    client.get_device_profiles = AsyncMock(return_value=PageData(data=[], totalPages=1, totalElements=0, hasNext=False))
+    client.get_devices = AsyncMock(
+        return_value=PageData(data=[], totalPages=1, totalElements=0, hasNext=False)
+    )
+    client.get_assets = AsyncMock(
+        return_value=PageData(data=[], totalPages=1, totalElements=0, hasNext=False)
+    )
+    client.get_device_profiles = AsyncMock(
+        return_value=PageData(data=[], totalPages=1, totalElements=0, hasNext=False)
+    )
     client.get_relations = AsyncMock(return_value=[])
     client.get_attributes = AsyncMock(return_value=[])
     client.get_timeseries_keys = AsyncMock(return_value=[])
@@ -73,7 +78,12 @@ async def test_full_sync(service):
     service._client.get_assets = AsyncMock(
         return_value=PageData(data=[], totalPages=1, totalElements=0, hasNext=False)
     )
-    service._client.get_relations = AsyncMock(return_value=[rel.model_dump(by_alias=True)])
+    service._client.get_relations = AsyncMock(
+        side_effect=[
+            [rel.model_dump(by_alias=True)],
+            [],
+        ]
+    )
     service._client.get_attributes = AsyncMock(return_value=[])
     service._client.get_timeseries_keys = AsyncMock(return_value=["temperature"])
 
@@ -140,7 +150,12 @@ async def test_discover_relations(service):
     service._catalog.devices["dev-b"].entity_id = "dev-b"
 
     rel = _fake_relation("dev-a", "dev-b")
-    service._client.get_relations = AsyncMock(return_value=[rel.model_dump(by_alias=True)])
+    service._client.get_relations = AsyncMock(
+        side_effect=[
+            [rel.model_dump(by_alias=True)],
+            [],
+        ]
+    )
 
     relations = await service.discover_relations()
 
