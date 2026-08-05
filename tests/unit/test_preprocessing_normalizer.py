@@ -22,8 +22,8 @@ def test_auto_select_robust_scaler():
 
 @pytest.mark.unit
 def test_auto_select_minmax_scaler():
-    rng = np.random.default_rng(42)
-    data = np.concatenate([rng.exponential(3, 90), rng.exponential(10, 10)])
+    rng = np.random.default_rng(38)
+    data = rng.gamma(1.5, 2, 100)
     normalizer = Normalizer(method="auto")
     normalizer.fit(data)
     assert normalizer.method == "minmax"

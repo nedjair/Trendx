@@ -157,7 +157,7 @@
 | 8.4 | Transformation de Fourier FOURIER_TRANSFORMATION | id. | Méthode FFour series | forecasting.fourier.py | non commencé | — | — | Non | — |
 | 8.5 | Prophet | Prompt §6.7 | Prophet Meta Prophet FB | forecasting.prophet.py | non commencé | — | — | Non | — |
 | 8.6 | Modèles Python personnalisés | id. | Custom upload/fichier | Perso Py registry | non commencé | — | — | Non | sandbox |
-| 8.7 | Filtrage + normalisation auto | Prompt §6.7 | RobustScaler/MinMax/Standard | preprocessing.normalizer | non commencé | — | — | Non | — |
+| 8.7 | Filtrage + normalisation auto | [thingsboard.io/docs/trendz/preprocessing/](https://thingsboard.io/docs/trendz/preprocessing/) | RobustScaler si kurtosis > 3 ou outliers > 5% ; MinMaxScaler si skewness > 1.5 ; sinon StandardScaler (doc : RobustScaler avant MinMaxScaler) | preprocessing.normalizer | non commencé | `test_auto_select_robust_scaler`, `test_auto_select_minmax_scaler`, `test_auto_select_standard_scaler` | Ordre sélecteur : kurtosis/outliers → skewness → standard, conformément doc Trendz §SKILL10 | Non | — |
 | 8.8 | Segmentation périodes/segmente | id. | Segments modèle par device/profil/global | selector strategy PER_DEVICE | PER_PROFILE/GLOBAL | AUTO | non commencé | — | — | Non | — |
 | 8.9 | Limites métier min/max | id. | Cap forecasting | forecast clipping cap | non commencé | — | — | Non | — |
 | 8.10 | Saisonnalités multiples | id. | yearly/weekly/yearly | Prophet yearly_seasonality config | non commencé | — | — | Non | — |

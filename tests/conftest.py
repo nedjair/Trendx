@@ -14,6 +14,15 @@ def _db_available() -> bool:
         return False
 
 
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--run-integration",
+        action="store_true",
+        default=False,
+        help="Run integration tests even if DB is unavailable.",
+    )
+
+
 def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line(
         "markers",
@@ -23,7 +32,7 @@ def pytest_configure(config: pytest.Config) -> None:
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    run_integration = config.getoption("--run-integration", default=False, action="store_true")
+    run_integration = config.getoption("--run-integration")
     for item in items:
         if item.get_closest_marker("integration"):
             if not run_integration and not _db_available():

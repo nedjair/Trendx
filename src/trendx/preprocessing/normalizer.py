@@ -73,10 +73,6 @@ class Normalizer:
             o=outlier_ratio,
         )
 
-        if abs(skewness) > 1.5:
-            logger.info("Highly skewed ({s:.2f}), selecting MinMaxScaler", s=skewness)
-            return "minmax"
-
         if abs(kurtosis) > 3.0 or outlier_ratio > 0.05:
             logger.info(
                 "High kurtosis ({k:.2f}) or outliers ({o:.2%}), selecting RobustScaler",
@@ -84,6 +80,10 @@ class Normalizer:
                 o=outlier_ratio,
             )
             return "robust"
+
+        if abs(skewness) > 1.5:
+            logger.info("Highly skewed ({s:.2f}), selecting MinMaxScaler", s=skewness)
+            return "minmax"
 
         logger.info("Stable distribution, selecting StandardScaler")
         return "standard"
