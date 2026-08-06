@@ -138,6 +138,7 @@ Tables héritées de Trendz (source : docs/trendz-parity-matrix.md + docs/archit
 | `app_secret` | Secret application | id, name, value_hash |
 | `app_setting` | Paramètre application | id, key, value_json |
 | `writeback_log` | Journal writeback | id, job_id, device_id, entity_id, key, ts_start, ts_end, nb_points, written_at, operator, dry_run |
+| `prediction_model_status_history` | Historique Trendx des transitions de statut modèle | id, prediction_model_id, business_entity_id, metric_key, previous_status, new_status, changed_ts |
 
 ### 3.2 Schéma `trendx_analytics` dans base `trendx`
 

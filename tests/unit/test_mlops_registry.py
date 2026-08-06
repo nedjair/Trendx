@@ -45,7 +45,10 @@ def test_get_champion(registry):
     mock_champion = MagicMock()
     mock_champion.id = 1
     mock_champion.algorithm = "Prophet"
-    mock_repo.find_champion.return_value = mock_champion
+    mock_champion.status = "champion"
+    mock_champion.tb_telemetry_key = "temperature"
+    mock_champion.created_ts = 1
+    mock_repo.find_by_business_entity.return_value = [mock_champion]
 
     with (
         patch("trendx.mlops.registry.next", return_value=mock_session),
@@ -61,7 +64,7 @@ def test_get_champion(registry):
 def test_get_champion_none(registry):
     mock_session = MagicMock()
     mock_repo = MagicMock()
-    mock_repo.find_champion.return_value = None
+    mock_repo.find_by_business_entity.return_value = []
 
     with (
         patch("trendx.mlops.registry.next", return_value=mock_session),
@@ -78,7 +81,9 @@ def test_promote_champion(registry):
     mock_repo = MagicMock()
     mock_model = MagicMock()
     mock_model.id = 1
-    mock_model.status = "challenger"
+    mock_model.status = "champion"
+    mock_model.tb_telemetry_key = "temperature"
+    mock_repo.find_by_business_entity.return_value = []
     mock_repo.set_champion.return_value = mock_model
 
     with (
@@ -97,15 +102,12 @@ def test_rollback(registry):
     mock_repo = MagicMock()
     current_champion = MagicMock()
     current_champion.id = 2
-    current_champion.is_champion = True
     current_champion.status = "champion"
-    current_champion.previous_champion_id = 1
     previous_champion = MagicMock()
     previous_champion.id = 1
-    previous_champion.is_champion = False
     previous_champion.status = "challenger"
     mock_repo.find_champion.return_value = current_champion
-    mock_repo.get.return_value = previous_champion
+    mock_repo.find_previous_champion.return_value = previous_champion
 
     with (
         patch("trendx.mlops.registry.next", return_value=mock_session),
@@ -115,7 +117,7 @@ def test_rollback(registry):
 
     assert result is not None
     assert result.id == 1
-    assert result.is_champion is True
+    assert result.status == "champion"
 
 
 @pytest.mark.unit
@@ -139,8 +141,9 @@ def test_rollback_no_previous(registry):
     mock_repo = MagicMock()
     current = MagicMock()
     current.id = 2
-    current.previous_champion_id = None
+    current.status = "champion"
     mock_repo.find_champion.return_value = current
+    mock_repo.find_previous_champion.return_value = None
 
     with (
         patch("trendx.mlops.registry.next", return_value=mock_session),
@@ -158,10 +161,10 @@ def test_compare_models(registry):
     champ = MagicMock()
     champ.id = 1
     champ.algorithm = "Prophet"
-    champ.test_metrics = {"mae": 0.5}
-    champ.trained_at = datetime(2024, 1, 1, tzinfo=timezone.utc)
-    mock_repo.find_champion.return_value = champ
-    mock_repo.find_challengers.return_value = []
+    champ.status = "champion"
+    champ.tb_telemetry_key = "temperature"
+    champ.created_ts = 1
+    mock_repo.find_by_business_entity.return_value = [champ]
 
     with (
         patch("trendx.mlops.registry.next", return_value=mock_session),
@@ -201,7 +204,10 @@ def test_get_challenger(registry):
     mock_repo = MagicMock()
     challenger = MagicMock()
     challenger.id = 3
-    mock_repo.find_challengers.return_value = [challenger]
+    challenger.status = "challenger"
+    challenger.tb_telemetry_key = "temperature"
+    challenger.created_ts = 1
+    mock_repo.find_by_business_entity.return_value = [challenger]
 
     with (
         patch("trendx.mlops.registry.next", return_value=mock_session),
@@ -217,7 +223,7 @@ def test_get_challenger(registry):
 def test_get_challenger_none(registry):
     mock_session = MagicMock()
     mock_repo = MagicMock()
-    mock_repo.find_challengers.return_value = []
+    mock_repo.find_by_business_entity.return_value = []
 
     with (
         patch("trendx.mlops.registry.next", return_value=mock_session),
@@ -234,9 +240,10 @@ def test_list_versions(registry):
     mock_repo = MagicMock()
     champ = MagicMock()
     champ.id = 1
-    champ.is_champion = True
-    mock_repo.find_champion.return_value = champ
-    mock_repo.find_challengers.return_value = []
+    champ.status = "champion"
+    champ.tb_telemetry_key = "temperature"
+    champ.created_ts = 1
+    mock_repo.find_by_business_entity.return_value = [champ]
 
     with (
         patch("trendx.mlops.registry.next", return_value=mock_session),

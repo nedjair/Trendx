@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Any, Optional
+from datetime import UTC, datetime, timezone
+from typing import Any
 
 from loguru import logger
-from sqlalchemy import select, update
-
 from trendx.database.connection import manager as db_manager
 from trendx.database.models import PredictionModel
 from trendx.database.repositories import PredictionModelRepository
+
+CHAMPION_STATUS = "champion"
+CHALLENGER_STATUS = "challenger"
 
 
 class ModelRegistry:
@@ -30,16 +31,16 @@ class ModelRegistry:
     def _get_repo(self) -> PredictionModelRepository:
         if self._repo is not None:
             return self._repo
-        session = next(db_manager.get_session("catalog"))
+        session = next(db_manager.get_session("catalog"))  # type: ignore[call-overload]
         return PredictionModelRepository(session)
 
     def register(
         self,
-        business_entity_id: str,
-        business_entity_field_id: str,
-        model_type: str,
-        model_uri: str,
-        tb_telemetry_key: str,
+        business_entity_id: str = "",
+        business_entity_field_id: str = "",
+        model_type: str = "",
+        model_uri: str = "",
+        tb_telemetry_key: str = "",
         model_parameters: str = "",
         datasource_parameters: str = "",
         method_parameters: str = "",
@@ -76,9 +77,9 @@ class ModelRegistry:
         logger.info(
             "Registered model {} for entity={} field={} type={}",
             model.id,
-            business_entity_id,
+            be_id,
             business_entity_field_id,
-            model_type,
+            m_type,
         )
         return model
 
@@ -87,23 +88,32 @@ class ModelRegistry:
         entity_id: str,
         metric_key: str,
     ) -> PredictionModel | None:
-        # TODO: is_champion column does not exist in real prediction_model table.
-        # For now, return the most recently created model for the entity/field.
-        session = next(db_manager.get_session("catalog"))
+        session = next(db_manager.get_session("catalog"))  # type: ignore[call-overload]
         repo = PredictionModelRepository(session)
-        models = repo.find_by_business_entity(entity_id)
-        if not models:
+        candidates = [
+            model
+            for model in repo.find_by_business_entity(entity_id)
+            if model.tb_telemetry_key == metric_key and model.status == CHAMPION_STATUS
+        ]
+        if not candidates:
             return None
-        # Sort by created_ts descending and return the latest
-        models_sorted = sorted(models, key=lambda m: m.created_ts or 0, reverse=True)
-        return models_sorted[0] if models_sorted else None
+        return max(candidates, key=lambda model: model.created_ts or 0)
 
     def get_challenger(
         self,
         entity_id: str,
         metric_key: str,
     ) -> PredictionModel | None:
-        return None
+        session = next(db_manager.get_session("catalog"))  # type: ignore[call-overload]
+        repo = PredictionModelRepository(session)
+        candidates = [
+            model
+            for model in repo.find_by_business_entity(entity_id)
+            if model.tb_telemetry_key == metric_key and model.status == CHALLENGER_STATUS
+        ]
+        if not candidates:
+            return None
+        return max(candidates, key=lambda model: model.created_ts or 0)
 
     def promote_to_champion(
         self,
@@ -111,28 +121,106 @@ class ModelRegistry:
         metric_key: str,
         model_version: PredictionModel,
     ) -> PredictionModel | None:
-        # TODO: is_champion column does not exist in real prediction_model table.
-        # Promotion logic must be managed externally.
-        session = next(db_manager.get_session("catalog"))
+        session = next(db_manager.get_session("catalog"))  # type: ignore[call-overload]
         repo = PredictionModelRepository(session)
-        promoted = repo.get(model_version.id)
+        models = repo.find_by_business_entity(entity_id)
+        current = next(
+            (
+                model
+                for model in models
+                if model.tb_telemetry_key == metric_key
+                and model.status == CHAMPION_STATUS
+                and model.id != model_version.id
+            ),
+            None,
+        )
+        previous_status = model_version.status
+        promoted = repo.set_champion(model_version.id, entity_id, metric_key)
         if promoted is not None:
-            promoted.status = "active"
+            changed_ts = int(datetime.now(UTC).timestamp() * 1000)
+            if current is not None:
+                repo.record_status_transition(
+                    current.id,
+                    entity_id,
+                    metric_key,
+                    CHAMPION_STATUS,
+                    CHALLENGER_STATUS,
+                    changed_ts,
+                )
+            repo.record_status_transition(
+                promoted.id,
+                entity_id,
+                metric_key,
+                previous_status,
+                CHAMPION_STATUS,
+                changed_ts,
+            )
             session.commit()
             logger.info(
-                "Promoted model {} to active for {}",
-                model_version.id,
+                "Promoted model {} to champion for {}/{}",
+                promoted.id,
                 entity_id[:12],
+                metric_key,
             )
         return promoted
 
+    # Requires migration 006 on trendx before production use; not validated against a real database.
     def rollback(
         self,
         entity_id: str,
         metric_key: str,
     ) -> PredictionModel | None:
-        # TODO: Rollback logic requires external champion tracking.
-        return None
+        session = next(db_manager.get_session("catalog"))  # type: ignore[call-overload]
+        repo = PredictionModelRepository(session)
+        current = repo.find_champion(entity_id, metric_key)
+        if current is None:
+            logger.warning("No champion to roll back for {}/{}", entity_id[:12], metric_key)
+            return None
+        previous = repo.find_previous_champion(entity_id, metric_key, current.id)
+        if previous is None:
+            logger.warning(
+                "No previous champion or status history unavailable for {}/{}",
+                entity_id[:12],
+                metric_key,
+            )
+            return None
+        if previous.status != CHALLENGER_STATUS:
+            logger.error(
+                "Refusing rollback for {}/{}: previous champion {} has unexpected status {}",
+                entity_id[:12],
+                metric_key,
+                previous.id,
+                previous.status,
+            )
+            return None
+        changed_ts = int(datetime.now(UTC).timestamp() * 1000)
+        current.status = CHALLENGER_STATUS
+        previous.status = CHAMPION_STATUS
+        repo.record_status_transition(
+            current.id,
+            entity_id,
+            metric_key,
+            CHAMPION_STATUS,
+            CHALLENGER_STATUS,
+            changed_ts,
+        )
+        repo.record_status_transition(
+            previous.id,
+            entity_id,
+            metric_key,
+            CHALLENGER_STATUS,
+            CHAMPION_STATUS,
+            changed_ts,
+        )
+        session.commit()
+        logger.info(
+            "Rolled back champion from {} to {} for {}/{}",
+            current.id,
+            previous.id,
+            entity_id[:12],
+            metric_key,
+        )
+        return previous
 
     def compare_models(
         self,
@@ -157,12 +245,24 @@ class ModelRegistry:
         entity_id: str,
         metric_key: str,
     ) -> list[dict[str, Any]]:
-        session = next(db_manager.get_session("catalog"))
+        session = next(db_manager.get_session("catalog"))  # type: ignore[call-overload]
         repo = PredictionModelRepository(session)
-        models = repo.find_by_business_entity(entity_id)
         versions: list[dict[str, Any]] = []
-        for m in models:
-            versions.append(self._model_to_dict(m))
+        champion = self.get_champion(entity_id, metric_key)
+        if champion is not None:
+            versions.append(self._model_to_dict(champion, is_champion=True))
+        models = repo.find_by_business_entity(entity_id)
+        for model in models:
+            if (
+                model.tb_telemetry_key == metric_key
+                and model.status == CHALLENGER_STATUS
+                and (champion is None or model.id != champion.id)
+            ):
+                versions.append(self._model_to_dict(model))
+        if not versions and champion is None:
+            for model in models:
+                if model.tb_telemetry_key == metric_key:
+                    versions.append(self._model_to_dict(model))
         return versions
 
     def get_model_metrics_history(

@@ -399,6 +399,18 @@ class PredictionModel(Base):
     avoid_disabling: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
+class PredictionModelStatusHistory(Base):
+    __tablename__ = "prediction_model_status_history"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    prediction_model_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    business_entity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    metric_key: Mapped[str] = mapped_column(Text, nullable=False)
+    previous_status: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    new_status: Mapped[str] = mapped_column(Text, nullable=False)
+    changed_ts: Mapped[int] = mapped_column(BigInteger, nullable=False)
+
+
 class PredictionModelLastItemPoint(Base):
     __tablename__ = "prediction_model_last_item_point"
 

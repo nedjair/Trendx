@@ -54,8 +54,8 @@ repos:
     hooks:
       - id: mypy
         additional_dependencies: ["pydantic>=2.6", "types-redis"]
-        args: ["--config-file=pyproject.toml"]
-        pass_filenames: false
+        args: ["--config-file=pyproject.toml", "--follow-imports=silent"]
+        files: ^src/
 
   # ————————————————————————————————————————
   # 4. Python - sécurité

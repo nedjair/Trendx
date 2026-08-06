@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from typing import Any, Generic, Optional, Sequence, TypeVar
+from typing import Any, Generic, Optional, Sequence, TypeVar, cast
 
 from loguru import logger
-from sqlalchemy import func, select, text, update
+from sqlalchemy import Integer, func, select, text, update
+from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session
 
 from trendx.database.models import (
@@ -11,6 +12,7 @@ from trendx.database.models import (
     EntityRelation,
     MetricDefinition,
     PredictionModel,
+    PredictionModelStatusHistory,
     TrendzTask,
     ViewConfig,
 )
@@ -36,7 +38,7 @@ class BaseRepository(Generic[T]):
         return instance
 
     def get(self, ident: Any) -> Optional[T]:
-        return self._session.get(self._model, ident)
+        return cast(Optional[T], self._session.get(self._model, ident))
 
     def update(self, ident: Any, **kwargs: Any) -> Optional[T]:
         instance = self.get(ident)
@@ -52,7 +54,7 @@ class BaseRepository(Generic[T]):
     def update_many(self, stmt: Any) -> int:
         result = self._session.execute(stmt)
         self._session.flush()
-        return result.rowcount  # type: ignore[return-value]
+        return cast(int, result.rowcount)
 
     def delete(self, ident: Any) -> bool:
         instance = self.get(ident)
@@ -66,7 +68,7 @@ class BaseRepository(Generic[T]):
     def delete_many(self, stmt: Any) -> int:
         result = self._session.execute(stmt)
         self._session.flush()
-        return result.rowcount  # type: ignore[return-value]
+        return cast(int, result.rowcount)
 
     def list(
         self,
@@ -84,14 +86,16 @@ class BaseRepository(Generic[T]):
             stmt = stmt.offset(offset)
         if limit is not None:
             stmt = stmt.limit(limit)
-        return self._session.scalars(stmt).all()
+        values: Any = self._session.scalars(stmt).all()
+        return cast(Sequence[T], values)
 
     def count(self, *filters: Any) -> int:
-        stmt = select(func.count(self._model.id)).select_from(self._model)
+        stmt = select(func.count(cast(Any, self._model).id)).select_from(self._model)
         if filters:
             stmt = stmt.where(*filters)
         result = self._session.execute(stmt)
-        return result.scalar_one()  # type: ignore[return-value]
+        value: Any = result.scalar_one()
+        return cast(int, value)
 
     def exists(self, *filters: Any) -> bool:
         stmt = select(self._model).where(*filters).limit(1)
@@ -122,7 +126,8 @@ class BusinessEntityRepository(BaseRepository[BusinessEntity]):
             | BusinessEntity.description.ilike(f"%{term}%")
             | BusinessEntity.query.ilike(f"%{term}%")
         )
-        return self._session.scalars(stmt).all()
+        values: Any = self._session.scalars(stmt).all()
+        return cast(Sequence[BusinessEntity], values)
 
     def upsert(
         self,
@@ -234,7 +239,8 @@ class EntityRelationRepository(BaseRepository[EntityRelation]):
             EntityRelation.name == name,
             EntityRelation.direction == direction,
         )
-        return self._session.scalars(stmt).first()
+        value: Any = self._session.scalars(stmt).first()
+        return cast(Optional[EntityRelation], value)
 
     def find_enabled(self) -> Sequence[EntityRelation]:
         return self.list(EntityRelation.enabled.is_(True))
@@ -267,23 +273,102 @@ class PredictionModelRepository(BaseRepository[PredictionModel]):
             PredictionModel.customer_id == customer_id,
         )
 
-    # TODO: is_champion column does not exist in real prediction_model table.
-    # Champion selection must be managed via application logic or a separate registry.
     def find_champion(self, entity_id: Any, metric_key: str) -> Optional[PredictionModel]:
-        return None
+        models = self.find_by_business_entity(entity_id)
+        candidates = [
+            model
+            for model in models
+            if model.tb_telemetry_key == metric_key and model.status == "champion"
+        ]
+        if not candidates:
+            return None
+        return max(candidates, key=lambda model: model.created_ts)
 
     def find_challengers(self, entity_id: Any, metric_key: str) -> Sequence[PredictionModel]:
-        return []
+        models = self.find_by_business_entity(entity_id)
+        return [
+            model
+            for model in models
+            if model.tb_telemetry_key == metric_key and model.status == "challenger"
+        ]
+
+    def record_status_transition(
+        self,
+        model_id: Any,
+        entity_id: Any,
+        metric_key: str,
+        previous_status: Optional[str],
+        new_status: str,
+        changed_ts: int,
+    ) -> PredictionModelStatusHistory:
+        transition = PredictionModelStatusHistory(
+            prediction_model_id=model_id,
+            business_entity_id=entity_id,
+            metric_key=metric_key,
+            previous_status=previous_status,
+            new_status=new_status,
+            changed_ts=changed_ts,
+        )
+        self._session.add(transition)
+        self._session.flush()
+        return transition
+
+    def find_previous_champion(
+        self,
+        entity_id: Any,
+        metric_key: str,
+        current_model_id: Any,
+    ) -> Optional[PredictionModel]:
+        try:
+            history = self._session.scalars(
+                select(PredictionModelStatusHistory)
+                .where(
+                    PredictionModelStatusHistory.business_entity_id == entity_id,
+                    PredictionModelStatusHistory.metric_key == metric_key,
+                    PredictionModelStatusHistory.new_status == "champion",
+                    PredictionModelStatusHistory.prediction_model_id != current_model_id,
+                )
+                .order_by(PredictionModelStatusHistory.changed_ts.desc())
+            ).all()
+        except ProgrammingError as exc:
+            pgcode = getattr(exc.orig, "pgcode", None)
+            if pgcode != "42P01":
+                raise
+            logger.warning(
+                "Model status history unavailable; rollback is disabled until migration 006 is applied"
+            )
+            return None
+        for transition in history:
+            model = self.get(transition.prediction_model_id)
+            if model is not None:
+                return model
+        return None
 
     def set_champion(self, model_id: Any, entity_id: Any, metric_key: str) -> Optional[PredictionModel]:
-        return None
+        models = self.find_by_business_entity(entity_id)
+        promoted = next(
+            (
+                model
+                for model in models
+                if model.id == model_id and model.tb_telemetry_key == metric_key
+            ),
+            None,
+        )
+        if promoted is None:
+            return None
+        for model in models:
+            if model.tb_telemetry_key == metric_key and model.id != model_id:
+                if model.status == "champion":
+                    model.status = "challenger"
+        promoted.status = "champion"
+        return promoted
 
 
 # TODO: AnomalyDetector table does not exist in Trendz 1.15.0 schema.
 # Use cluster_model for anomaly-related configuration.
-class AnomalyDetectorRepository(BaseRepository):
+class AnomalyDetectorRepository(BaseRepository[Any]):
     def __init__(self, session: Session) -> None:
-        super().__init__(session, None)
+        super().__init__(session, cast(type[Any], None))
 
     def find_by_entity_metric(self, entity_id: Any, metric_key: str) -> Sequence[Any]:
         return []
@@ -297,9 +382,9 @@ class AnomalyDetectorRepository(BaseRepository):
 
 # TODO: Checkpoint table does not exist in Trendz 1.15.0 schema.
 # Use trendx checkpoint tables or external watermark store.
-class CheckpointRepository(BaseRepository):
+class CheckpointRepository(BaseRepository[Any]):
     def __init__(self, session: Session) -> None:
-        super().__init__(session, None)
+        super().__init__(session, cast(type[Any], None))
 
     def get_watermark(
         self, pipeline: str, entity_id: Any, metric_key: Optional[str] = None
@@ -387,7 +472,8 @@ class TrendzTaskRepository(BaseRepository[TrendzTask]):
             TrendzTask.reference_type == reference_type,
             TrendzTask.reference_key == reference_key,
         )
-        return self._session.scalars(stmt).first()
+        value: Any = self._session.scalars(stmt).first()
+        return cast(Optional[TrendzTask], value)
 
     def find_by_schedule_type(self, schedule_type: str) -> Sequence[TrendzTask]:
         return self.list(TrendzTask.schedule_type == schedule_type)
@@ -422,9 +508,9 @@ class TrendzTaskRepository(BaseRepository[TrendzTask]):
 
 
 # TODO: AlertRule table does not exist in Trendz 1.15.0 schema.
-class AlertRuleRepository(BaseRepository):
+class AlertRuleRepository(BaseRepository[Any]):
     def __init__(self, session: Session) -> None:
-        super().__init__(session, None)
+        super().__init__(session, cast(type[Any], None))
 
     def find_active(self) -> Sequence[Any]:
         return []
@@ -440,9 +526,9 @@ class AlertRuleRepository(BaseRepository):
 
 
 # TODO: AlertIncident table does not exist in Trendz 1.15.0 schema.
-class AlertIncidentRepository(BaseRepository):
+class AlertIncidentRepository(BaseRepository[Any]):
     def __init__(self, session: Session) -> None:
-        super().__init__(session, None)
+        super().__init__(session, cast(type[Any], None))
 
     def find_active(self, entity_id: Optional[Any] = None) -> Sequence[Any]:
         return []
@@ -473,9 +559,9 @@ class AlertIncidentRepository(BaseRepository):
 
 
 # TODO: WritebackBatch table does not exist in Trendz 1.15.0 schema.
-class WritebackBatchRepository(BaseRepository):
+class WritebackBatchRepository(BaseRepository[Any]):
     def __init__(self, session: Session) -> None:
-        super().__init__(session, None)
+        super().__init__(session, cast(type[Any], None))
 
     def find_recent(
         self, entity_id: Any, metric_key: str, limit: int = 10
