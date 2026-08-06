@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import abc
-from typing import Any, ClassVar, Optional
+from typing import Any, ClassVar, Optional, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -112,7 +112,7 @@ class IsolationForestDetector(BaseDetector):
         # IsolationForest returns negative for anomalies; invert so higher = anomalous
         raw = self._model.decision_function(features)
         scores = -raw
-        return scores.astype(np.float64)
+        return cast(npt.NDArray[np.float64], scores.astype(np.float64))
 
 
 class PyODDetector(BaseDetector):
@@ -180,7 +180,9 @@ class PyODDetector(BaseDetector):
         if not self._fitted:
             msg = "Detector has not been fitted yet. Call fit() first."
             raise RuntimeError(msg)
-        return self._model.decision_function(features).astype(np.float64)
+        return cast(
+            npt.NDArray[np.float64], self._model.decision_function(features).astype(np.float64)
+        )
 
 
 class ClusterDetector(BaseDetector):
@@ -267,7 +269,7 @@ class ClusterDetector(BaseDetector):
             msg = f"Unexpected algorithm '{self._algorithm}'"
             raise RuntimeError(msg)
 
-        return scores
+        return cast(npt.NDArray[np.float64], scores)
 
 
 DETECTOR_REGISTRY: dict[str, type[BaseDetector]] = {
@@ -313,6 +315,6 @@ def create_detector(
 
     # PyOD wrappers need the algorithm name forwarded
     if cls is PyODDetector:
-        return cls(algorithm=algorithm, **params)
+        return PyODDetector(algorithm=algorithm, **params)
 
     return cls(**params)
