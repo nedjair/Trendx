@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
+from uuid import uuid4
 
 import pytest
-
+from sqlalchemy.exc import ProgrammingError
+from trendx.database.models import PredictionModel
+from trendx.database.repositories import PredictionModelRepository
 from trendx.mlops.registry import ModelRegistry
 
 
@@ -252,3 +254,160 @@ def test_list_versions(registry):
         versions = registry.list_versions("dev-001", "temperature")
 
     assert len(versions) == 1
+
+
+@pytest.mark.unit
+def test_find_previous_champion_returns_none_when_history_table_is_missing():
+    session = MagicMock()
+    missing_table = MagicMock()
+    missing_table.pgcode = "42P01"
+    session.scalars.side_effect = ProgrammingError("SELECT", {}, missing_table)
+    repo = PredictionModelRepository(session)
+
+    result = repo.find_previous_champion("dev-001", "temperature", 2)
+
+    assert result is None
+    session.scalars.assert_called_once()
+
+
+@pytest.mark.unit
+def test_rollback_refuses_previous_model_with_unexpected_status(registry):
+    mock_session = MagicMock()
+    mock_repo = MagicMock()
+    current = MagicMock(id=2, status="champion")
+    previous = MagicMock(id=1, status="active")
+    mock_repo.find_champion.return_value = current
+    mock_repo.find_previous_champion.return_value = previous
+
+    with (
+        patch("trendx.mlops.registry.next", return_value=mock_session),
+        patch("trendx.mlops.registry.PredictionModelRepository", return_value=mock_repo),
+    ):
+        result = registry.rollback("dev-001", "temperature")
+
+    assert result is None
+    assert current.status == "champion"
+    assert previous.status == "active"
+    mock_repo.record_status_transition.assert_not_called()
+    mock_session.commit.assert_not_called()
+
+
+@pytest.mark.unit
+def test_promote_then_rollback_records_transitions(registry):
+    mock_session = MagicMock()
+    mock_repo = MagicMock()
+    champion_a = MagicMock()
+    champion_a.id = 1
+    champion_a.status = "champion"
+    champion_a.tb_telemetry_key = "temperature"
+    challenger_b = MagicMock()
+    challenger_b.id = 2
+    challenger_b.status = "challenger"
+    challenger_b.tb_telemetry_key = "temperature"
+
+    def set_champion(model_id, entity_id, metric_key):
+        assert model_id == challenger_b.id
+        assert entity_id == "dev-001"
+        assert metric_key == "temperature"
+        champion_a.status = "challenger"
+        challenger_b.status = "champion"
+        return challenger_b
+
+    mock_repo.find_by_business_entity.return_value = [champion_a, challenger_b]
+    mock_repo.set_champion.side_effect = set_champion
+    mock_repo.find_champion.return_value = challenger_b
+    mock_repo.find_previous_champion.return_value = champion_a
+
+    with (
+        patch("trendx.mlops.registry.next", side_effect=[mock_session, champion_a, mock_session]),
+        patch("trendx.mlops.registry.PredictionModelRepository", return_value=mock_repo),
+    ):
+        promoted = registry.promote_to_champion("dev-001", "temperature", challenger_b)
+        rolled_back = registry.rollback("dev-001", "temperature")
+
+    assert promoted is challenger_b
+    assert rolled_back is champion_a
+    assert champion_a.status == "champion"
+    assert challenger_b.status == "challenger"
+    mock_repo.find_previous_champion.assert_called_once_with("dev-001", "temperature", 2)
+    assert mock_repo.record_status_transition.call_count == 4
+    transition_args = [record.args for record in mock_repo.record_status_transition.call_args_list]
+    assert [args[:5] for args in transition_args] == [
+        (1, "dev-001", "temperature", "champion", "challenger"),
+        (2, "dev-001", "temperature", "challenger", "champion"),
+        (2, "dev-001", "temperature", "champion", "challenger"),
+        (1, "dev-001", "temperature", "challenger", "champion"),
+    ]
+    assert all(isinstance(args[5], int) for args in transition_args)
+
+
+@pytest.mark.unit
+def test_rollback_without_historical_champion_keeps_statuses_unchanged(registry):
+    mock_session = MagicMock()
+    mock_repo = MagicMock()
+    current = MagicMock(id=2, status="champion")
+    mock_repo.find_champion.return_value = current
+    mock_repo.find_previous_champion.return_value = None
+
+    with (
+        patch("trendx.mlops.registry.next", return_value=mock_session),
+        patch("trendx.mlops.registry.PredictionModelRepository", return_value=mock_repo),
+    ):
+        result = registry.rollback("dev-001", "temperature")
+
+    assert result is None
+    assert current.status == "champion"
+    mock_repo.record_status_transition.assert_not_called()
+    mock_session.commit.assert_not_called()
+
+
+@pytest.mark.unit
+def test_set_champion_demotes_previous_champion_status_column():
+    session = MagicMock()
+    repo = PredictionModelRepository(session)
+
+    old_champion = PredictionModel(
+        id=uuid4(),
+        tenant_id=uuid4(),
+        customer_id=uuid4(),
+        created_ts=1,
+        updated_ts=1,
+        name="old",
+        status="champion",
+        type="prophet",
+        associated_entity_field_id=uuid4(),
+        tb_telemetry_key="temperature",
+        model_parameters="",
+        datasource_parameters="",
+        method_parameters="",
+        item_state_map="",
+        trained_item_set="",
+        business_entity_id=uuid4(),
+        business_entity_field_id=uuid4(),
+    )
+    new_model = PredictionModel(
+        id=uuid4(),
+        tenant_id=uuid4(),
+        customer_id=uuid4(),
+        created_ts=2,
+        updated_ts=2,
+        name="new",
+        status="challenger",
+        type="prophet",
+        associated_entity_field_id=uuid4(),
+        tb_telemetry_key="temperature",
+        model_parameters="",
+        datasource_parameters="",
+        method_parameters="",
+        item_state_map="",
+        trained_item_set="",
+        business_entity_id=uuid4(),
+        business_entity_field_id=uuid4(),
+    )
+
+    with patch.object(repo, "find_by_business_entity", return_value=[old_champion, new_model]):
+        result = repo.set_champion(new_model.id, "dev-001", "temperature")
+
+    assert result is new_model
+    assert new_model.status == "champion"
+    assert old_champion.status == "challenger"
