@@ -101,3 +101,6 @@ explicit_package_bases = true
 [tool.bandit]
 skips = ["B101"]
 exclude_dirs = ["tests"]
+
+[tool.typos.default.extend-words]
+MAPE = "MAPE"
