@@ -107,3 +107,5 @@ exclude_dirs = ["tests"]
 [tool.typos.default.extend-words]
 MAPE = "MAPE"
 sur = "sur"
+Contraintes = "Contraintes"
+fixe = "fixe"

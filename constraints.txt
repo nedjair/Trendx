@@ -87,3 +87,6 @@ mypy==1.9.0
 faker==24.4.0
 factory-boy==3.3.0
 pre-commit==3.7.0
+
+# Outils de build — setuptools < 81 conserve pkg_resources (requis par mlflow)
+setuptools<81

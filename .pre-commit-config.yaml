@@ -33,6 +33,7 @@ repos:
       - id: pretty-format-json
         args: ["--autofix", "--indent", "2", "--no-sort-keys"]
       - id: requirements-txt-fixer
+        files: ^requirements.*\.txt$
       - id: sort-simple-yaml
       - id: trailing-whitespace
 
