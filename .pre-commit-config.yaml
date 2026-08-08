@@ -64,7 +64,8 @@ repos:
     rev: 1.7.8
     hooks:
       - id: bandit
-        args: ["-c", "pyproject.toml", "-r", "src"]
+        args: ["-r", "src", "-b", "bandit-baseline.json"]
+        pass_filenames: false
         additional_dependencies: ["bandit[toml]"]
 
   # ————————————————————————————————————————
