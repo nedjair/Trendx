@@ -18,7 +18,7 @@ test-unit:
     PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
   before_script:
     - python -m pip install --upgrade pip
-    - pip install -e ".[dev]"
+    - pip install -c constraints.txt -e ".[dev]"
   script:
     - pytest -m unit -ra --no-header --tb=short
   coverage: '/TOTAL.*\s+(\d+\%)$/'
@@ -58,7 +58,7 @@ test-integration:
     TB_AUTH_CONFIGURED: "false"
   before_script:
     - python -m pip install --upgrade pip
-    - pip install -e ".[dev]"
+    - pip install -c constraints.txt -e ".[dev]"
     - |
       # Wait for PostgreSQL
       for i in $(seq 1 30); do
