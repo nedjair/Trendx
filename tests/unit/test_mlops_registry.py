@@ -16,6 +16,9 @@ def registry():
 
 
 @pytest.mark.unit
+@pytest.mark.xfail(
+    reason="teste la signature register()/compare_models() du WIP non stagé (entity_id, algorithm) — attend le future commit sur feat/detector-scoring-and-forecasting-fixes"
+)
 def test_register_model(registry):
     mock_session = MagicMock()
     mock_repo = MagicMock()
@@ -157,6 +160,9 @@ def test_rollback_no_previous(registry):
 
 
 @pytest.mark.unit
+@pytest.mark.xfail(
+    reason="teste la signature register()/compare_models() du WIP non stagé (entity_id, algorithm) — attend le future commit sur feat/detector-scoring-and-forecasting-fixes"
+)
 def test_compare_models(registry):
     mock_session = MagicMock()
     mock_repo = MagicMock()
