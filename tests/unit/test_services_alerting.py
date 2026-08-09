@@ -19,9 +19,6 @@ def alerting_service():
 
 
 @pytest.mark.unit
-@pytest.mark.xfail(
-    reason="AlertRuleRepository mock in evaluation tests — attend le future commit sur feat/detector-scoring-and-forecasting-fixes"
-)
 def test_evaluate_threshold(alerting_service):
     mock_session = MagicMock()
     mock_repo = MagicMock()
@@ -123,9 +120,6 @@ def test_apply_hysteresis(alerting_service):
 
 
 @pytest.mark.unit
-@pytest.mark.xfail(
-    reason="AlertRuleRepository mock in evaluation tests — attend le future commit sur feat/detector-scoring-and-forecasting-fixes"
-)
 def test_no_data_rule(alerting_service):
     mock_session = MagicMock()
     mock_repo = MagicMock()
