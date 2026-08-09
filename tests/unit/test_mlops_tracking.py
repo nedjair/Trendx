@@ -47,17 +47,16 @@ def test_create_experiment_exists(tracker):
 
 
 @pytest.mark.unit
-@pytest.mark.xfail(
-    reason="mlflow.ActiveRun signature incompatible avec mlflow==2.14.3 (pre-existing sur master avant cette branch) — issue à ouvrir"
-)
 def test_start_end_run(tracker):
     mock_run = MagicMock(spec=Run)
     mock_run.info.run_id = "run-123"
     tracker._client.create_run.return_value = mock_run
 
-    run_id = tracker.start_run("test-exp", run_name="test-run")
+    with patch("trendx.mlops.tracking.mlflow.start_run", return_value=mock_run):
+        run_id = tracker.start_run("test-exp", run_name="test-run")
+
     assert run_id == "run-123"
-    assert tracker.active_run is not None
+    assert tracker.active_run is mock_run
 
     tracker.end_run(status="FINISHED")
     tracker._client.set_terminated.assert_called_with("run-123", status="FINISHED")
@@ -65,14 +64,13 @@ def test_start_end_run(tracker):
 
 
 @pytest.mark.unit
-@pytest.mark.xfail(
-    reason="mlflow.ActiveRun signature incompatible avec mlflow==2.14.3 (pre-existing sur master avant cette branch) — issue à ouvrir"
-)
 def test_log_params_metrics(tracker):
     mock_run = MagicMock(spec=Run)
     mock_run.info.run_id = "run-123"
     tracker._client.create_run.return_value = mock_run
-    tracker.start_run("test-exp")
+
+    with patch("trendx.mlops.tracking.mlflow.start_run", return_value=mock_run):
+        tracker.start_run("test-exp")
 
     tracker.log_params({"alpha": 0.5, "beta": 0.3})
     tracker._client.log_batch.assert_called_once()
@@ -82,19 +80,20 @@ def test_log_params_metrics(tracker):
 
 
 @pytest.mark.unit
-@pytest.mark.xfail(
-    reason="mlflow.ActiveRun signature incompatible avec mlflow==2.14.3 (pre-existing sur master avant cette branch) — issue à ouvrir"
-)
 def test_log_model(tracker):
     mock_run = MagicMock(spec=Run)
     mock_run.info.run_id = "run-123"
     tracker._client.create_run.return_value = mock_run
-    tracker.start_run("test-exp")
 
+    with patch("trendx.mlops.tracking.mlflow.start_run", return_value=mock_run):
+        tracker.start_run("test-exp")
+
+    cm = MagicMock()
+    cm.__enter__.return_value = mock_run
     with (
-        patch("trendx.mlops.tracking.mlflow.start_run"),
-        patch("trendx.mlops.tracking.mlflow.pyfunc.log_model"),
-        patch("trendx.mlops.tracking.mlflow.register_model"),
+        patch("trendx.mlops.tracking.mlflow.start_run", return_value=cm),
+        patch("mlflow.pyfunc.log_model"),
+        patch("mlflow.register_model"),
     ):
         model_uri = tracker.log_model(MagicMock(), "test-model", model_name="test-model-name")
 
@@ -120,9 +119,6 @@ def test_search_runs_not_found(tracker):
 
 
 @pytest.mark.unit
-@pytest.mark.xfail(
-    reason="mlflow.ActiveRun signature incompatible avec mlflow==2.14.3 (pre-existing sur master avant cette branch) — issue à ouvrir"
-)
 def test_get_best_run(tracker):
     mock_exp = MagicMock(spec=Experiment)
     mock_exp.experiment_id = "exp-123"
@@ -146,9 +142,6 @@ def test_get_best_run(tracker):
 
 
 @pytest.mark.unit
-@pytest.mark.xfail(
-    reason="mlflow.ActiveRun signature incompatible avec mlflow==2.14.3 (pre-existing sur master avant cette branch) — issue à ouvrir"
-)
 def test_get_best_run_no_metric(tracker):
     mock_exp = MagicMock(spec=Experiment)
     mock_exp.experiment_id = "exp-123"
@@ -170,8 +163,9 @@ def test_context_manager(tracker):
     mock_run.info.run_id = "run-ctx"
     tracker._client.create_run.return_value = mock_run
 
-    with tracker as tr:
-        assert tr.active_run is not None
+    with patch("trendx.mlops.tracking.mlflow.start_run", return_value=mock_run):
+        with tracker as tr:
+            assert tr.active_run is not None
 
     tracker._client.set_terminated.assert_called_once()
 
@@ -208,14 +202,13 @@ def test_get_model_version_not_found(tracker):
 
 
 @pytest.mark.unit
-@pytest.mark.xfail(
-    reason="mlflow.ActiveRun signature incompatible avec mlflow==2.14.3 (pre-existing sur master avant cette branch) — issue à ouvrir"
-)
 def test_log_artifact(tracker):
     mock_run = MagicMock(spec=Run)
     mock_run.info.run_id = "run-123"
     tracker._client.create_run.return_value = mock_run
-    tracker.start_run("test-exp")
+
+    with patch("trendx.mlops.tracking.mlflow.start_run", return_value=mock_run):
+        tracker.start_run("test-exp")
 
     tracker.log_artifact("/tmp/test.txt")
     tracker._client.log_artifact.assert_called_once()

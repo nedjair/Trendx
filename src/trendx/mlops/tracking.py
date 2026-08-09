@@ -6,12 +6,13 @@ import subprocess
 import tempfile
 import uuid
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 try:
     import mlflow
     from mlflow.entities import Run
     from mlflow.tracking import MlflowClient
+
     HAS_MLFLOW = True
 except ImportError:
     HAS_MLFLOW = False
@@ -19,7 +20,6 @@ except ImportError:
     Run = None
     MlflowClient = None
 from loguru import logger
-
 from trendx.config import settings
 
 
@@ -73,7 +73,10 @@ class MLflowTracker:
     ) -> str:
         experiment_id = self.create_experiment(experiment_name)
         run = self._client.create_run(experiment_id, run_name=run_name, tags=tags or {})
-        self._active_run = mlflow.ActiveRun(run, self._client)
+        try:
+            self._active_run = mlflow.start_run(run_id=run.info.run_id)
+        except Exception:
+            self._active_run = run  # type: ignore[assignment]
         logger.info(
             "Started MLflow run '{}' (id={}) in experiment '{}'",
             run_name or "unnamed",
@@ -93,6 +96,8 @@ class MLflowTracker:
     # ── Context manager ────────────────────────────────────────────────
 
     def __enter__(self) -> MLflowTracker:
+        if self._active_run is None:
+            self.start_run(experiment_name="default", run_name="default_run")
         return self
 
     def __exit__(
@@ -107,10 +112,11 @@ class MLflowTracker:
     # ── Logging helpers ────────────────────────────────────────────────
 
     def log_params(self, params: dict[str, Any]) -> None:
-        self._client.log_batch(self._get_run_id(), metrics=[], params=[
-            mlflow.entities.Param(key=str(k), value=str(v))
-            for k, v in params.items()
-        ])
+        self._client.log_batch(
+            self._get_run_id(),
+            metrics=[],
+            params=[mlflow.entities.Param(key=str(k), value=str(v)) for k, v in params.items()],
+        )
 
     def log_metrics(
         self,
