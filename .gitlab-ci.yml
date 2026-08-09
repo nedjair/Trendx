@@ -26,7 +26,7 @@ test-unit:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
 
 # ── Integration tests (PostgreSQL service) ────────────────────────────
-# Exécute les 4 tests checkpoint/idempotence sur une vraie base PostgreSQL.
+# Exécute les 4 tests checkpoint/idempotence sur une réelle base PostgreSQL.
 # Sans cela, la Phase 3 (ingestion incrémentale) n'est pas validable.
 test-integration:
   stage: test
@@ -102,6 +102,11 @@ test-integration:
           SET last_refresh_start = EXCLUDED.last_refresh_start,
               last_refresh_rows = EXCLUDED.last_refresh_rows;
       SQL
+    - |
+      # Apply migration 006 (prediction_model_status_history) against trendx_catalog.
+      # trendx_catalog schema already exists above; the migration is idempotent and reentrant.
+      PGPASSWORD="$POSTGRES_PASSWORD" psql -h postgres -U trendx_app -d trendx \
+          -v ON_ERROR_STOP=1 -f migrations/006_prediction_model_status_history.sql
   script:
     - pytest -m integration -ra --no-header --tb=short
   rules:
