@@ -296,6 +296,7 @@ class ModelRegistry:
     @staticmethod
     def _model_to_dict(
         model: PredictionModel,
+        *,
         is_champion: bool = False,
     ) -> dict[str, Any]:
         return {

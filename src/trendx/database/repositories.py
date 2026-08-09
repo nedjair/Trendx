@@ -117,7 +117,7 @@ class BusinessEntityRepository(BaseRepository[BusinessEntity]):
     def find_by_name(self, name: str) -> Sequence[BusinessEntity]:
         return self.list(BusinessEntity.name.ilike(f"%{name}%"))
 
-    def find_hidden(self, hidden: bool = True) -> Sequence[BusinessEntity]:
+    def find_hidden(self, *, hidden: bool = True) -> Sequence[BusinessEntity]:
         return self.list(BusinessEntity.hidden == hidden)
 
     def search(self, term: str) -> Sequence[BusinessEntity]:
@@ -135,6 +135,7 @@ class BusinessEntityRepository(BaseRepository[BusinessEntity]):
         tenant_id: Any = None,
         description: str = "",
         query: str = "",
+        *,
         shared_with_customers: bool = False,
     ) -> BusinessEntity:
         existing = self.list(BusinessEntity.name == name, BusinessEntity.tenant_id == tenant_id)
