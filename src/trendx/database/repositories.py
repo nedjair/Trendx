@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from typing import Any, Generic, Optional, Sequence, TypeVar, cast
+from collections.abc import Sequence
+from typing import Any, Generic, TypeVar, cast
 
 from loguru import logger
-from sqlalchemy import Integer, func, select, text, update
+from sqlalchemy import Integer, func, select, text
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session
-
 from trendx.database.models import (
     BusinessEntity,
     EntityRelation,
@@ -37,10 +37,10 @@ class BaseRepository(Generic[T]):
         self._session.flush()
         return instance
 
-    def get(self, ident: Any) -> Optional[T]:
-        return cast(Optional[T], self._session.get(self._model, ident))
+    def get(self, ident: Any) -> T | None:
+        return cast(T | None, self._session.get(self._model, ident))
 
-    def update(self, ident: Any, **kwargs: Any) -> Optional[T]:
+    def update(self, ident: Any, **kwargs: Any) -> T | None:
         instance = self.get(ident)
         if instance is None:
             logger.warning("{} with id={} not found", self._model.__name__, ident)
@@ -73,9 +73,9 @@ class BaseRepository(Generic[T]):
     def list(
         self,
         *filters: Any,
-        order_by: Optional[Any] = None,
-        limit: Optional[int] = None,
-        offset: Optional[int] = None,
+        order_by: Any | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
     ) -> Sequence[T]:
         stmt = select(self._model)
         if filters:
@@ -233,7 +233,7 @@ class EntityRelationRepository(BaseRepository[EntityRelation]):
         related_entity_id: Any,
         name: str = "",
         direction: str = "",
-    ) -> Optional[EntityRelation]:
+    ) -> EntityRelation | None:
         stmt = select(EntityRelation).where(
             EntityRelation.business_entity_id == business_entity_id,
             EntityRelation.related_entity_id == related_entity_id,
@@ -241,7 +241,7 @@ class EntityRelationRepository(BaseRepository[EntityRelation]):
             EntityRelation.direction == direction,
         )
         value: Any = self._session.scalars(stmt).first()
-        return cast(Optional[EntityRelation], value)
+        return cast(EntityRelation | None, value)
 
     def find_enabled(self) -> Sequence[EntityRelation]:
         return self.list(EntityRelation.enabled.is_(True))
@@ -274,7 +274,7 @@ class PredictionModelRepository(BaseRepository[PredictionModel]):
             PredictionModel.customer_id == customer_id,
         )
 
-    def find_champion(self, entity_id: Any, metric_key: str) -> Optional[PredictionModel]:
+    def find_champion(self, entity_id: Any, metric_key: str) -> PredictionModel | None:
         models = self.find_by_business_entity(entity_id)
         candidates = [
             model
@@ -298,7 +298,7 @@ class PredictionModelRepository(BaseRepository[PredictionModel]):
         model_id: Any,
         entity_id: Any,
         metric_key: str,
-        previous_status: Optional[str],
+        previous_status: str | None,
         new_status: str,
         changed_ts: int,
     ) -> PredictionModelStatusHistory:
@@ -319,7 +319,7 @@ class PredictionModelRepository(BaseRepository[PredictionModel]):
         entity_id: Any,
         metric_key: str,
         current_model_id: Any,
-    ) -> Optional[PredictionModel]:
+    ) -> PredictionModel | None:
         try:
             history = self._session.scalars(
                 select(PredictionModelStatusHistory)
@@ -345,7 +345,9 @@ class PredictionModelRepository(BaseRepository[PredictionModel]):
                 return model
         return None
 
-    def set_champion(self, model_id: Any, entity_id: Any, metric_key: str) -> Optional[PredictionModel]:
+    def set_champion(
+        self, model_id: Any, entity_id: Any, metric_key: str
+    ) -> PredictionModel | None:
         models = self.find_by_business_entity(entity_id)
         promoted = next(
             (
@@ -388,8 +390,8 @@ class CheckpointRepository(BaseRepository[Any]):
         super().__init__(session, cast(type[Any], None))
 
     def get_watermark(
-        self, pipeline: str, entity_id: Any, metric_key: Optional[str] = None
-    ) -> Optional[Any]:
+        self, pipeline: str, entity_id: Any, metric_key: str | None = None
+    ) -> Any | None:
         row = self._session.execute(
             text(
                 "SELECT watermark_ts, records_processed, last_batch_id "
@@ -407,10 +409,10 @@ class CheckpointRepository(BaseRepository[Any]):
         pipeline: str,
         entity_id: Any,
         watermark_ts: Any,
-        metric_key: Optional[str] = None,
+        metric_key: str | None = None,
         records_processed: int = 0,
-        source: Optional[str] = None,
-        last_batch_id: Optional[str] = None,
+        source: str | None = None,
+        last_batch_id: str | None = None,
     ) -> Any:
         self._session.execute(
             text(
@@ -466,15 +468,13 @@ class TrendzTaskRepository(BaseRepository[TrendzTask]):
     def find_by_job_type(self, job_type: str) -> Sequence[TrendzTask]:
         return self.list(TrendzTask.job_type == job_type)
 
-    def find_by_reference(
-        self, reference_type: str, reference_key: str
-    ) -> Optional[TrendzTask]:
+    def find_by_reference(self, reference_type: str, reference_key: str) -> TrendzTask | None:
         stmt = select(TrendzTask).where(
             TrendzTask.reference_type == reference_type,
             TrendzTask.reference_key == reference_key,
         )
         value: Any = self._session.scalars(stmt).first()
-        return cast(Optional[TrendzTask], value)
+        return cast(TrendzTask | None, value)
 
     def find_by_schedule_type(self, schedule_type: str) -> Sequence[TrendzTask]:
         return self.list(TrendzTask.schedule_type == schedule_type)
@@ -487,18 +487,18 @@ class TrendzTaskRepository(BaseRepository[TrendzTask]):
     # error_message do not exist in real trendz_task schema.
     # These methods are kept as no-ops / stubs for backward compatibility.
 
-    def find_pending(self, task_type: Optional[str] = None, limit: int = 10) -> Sequence[TrendzTask]:
+    def find_pending(self, task_type: str | None = None, limit: int = 10) -> Sequence[TrendzTask]:
         return []
 
-    def claim(self, task_id: Any, claimed_by: str) -> Optional[TrendzTask]:
+    def claim(self, task_id: Any, claimed_by: str) -> TrendzTask | None:
         return None
 
     def complete(
-        self, task_id: Any, result: Any = None, error_message: Optional[str] = None
-    ) -> Optional[TrendzTask]:
+        self, task_id: Any, result: Any = None, error_message: str | None = None
+    ) -> TrendzTask | None:
         return None
 
-    def mark_retry(self, task_id: Any) -> Optional[TrendzTask]:
+    def mark_retry(self, task_id: Any) -> TrendzTask | None:
         return None
 
     def find_by_type(self, task_type: str) -> Sequence[TrendzTask]:
@@ -531,10 +531,10 @@ class AlertIncidentRepository(BaseRepository[Any]):
     def __init__(self, session: Session) -> None:
         super().__init__(session, cast(type[Any], None))
 
-    def find_active(self, entity_id: Optional[Any] = None) -> Sequence[Any]:
+    def find_active(self, entity_id: Any | None = None) -> Sequence[Any]:
         return []
 
-    def find_by_logical_key(self, logical_key: str) -> Optional[Any]:
+    def find_by_logical_key(self, logical_key: str) -> Any | None:
         return None
 
     def open_or_update(
@@ -543,19 +543,19 @@ class AlertIncidentRepository(BaseRepository[Any]):
         rule_id: Any,
         entity_id: Any,
         severity: str,
-        metric_key: Optional[str] = None,
-        open_reason: Optional[str] = None,
-        last_value: Optional[float] = None,
+        metric_key: str | None = None,
+        open_reason: str | None = None,
+        last_value: float | None = None,
     ) -> Any:
         return None
 
-    def acknowledge(self, logical_key: str, acknowledged_by: str) -> Optional[Any]:
+    def acknowledge(self, logical_key: str, acknowledged_by: str) -> Any | None:
         return None
 
-    def clear(self, logical_key: str, close_reason: Optional[str] = None) -> Optional[Any]:
+    def clear(self, logical_key: str, close_reason: str | None = None) -> Any | None:
         return None
 
-    def close(self, logical_key: str, close_reason: Optional[str] = None) -> Optional[Any]:
+    def close(self, logical_key: str, close_reason: str | None = None) -> Any | None:
         return None
 
 
@@ -564,20 +564,16 @@ class WritebackBatchRepository(BaseRepository[Any]):
     def __init__(self, session: Session) -> None:
         super().__init__(session, cast(type[Any], None))
 
-    def find_recent(
-        self, entity_id: Any, metric_key: str, limit: int = 10
-    ) -> Sequence[Any]:
+    def find_recent(self, entity_id: Any, metric_key: str, limit: int = 10) -> Sequence[Any]:
         return []
 
     def find_by_status(self, status: str) -> Sequence[Any]:
         return []
 
-    def mark_completed(
-        self, batch_id: Any, points_written: int
-    ) -> Optional[Any]:
+    def mark_completed(self, batch_id: Any, points_written: int) -> Any | None:
         return None
 
-    def mark_failed(self, batch_id: Any, error_message: str) -> Optional[Any]:
+    def mark_failed(self, batch_id: Any, error_message: str) -> Any | None:
         return None
 
 
@@ -585,9 +581,7 @@ class ViewConfigRepository(BaseRepository[ViewConfig]):
     def __init__(self, session: Session) -> None:
         super().__init__(session, ViewConfig)
 
-    def find_by_tenant_customer(
-        self, tenant_id: Any, customer_id: Any
-    ) -> Sequence[ViewConfig]:
+    def find_by_tenant_customer(self, tenant_id: Any, customer_id: Any) -> Sequence[ViewConfig]:
         return self.list(
             ViewConfig.tenant_id == tenant_id,
             ViewConfig.customer_id == customer_id,

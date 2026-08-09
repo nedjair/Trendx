@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from loguru import logger
@@ -56,8 +56,8 @@ class ModelRegistry:
             name=name or f"{model_type}_{tb_telemetry_key}",
             tenant_id=tenant_id,
             customer_id=customer_id,
-            created_ts=int(datetime.now(timezone.utc).timestamp() * 1000),
-            updated_ts=int(datetime.now(timezone.utc).timestamp() * 1000),
+            created_ts=int(datetime.now(UTC).timestamp() * 1000),
+            updated_ts=int(datetime.now(UTC).timestamp() * 1000),
             enabled=True,
             partial_fit_enabled=False,
             status="active",
@@ -236,7 +236,9 @@ class ModelRegistry:
                 "type": champion.type if champion else None,
                 "tb_telemetry_key": champion.tb_telemetry_key if champion else None,
                 "status": champion.status if champion else None,
-            } if champion else None,
+            }
+            if champion
+            else None,
             "challenger": None,
         }
 
@@ -304,8 +306,12 @@ class ModelRegistry:
             "name": model.name,
             "type": model.type,
             "tb_telemetry_key": model.tb_telemetry_key,
-            "business_entity_id": str(model.business_entity_id) if model.business_entity_id else None,
-            "business_entity_field_id": str(model.business_entity_field_id) if model.business_entity_field_id else None,
+            "business_entity_id": str(model.business_entity_id)
+            if model.business_entity_id
+            else None,
+            "business_entity_field_id": str(model.business_entity_field_id)
+            if model.business_entity_field_id
+            else None,
             "status": model.status,
             "enabled": model.enabled,
             "partial_fit_enabled": model.partial_fit_enabled,
