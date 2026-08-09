@@ -68,7 +68,7 @@ test-integration:
       done
     - |
       # Create schemas and tables needed by integration tests
-      psql -h postgres -U trendx_app -d trendx -v ON_ERROR_STOP=1 <<'SQL'
+      PGPASSWORD="$POSTGRES_PASSWORD" psql -h postgres -U trendx_app -d trendx -v ON_ERROR_STOP=1 <<'SQL'
       CREATE SCHEMA IF NOT EXISTS trendx_catalog;
       CREATE SCHEMA IF NOT EXISTS trendx_analytics;
 
