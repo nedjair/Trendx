@@ -14,9 +14,6 @@ def hourly_df():
 
 
 @pytest.mark.unit
-@pytest.mark.xfail(
-    reason="Resampler dropna parameter et grid alignment — attend le future commit sur feat/detector-scoring-and-forecasting-fixes"
-)
 def test_resample_downsample(hourly_df):
     resampler = Resampler()
     result = resampler.downsample(hourly_df, frequency="6h", method="mean")

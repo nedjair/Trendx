@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, ClassVar
 
 import numpy as np
 import pandas as pd
@@ -8,7 +8,17 @@ from loguru import logger
 
 
 class Resampler:
-    SUPPORTED_METHODS = {"mean", "sum", "min", "max", "count", "first", "last", "median", "std"}
+    SUPPORTED_METHODS: ClassVar[set[str]] = {
+        "mean",
+        "sum",
+        "min",
+        "max",
+        "count",
+        "first",
+        "last",
+        "median",
+        "std",
+    }
 
     def __init__(self) -> None:
         self._detected_freq: str | None = None
@@ -53,6 +63,8 @@ class Resampler:
         method: str = "mean",
         ts_col: str = "ts",
         value_col: str | None = None,
+        *,
+        dropna: bool = True,
     ) -> pd.DataFrame:
         if df.empty:
             logger.warning("Cannot resample empty DataFrame")
@@ -82,13 +94,12 @@ class Resampler:
             logger.warning("No numeric columns to resample")
             return pd.DataFrame(columns=[ts_col, value_col])
 
-        agg_map: dict[str, Any] = {
-            col: method for col in numeric.columns
-        }
+        agg_map: dict[str, Any] = {col: method for col in numeric.columns}
 
         resampled = numeric.resample(frequency).agg(agg_map)
-        resampled = resampled.dropna(how="all").reset_index()
-        resampled = resampled.rename(columns={ts_col: ts_col})
+        if dropna:
+            resampled = resampled.dropna(how="all")
+        resampled = resampled.reset_index()
 
         logger.info(
             "Resampled to {freq} using {method}: {before} -> {after} points",
@@ -197,7 +208,7 @@ class Resampler:
                 return col
         numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
         if numeric_cols:
-            return numeric_cols[0]
+            return numeric_cols[0]  # type: ignore[no-any-return]
         return "value"
 
     @staticmethod
@@ -231,9 +242,13 @@ class Resampler:
         ts_col: str = "ts",
         value_col: str | None = None,
     ) -> pd.DataFrame:
-        resampled = self.resample(df, frequency, method="first", ts_col=ts_col, value_col=value_col)
+        resampled = self.resample(
+            df, frequency, method="first", ts_col=ts_col, value_col=value_col, dropna=False
+        )
         return self.interpolate_missing(
-            resampled, method=method, ts_col=ts_col,
+            resampled,
+            method=method,
+            ts_col=ts_col,
             value_col=value_col,
         )
 
