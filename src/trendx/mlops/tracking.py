@@ -6,7 +6,7 @@ import subprocess
 import tempfile
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 try:
     import mlflow
@@ -58,10 +58,10 @@ class MLflowTracker:
         existing = self._client.get_experiment_by_name(name)
         if existing is not None:
             logger.debug("Experiment '{}' already exists (id={})", name, existing.experiment_id)
-            return existing.experiment_id
+            return str(existing.experiment_id)
         experiment_id = self._client.create_experiment(name, tags=tags or {})
         logger.info("Created experiment '{}' (id={})", name, experiment_id)
-        return experiment_id
+        return str(experiment_id)
 
     # ── Run management ─────────────────────────────────────────────────
 
@@ -76,14 +76,14 @@ class MLflowTracker:
         try:
             self._active_run = mlflow.start_run(run_id=run.info.run_id)
         except Exception:
-            self._active_run = run  # type: ignore[assignment]
+            self._active_run = run
         logger.info(
             "Started MLflow run '{}' (id={}) in experiment '{}'",
             run_name or "unnamed",
             run.info.run_id,
             experiment_name,
         )
-        return run.info.run_id
+        return str(run.info.run_id)
 
     def end_run(self, status: str = "FINISHED") -> None:
         if self._active_run is not None:
@@ -181,9 +181,12 @@ class MLflowTracker:
         if experiment is None:
             logger.warning("Experiment '{}' not found", experiment_name)
             return []
-        return self._client.search_runs(
-            experiment_ids=[experiment.experiment_id],
-            filter_string=filter_string,
+        return cast(
+            list[Run],
+            self._client.search_runs(
+                experiment_ids=[experiment.experiment_id],
+                filter_string=filter_string,
+            ),
         )
 
     def get_best_run(
@@ -192,7 +195,6 @@ class MLflowTracker:
         metric: str = "sMAPE",
         mode: str = "min",
     ) -> Run | None:
-        order = "ASC" if mode == "min" else "DESC"
         filter_string = f"metrics.{metric} < 1e9"
         runs = self.search_runs(experiment_name, filter_string)
         if not runs:
@@ -222,7 +224,7 @@ class MLflowTracker:
             result.version,
             alias,
         )
-        return result.version
+        return str(result.version)
 
     def get_model_version(
         self,
@@ -231,7 +233,7 @@ class MLflowTracker:
     ) -> str | None:
         try:
             mv = self._client.get_model_version_by_alias(model_name, alias)
-            return mv.version
+            return str(mv.version)
         except Exception:
             return None
 
@@ -252,10 +254,10 @@ class MLflowTracker:
 
     def _get_run_id(self) -> str:
         if self._active_run is not None:
-            return self._active_run.info.run_id
+            return str(self._active_run.info.run_id)
         active = mlflow.active_run()
         if active is not None:
-            return active.info.run_id
+            return str(active.info.run_id)
         msg = "No active MLflow run. Call start_run() first or use context manager."
         raise RuntimeError(msg)
 
