@@ -15,6 +15,21 @@ def registry():
     return ModelRegistry(repository=MagicMock())
 
 
+def _session_cm(session: MagicMock) -> MagicMock:
+    """Context-manager mock whose ``__enter__`` yields ``session``.
+
+    Replaces the previous ``patch("trendx.mlops.registry.next", ...)`` hack,
+    which patched the builtin ``next`` and silently accepted any argument —
+    masking the misuse of ``get_session`` (a ``@contextmanager``) as an
+    iterator. With this helper, ``with db_manager.get_session(...) as session``
+    exercises the real control flow and can no longer hide the bug.
+    """
+    cm = MagicMock()
+    cm.__enter__.return_value = session
+    cm.__exit__.return_value = False
+    return cm
+
+
 @pytest.mark.unit
 @pytest.mark.xfail(
     reason="teste la signature register()/compare_models() du WIP non stagé (entity_id, algorithm) — attend le future commit sur feat/detector-scoring-and-forecasting-fixes"
@@ -27,7 +42,9 @@ def test_register_model(registry):
     mock_repo.create.return_value = mock_model
 
     with (
-        patch("trendx.mlops.registry.next", return_value=mock_session),
+        patch(
+            "trendx.mlops.registry.db_manager.get_session", return_value=_session_cm(mock_session)
+        ),
         patch("trendx.mlops.registry.PredictionModelRepository", return_value=mock_repo),
     ):
         model = registry.register(
@@ -56,7 +73,9 @@ def test_get_champion(registry):
     mock_repo.find_by_business_entity.return_value = [mock_champion]
 
     with (
-        patch("trendx.mlops.registry.next", return_value=mock_session),
+        patch(
+            "trendx.mlops.registry.db_manager.get_session", return_value=_session_cm(mock_session)
+        ),
         patch("trendx.mlops.registry.PredictionModelRepository", return_value=mock_repo),
     ):
         champion = registry.get_champion("dev-001", "temperature")
@@ -72,7 +91,9 @@ def test_get_champion_none(registry):
     mock_repo.find_by_business_entity.return_value = []
 
     with (
-        patch("trendx.mlops.registry.next", return_value=mock_session),
+        patch(
+            "trendx.mlops.registry.db_manager.get_session", return_value=_session_cm(mock_session)
+        ),
         patch("trendx.mlops.registry.PredictionModelRepository", return_value=mock_repo),
     ):
         champion = registry.get_champion("dev-001", "temperature")
@@ -92,7 +113,9 @@ def test_promote_champion(registry):
     mock_repo.set_champion.return_value = mock_model
 
     with (
-        patch("trendx.mlops.registry.next", return_value=mock_session),
+        patch(
+            "trendx.mlops.registry.db_manager.get_session", return_value=_session_cm(mock_session)
+        ),
         patch("trendx.mlops.registry.PredictionModelRepository", return_value=mock_repo),
     ):
         result = registry.promote_to_champion("dev-001", "temperature", mock_model)
@@ -115,7 +138,9 @@ def test_rollback(registry):
     mock_repo.find_previous_champion.return_value = previous_champion
 
     with (
-        patch("trendx.mlops.registry.next", return_value=mock_session),
+        patch(
+            "trendx.mlops.registry.db_manager.get_session", return_value=_session_cm(mock_session)
+        ),
         patch("trendx.mlops.registry.PredictionModelRepository", return_value=mock_repo),
     ):
         result = registry.rollback("dev-001", "temperature")
@@ -132,7 +157,9 @@ def test_rollback_no_champion(registry):
     mock_repo.find_champion.return_value = None
 
     with (
-        patch("trendx.mlops.registry.next", return_value=mock_session),
+        patch(
+            "trendx.mlops.registry.db_manager.get_session", return_value=_session_cm(mock_session)
+        ),
         patch("trendx.mlops.registry.PredictionModelRepository", return_value=mock_repo),
     ):
         result = registry.rollback("dev-001", "temperature")
@@ -151,7 +178,9 @@ def test_rollback_no_previous(registry):
     mock_repo.find_previous_champion.return_value = None
 
     with (
-        patch("trendx.mlops.registry.next", return_value=mock_session),
+        patch(
+            "trendx.mlops.registry.db_manager.get_session", return_value=_session_cm(mock_session)
+        ),
         patch("trendx.mlops.registry.PredictionModelRepository", return_value=mock_repo),
     ):
         result = registry.rollback("dev-001", "temperature")
@@ -175,7 +204,9 @@ def test_compare_models(registry):
     mock_repo.find_by_business_entity.return_value = [champ]
 
     with (
-        patch("trendx.mlops.registry.next", return_value=mock_session),
+        patch(
+            "trendx.mlops.registry.db_manager.get_session", return_value=_session_cm(mock_session)
+        ),
         patch("trendx.mlops.registry.PredictionModelRepository", return_value=mock_repo),
     ):
         comparison = registry.compare_models("dev-001", "temperature")
@@ -191,7 +222,9 @@ def test_store_selection_run(registry):
     mock_session.add = MagicMock()
     mock_session.flush = MagicMock()
 
-    with patch("trendx.mlops.registry.next", return_value=mock_session):
+    with patch(
+        "trendx.mlops.registry.db_manager.get_session", return_value=_session_cm(mock_session)
+    ):
         run_id = registry.store_selection_run(
             entity_id="dev-001",
             metric_key="temperature",
@@ -218,7 +251,9 @@ def test_get_challenger(registry):
     mock_repo.find_by_business_entity.return_value = [challenger]
 
     with (
-        patch("trendx.mlops.registry.next", return_value=mock_session),
+        patch(
+            "trendx.mlops.registry.db_manager.get_session", return_value=_session_cm(mock_session)
+        ),
         patch("trendx.mlops.registry.PredictionModelRepository", return_value=mock_repo),
     ):
         result = registry.get_challenger("dev-001", "temperature")
@@ -234,7 +269,9 @@ def test_get_challenger_none(registry):
     mock_repo.find_by_business_entity.return_value = []
 
     with (
-        patch("trendx.mlops.registry.next", return_value=mock_session),
+        patch(
+            "trendx.mlops.registry.db_manager.get_session", return_value=_session_cm(mock_session)
+        ),
         patch("trendx.mlops.registry.PredictionModelRepository", return_value=mock_repo),
     ):
         result = registry.get_challenger("dev-001", "temperature")
@@ -254,7 +291,9 @@ def test_list_versions(registry):
     mock_repo.find_by_business_entity.return_value = [champ]
 
     with (
-        patch("trendx.mlops.registry.next", return_value=mock_session),
+        patch(
+            "trendx.mlops.registry.db_manager.get_session", return_value=_session_cm(mock_session)
+        ),
         patch("trendx.mlops.registry.PredictionModelRepository", return_value=mock_repo),
     ):
         versions = registry.list_versions("dev-001", "temperature")
@@ -286,7 +325,9 @@ def test_rollback_refuses_previous_model_with_unexpected_status(registry):
     mock_repo.find_previous_champion.return_value = previous
 
     with (
-        patch("trendx.mlops.registry.next", return_value=mock_session),
+        patch(
+            "trendx.mlops.registry.db_manager.get_session", return_value=_session_cm(mock_session)
+        ),
         patch("trendx.mlops.registry.PredictionModelRepository", return_value=mock_repo),
     ):
         result = registry.rollback("dev-001", "temperature")
@@ -325,7 +366,9 @@ def test_promote_then_rollback_records_transitions(registry):
     mock_repo.find_previous_champion.return_value = champion_a
 
     with (
-        patch("trendx.mlops.registry.next", side_effect=[mock_session, champion_a, mock_session]),
+        patch(
+            "trendx.mlops.registry.db_manager.get_session", return_value=_session_cm(mock_session)
+        ),
         patch("trendx.mlops.registry.PredictionModelRepository", return_value=mock_repo),
     ):
         promoted = registry.promote_to_champion("dev-001", "temperature", challenger_b)
@@ -356,7 +399,9 @@ def test_rollback_without_historical_champion_keeps_statuses_unchanged(registry)
     mock_repo.find_previous_champion.return_value = None
 
     with (
-        patch("trendx.mlops.registry.next", return_value=mock_session),
+        patch(
+            "trendx.mlops.registry.db_manager.get_session", return_value=_session_cm(mock_session)
+        ),
         patch("trendx.mlops.registry.PredictionModelRepository", return_value=mock_repo),
     ):
         result = registry.rollback("dev-001", "temperature")
