@@ -122,6 +122,40 @@ def test_settings_defaults():
 
 
 @pytest.mark.unit
+def test_optional_services_fields_present():
+    """grafana_host_port et redis_url doivent exister : consommés par
+    GET /, GET /api/v1/admin/config et CacheService (AttributeError sinon)."""
+    with patch.dict(os.environ, {}, clear=True):
+        s = _TestSettings(
+            TRENDX_ENV="testing",
+            TB_BASE_URL="http://test:8080",
+            TB_USERNAME="test",
+            TB_PASSWORD="test",
+        )
+        assert s.grafana_host_port == 3001  # 3000 occupé par Gitea sur l'hôte
+        assert s.redis_url == "redis://localhost:6379/0"
+
+
+@pytest.mark.unit
+def test_optional_services_fields_from_env():
+    with patch.dict(
+        os.environ,
+        {
+            "TRENDX_ENV": "testing",
+            "TB_BASE_URL": "http://test:8080",
+            "TB_USERNAME": "test",
+            "TB_PASSWORD": "test",
+            "GRAFANA_HOST_PORT": "3002",
+            "REDIS_URL": "redis://cache-host:6380/1",
+        },
+        clear=True,
+    ):
+        s = _TestSettings()
+        assert s.grafana_host_port == 3002
+        assert s.redis_url == "redis://cache-host:6380/1"
+
+
+@pytest.mark.unit
 def test_log_level_uppercased():
     s = _TestSettings(
         TRENDX_ENV="testing",

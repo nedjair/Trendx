@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
-
+from trendx.config import settings
 from trendx.services.cache import CacheService
 
 
@@ -15,6 +15,17 @@ def cache_service():
     )
     svc._client = None
     return svc
+
+
+@pytest.mark.unit
+def test_default_redis_url_comes_from_settings():
+    """Sans redis_url fourni en argument, CacheService retombe sur settings.redis_url.
+
+    Régression : tous les autres tests passent redis_url en argument, ce qui
+    masquait l'absence du champ dans Settings (AttributeError à l'exécution).
+    """
+    svc = CacheService()
+    assert svc._redis_url == settings.redis_url
 
 
 @pytest.mark.unit
@@ -84,14 +95,10 @@ def test_get_or_compute(cache_service):
     def compute():
         return "computed_value"
 
-    result = cache_service.get_or_compute(
-        "my-key", compute_fn=compute, namespace="metadata"
-    )
+    result = cache_service.get_or_compute("my-key", compute_fn=compute, namespace="metadata")
     assert result == "computed_value"
 
-    result = cache_service.get_or_compute(
-        "my-key", compute_fn=compute, namespace="metadata"
-    )
+    result = cache_service.get_or_compute("my-key", compute_fn=compute, namespace="metadata")
     assert result == "computed_value"
 
 

@@ -100,6 +100,16 @@ strict = true
 ignore_missing_imports = true
 explicit_package_bases = true
 
+# BaseSettings (defini dans pydantic_settings) a un type resolu en Any dans ses stubs.
+# strict=disallow_subclassing_any leve "Class cannot subclass BaseSettings (has type Any)"
+# sur la classe Settings(BaseSettings), declaree dans le module trendx.config.
+# La regle se rapporte au module qui HERITE (trendx.config), pas a celui dont la
+# classe est Any. On ne desactive CETTE regle QUE pour trendx.config, sans toucher
+# aux autres regles strict du projet.
+[[tool.mypy.overrides]]
+module = "trendx.config"
+disallow_subclassing_any = false
+
 [tool.bandit]
 skips = ["B101"]
 exclude_dirs = ["tests"]
