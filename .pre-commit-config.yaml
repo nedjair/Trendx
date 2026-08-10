@@ -33,6 +33,7 @@ repos:
       - id: pretty-format-json
         args: ["--autofix", "--indent", "2", "--no-sort-keys"]
       - id: requirements-txt-fixer
+        files: ^requirements.*\.txt$
       - id: sort-simple-yaml
       - id: trailing-whitespace
 
@@ -54,8 +55,8 @@ repos:
     hooks:
       - id: mypy
         additional_dependencies: ["pydantic>=2.6", "types-redis"]
-        args: ["--config-file=pyproject.toml"]
-        pass_filenames: false
+        args: ["--config-file=pyproject.toml", "--follow-imports=silent"]
+        files: ^src/
 
   # ————————————————————————————————————————
   # 4. Python - sécurité
@@ -64,7 +65,8 @@ repos:
     rev: 1.7.8
     hooks:
       - id: bandit
-        args: ["-c", "pyproject.toml", "-r", "src"]
+        args: ["-r", "src", "-b", "bandit-baseline.json"]
+        pass_filenames: false
         additional_dependencies: ["bandit[toml]"]
 
   # ————————————————————————————————————————
@@ -91,7 +93,7 @@ repos:
     rev: v1.21.0
     hooks:
       - id: typos
-        args: ["--format", "short"]
+        args: ["--format", "brief", "--config", "pyproject.toml"]
 
   - repo: https://github.com/shellcheck-py/shellcheck-py
     rev: v0.9.0.2

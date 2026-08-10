@@ -1,27 +1,14 @@
 # GitLab CI for Trendx — master branch
-# Merge with main's SAST/Secret-Detection (see §6 governance recommendation)
+# SAST & Secret-Detection imported via top-level include (GitLab-native pattern).
+# Local jobs: test-unit, test-integration.
+
 stages:
   - security
   - test
 
-# ── SAST & Secret Detection (imported from main) ──────────────────────
-sast:
-  stage: security
-  include:
-    - template: Security/SAST.gitlab-ci.yml
-  variables:
-    SAST_ENABLED: 'true'
-  rules:
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-
-secret_detection:
-  stage: security
-  include:
-    - template: Security/Secret-Detection.gitlab-ci.yml
-  variables:
-    SECRET_DETECTION_ENABLED: 'true'
-  rules:
-    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+include:
+  - template: Security/SAST.gitlab-ci.yml
+  - template: Security/Secret-Detection.gitlab-ci.yml
 
 # ── Unit tests (no external services) ────────────────────────────────
 test-unit:
@@ -31,7 +18,7 @@ test-unit:
     PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
   before_script:
     - python -m pip install --upgrade pip
-    - pip install -e ".[dev]"
+    - pip install -c constraints.txt -e ".[dev]"
   script:
     - pytest -m unit -ra --no-header --tb=short
   coverage: '/TOTAL.*\s+(\d+\%)$/'
@@ -71,7 +58,8 @@ test-integration:
     TB_AUTH_CONFIGURED: "false"
   before_script:
     - python -m pip install --upgrade pip
-    - pip install -e ".[dev]"
+    - pip install -c constraints.txt -e ".[dev]"
+    - apt-get update && apt-get install -y --no-install-recommends postgresql-client
     - |
       # Wait for PostgreSQL
       for i in $(seq 1 30); do
@@ -80,7 +68,7 @@ test-integration:
       done
     - |
       # Create schemas and tables needed by integration tests
-      psql -h postgres -U trendx_app -d trendx -v ON_ERROR_STOP=1 <<'SQL'
+      PGPASSWORD="$POSTGRES_PASSWORD" psql -h postgres -U trendx_app -d trendx -v ON_ERROR_STOP=1 <<'SQL'
       CREATE SCHEMA IF NOT EXISTS trendx_catalog;
       CREATE SCHEMA IF NOT EXISTS trendx_analytics;
 

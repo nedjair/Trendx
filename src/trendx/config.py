@@ -109,6 +109,8 @@ class Settings(BaseSettings):
     anomaly_contamination: float = Field(default=0.01, alias="ANOMALY_CONTAMINATION")
     anomaly_window_size: int = Field(default=24, alias="ANOMALY_WINDOW_SIZE")
 
+    mlflow_tracking_uri: str = Field(default="file:./mlruns", alias="MLFLOW_TRACKING_URI")
+
     credentials_file: Path = Field(
         default=Path(".secrets/service-accounts.env"), alias="TRENDX_CREDENTIALS_FILE"
     )

@@ -1,0 +1,11 @@
+# typos configuration for Trendx
+# https://github.com/crate-ci/typos#configuration-file
+# Detected automatically by the typos pre-commit hook (crate-ci/typos v1.21+).
+
+[default]
+extend-ignore-words-re = [
+    # "mobili_dahsboard-postgres-1" container hostname and
+    # "mobili_dahsboard_default" Docker network name are intentional and
+    # deployed — correcting them would break PostgreSQL connectivity.
+    "dahsboard",
+]

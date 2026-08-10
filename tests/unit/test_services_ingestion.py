@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import UTC, datetime
+from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
-
 from trendx.services.ingestion import DiskCapacityError, IngestionService, check_disk_min_free
 
 
@@ -28,9 +27,7 @@ def test_get_checkpoint(service):
     mock_session.__enter__ = MagicMock(return_value=mock_session)
     mock_session.__exit__ = MagicMock(return_value=None)
     mock_repo = MagicMock()
-    mock_repo.get_watermark.return_value = MagicMock(
-        watermark_ts=datetime(2024, 1, 15, tzinfo=timezone.utc)
-    )
+    mock_repo.get_watermark.return_value = MagicMock(watermark_ts=datetime(2024, 1, 15, tzinfo=UTC))
     service._db.get_session.return_value = mock_session
 
     with patch("trendx.services.ingestion.CheckpointRepository", return_value=mock_repo):
@@ -50,8 +47,9 @@ def test_update_checkpoint(service):
 
     with patch("trendx.services.ingestion.CheckpointRepository", return_value=mock_repo):
         service._update_checkpoint(
-            "dev-001", "temperature",
-            datetime(2024, 1, 15, tzinfo=timezone.utc),
+            "dev-001",
+            "temperature",
+            datetime(2024, 1, 15, tzinfo=UTC),
             records_count=100,
         )
 
@@ -85,6 +83,7 @@ def test_error_isolation(service):
 
     with pytest.raises(ConnectionError):
         import asyncio
+
         asyncio.get_event_loop().run_until_complete(
             service._reader.read_historical("DEVICE", "dev-001", ["temp"], 0, 1000)
         )
@@ -113,10 +112,12 @@ def test_store_telemetry(service):
     mock_engine.begin.return_value.__exit__ = MagicMock(return_value=None)
     service._db.get_engine.return_value = mock_engine
 
-    df = pd.DataFrame({
-        "ts": [datetime(2024, 1, 1, tzinfo=timezone.utc), datetime(2024, 1, 1, 1, tzinfo=timezone.utc)],
-        "value": [22.5, 23.0],
-    })
+    df = pd.DataFrame(
+        {
+            "ts": [datetime(2024, 1, 1, tzinfo=UTC), datetime(2024, 1, 1, 1, tzinfo=UTC)],
+            "value": [22.5, 23.0],
+        }
+    )
     count = service._store_telemetry(df, "dev-001", "temperature")
     assert count > 0
 
@@ -130,8 +131,8 @@ def test_store_telemetry_empty(service):
 
 @pytest.mark.unit
 def test_build_time_windows(service):
-    start = datetime(2024, 1, 1, tzinfo=timezone.utc)
-    end = datetime(2024, 1, 3, tzinfo=timezone.utc)
+    start = datetime(2024, 1, 1, tzinfo=UTC)
+    end = datetime(2024, 1, 3, tzinfo=UTC)
     windows = service._build_time_windows(start, end)
     assert len(windows) >= 2
     for wstart, wend in windows:
@@ -140,6 +141,7 @@ def test_build_time_windows(service):
 
 @pytest.mark.unit
 def test_disk_min_free_gate(service, monkeypatch):
+    monkeypatch.setattr("trendx.services.ingestion.settings.trendx_disk_min_free_gb", 0)
     free = check_disk_min_free("/")
     assert free > 0
 
@@ -157,7 +159,9 @@ def test_disk_min_free_gate(service, monkeypatch):
 def test_disk_monitor_mounts_env_override(monkeypatch):
     monkeypatch.setenv("TRENDX_DISK_MONITOR_MOUNTS", "/tmp,/var")
     from importlib import reload
+
     import trendx.services.ingestion as ing_mod
+
     reload(ing_mod)
     assert ing_mod._default_monitor_mounts() == ("/tmp", "/var")
 
@@ -166,7 +170,9 @@ def test_disk_monitor_mounts_env_override(monkeypatch):
 def test_ensure_disk_available_fail_closed_when_no_mount_resolvable(monkeypatch):
     monkeypatch.setenv("TRENDX_DISK_MONITOR_MOUNTS", "/nonexistent1,/nonexistent2")
     from importlib import reload
+
     import trendx.services.ingestion as ing_mod
+
     reload(ing_mod)
     with pytest.raises(ing_mod.DiskCapacityError, match="fail-closed"):
         ing_mod.IngestionService().ensure_disk_available()
@@ -175,8 +181,11 @@ def test_ensure_disk_available_fail_closed_when_no_mount_resolvable(monkeypatch)
 @pytest.mark.unit
 def test_ensure_disk_available_fails_on_duplicate_devices(monkeypatch):
     monkeypatch.setenv("TRENDX_DISK_MONITOR_MOUNTS", "/tmp,/tmp")
+    monkeypatch.setattr("trendx.services.ingestion.settings.trendx_disk_min_free_gb", 0)
     from importlib import reload
+
     import trendx.services.ingestion as ing_mod
+
     reload(ing_mod)
     with pytest.raises(ing_mod.DiskCapacityError, match="même périphérique"):
         ing_mod.IngestionService().ensure_disk_available()
@@ -187,7 +196,7 @@ def test_lit_function():
     from datetime import datetime
 
     assert IngestionService._lit(None) == "NULL"
-    assert IngestionService._lit(True) == "TRUE"
+    assert IngestionService._lit(True) == "TRUE"  # noqa: FBT003
     assert IngestionService._lit(42) == "42"
     assert IngestionService._lit(3.14) == "3.14"
     assert IngestionService._lit("hello") == "'hello'"
@@ -210,7 +219,7 @@ def test_checkpoint_resume_after_interruption():
     mock_repo = MagicMock()
     svc._db.get_session.return_value = mock_session
 
-    watermark_ts = datetime(2024, 6, 1, 10, 0, 0, tzinfo=timezone.utc)
+    watermark_ts = datetime(2024, 6, 1, 10, 0, 0, tzinfo=UTC)
     mock_repo.get_watermark.return_value = {
         "watermark_ts": watermark_ts,
         "records_processed": 500,
@@ -224,10 +233,12 @@ def test_checkpoint_resume_after_interruption():
         )
 
     assert cp == watermark_ts
-    mock_repo.get_watermark.assert_called_once_with(
-        "ingestion", "dev-001", "temperature"
-    )
+    mock_repo.get_watermark.assert_called_once_with("ingestion", "dev-001", "temperature")
     mock_repo.upsert_watermark.assert_called_once_with(
-        "ingestion", "dev-001", watermark_ts, "temperature",
-        records_processed=500, last_batch_id="batch-abc",
+        "ingestion",
+        "dev-001",
+        watermark_ts,
+        "temperature",
+        records_processed=500,
+        last_batch_id="batch-abc",
     )
