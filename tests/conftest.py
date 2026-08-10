@@ -1,6 +1,12 @@
-"""Pytest configuration: skip integration tests when DB is unavailable."""
+"""Pytest configuration: integration tests run when a DB is reachable.
+
+Locally they are skipped if no DB is available; in CI they fail loudly so the
+job can never report green while executing zero integration tests (fail-open bug).
+"""
 
 from __future__ import annotations
+
+import os
 
 import pytest
 
@@ -31,14 +37,53 @@ def pytest_configure(config: pytest.Config) -> None:
     )
 
 
+def _in_ci() -> bool:
+    # GitLab sets CI=true (and GITLAB_CI=true) for every pipeline job.
+    # Distinguishing CI from a developer's laptop prevents a fail-open scenario:
+    # in CI the DB *must* be reachable, so an unavailable DB is a hard failure,
+    # not a quiet skip that leaves the job green while running zero tests.
+    return bool(os.environ.get("CI")) or bool(os.environ.get("GITLAB_CI"))
+
+
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     run_integration = config.getoption("--run-integration")
+    markexpr = (getattr(config.option, "markexpr", "") or "").lower()
+    # The fail-closed enforcement only applies when this pytest run actually selects
+    # the integration suite (pytest -m integration). Other invocations (pytest -m unit,
+    # or a default run) must never be aborted because an integration-marked test happens
+    # to be collected: those tests are simply skipped. This relies on the existing,
+    # standard -m marker selection rather than introducing a new env variable.
+    running_integration_suite = "integration" in markexpr
+    db_available = _db_available() if running_integration_suite else False
     for item in items:
-        if item.get_closest_marker("integration"):
-            if not run_integration and not _db_available():
-                item.add_marker(
-                    pytest.mark.skip(
-                        reason="integration test: DB unavailable locally. "
-                        "Run with --run-integration or in CI."
-                    )
-                )
+        if not item.get_closest_marker("integration"):
+            continue
+        if not running_integration_suite:
+            # Integration tests are not selected by this run (e.g. the unit job).
+            # Skip them; never abort the whole session.
+            item.add_marker(
+                pytest.mark.skip(reason="integration test: not selected by -m in this run.")
+            )
+            continue
+        # Integration suite selected: the DB must be reachable.
+        if db_available:
+            continue
+        if _in_ci():
+            raise pytest.UsageError(
+                "integration tests: database unreachable in CI "
+                f"(CI={os.environ.get('CI')!r}). The test-integration job's "
+                "PostgreSQL service did not come up or migrations failed. "
+                "This is a CI setup error, not a test failure."
+            )
+        if run_integration:
+            raise pytest.UsageError(
+                "integration tests: database unreachable locally despite "
+                "--run-integration. Point TRENDX_DB_* at a reachable "
+                "PostgreSQL, or unset --run-integration."
+            )
+        item.add_marker(
+            pytest.mark.skip(
+                reason="integration test: DB unavailable locally. "
+                "Run with --run-integration against a reachable DB, or in CI."
+            )
+        )
