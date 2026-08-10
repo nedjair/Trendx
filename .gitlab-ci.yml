@@ -44,6 +44,11 @@ test-integration:
     PG_ADMIN_DB: trendx
     PG_ADMIN_USER: trendx_app
     PG_ADMIN_PASSWORD: trendx_app_pass
+    # catalog_dsn_app() / analytics_dsn_app() read TRENDX_APP_USER / TRENDX_APP_PASSWORD
+    # (NOT TRENDX_DB_PASSWORD). Without these, the DSN defaults to 'CHANGE_ME' and every
+    # integration test silently skips (fail-open). Must match POSTGRES_USER / POSTGRES_PASSWORD.
+    TRENDX_APP_USER: trendx_app
+    TRENDX_APP_PASSWORD: trendx_app_pass
     TRENDX_DB_NAME: trendx
     TRENDX_DB_HOST: postgres
     TRENDX_DB_PORT: "5432"
@@ -67,46 +72,50 @@ test-integration:
         sleep 1
       done
     - |
-      # Create schemas and tables needed by integration tests
+      # Create the dedicated schemas required by the migration chain (001..006).
+      # Only the schemas: the tables (aggregate_watermarks, ingestion_checkpoints, …)
+      # are created by the migrations themselves. Using IF NOT EXISTS keeps this idempotent.
       PGPASSWORD="$POSTGRES_PASSWORD" psql -h postgres -U trendx_app -d trendx -v ON_ERROR_STOP=1 <<'SQL'
       CREATE SCHEMA IF NOT EXISTS trendx_catalog;
       CREATE SCHEMA IF NOT EXISTS trendx_analytics;
-
-      CREATE TABLE IF NOT EXISTS trendx_analytics.aggregate_watermarks (
-          aggregate_name      text PRIMARY KEY,
-          watermark           timestamptz,
-          last_refresh_start  timestamptz,
-          last_refresh_end    timestamptz,
-          last_refresh_rows   bigint NOT NULL DEFAULT 0,
-          updated_at          timestamptz NOT NULL DEFAULT now()
-      );
-
-      CREATE TABLE IF NOT EXISTS trendx_catalog.ingestion_checkpoints (
-          pipeline      text NOT NULL,
-          entity_id     text NOT NULL,
-          metric_key    text NOT NULL,
-          watermark_ts  timestamptz NOT NULL,
-          records_processed bigint NOT NULL DEFAULT 0,
-          last_batch_id text,
-          source        text,
-          updated_at    timestamptz NOT NULL DEFAULT now(),
-          PRIMARY KEY (pipeline, entity_id, metric_key)
-      );
-      CREATE INDEX IF NOT EXISTS ingestion_checkpoints_entity_idx
-          ON trendx_catalog.ingestion_checkpoints (entity_id, metric_key);
-
+      SQL
+    - |
+      # The migration chain (notably 004) expects the trendx_migration role to exist
+      # (object ownership / SECURITY DEFINER functions). In a full deployment this role is
+      # created by the bootstrap (migration 000), which is intentionally excluded here.
+      # Create it idempotently so the chain applies on the integration job's single role.
+      PGPASSWORD="$POSTGRES_PASSWORD" psql -h postgres -U trendx_app -d trendx -v ON_ERROR_STOP=1 <<'SQL'
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'trendx_migration') THEN
+          CREATE ROLE trendx_migration LOGIN PASSWORD 'trendx_migration_pass';
+        END IF;
+      END;
+      $$;
+      GRANT trendx_migration TO trendx_app;
+      SQL
+    - |
+      # Apply the migration chain (001 -> 006) in lexical order. Migration 000 is a privileged
+      # bootstrap (creates separate analytics/airflow/mlflow databases + roles) and is excluded
+      # here on purpose: the integration job uses a single trendx_app role on the trendx database.
+      # Running the full chain (instead of a hand-rolled subset) guarantees every integration
+      # test finds the schema its prerequisite migration created. All files are idempotent/reentrant.
+      for f in migrations/00[1-9]*.sql migrations/0[1-9][0-9]*.sql; do
+        [ -e "${f}" ] || continue
+        echo ">>> applying ${f}"
+        PGPASSWORD="$POSTGRES_PASSWORD" psql -h postgres -U trendx_app -d trendx \
+            -v ON_ERROR_STOP=1 -f "${f}"
+      done
+    - |
+      # Seed the aggregate watermark row the integration tests expect (idempotent).
+      # Runs AFTER the full migration chain so the table (created by 004) already exists.
+      # The worker tests read/update it. Mirrors the production bootstrap seed.
+      PGPASSWORD="$POSTGRES_PASSWORD" psql -h postgres -U trendx_app -d trendx -v ON_ERROR_STOP=1 <<'SQL'
       INSERT INTO trendx_analytics.aggregate_watermarks
           (aggregate_name, last_refresh_start, last_refresh_rows)
       VALUES ('hourly', '2026-01-01T00:00:00+00:00', 0)
-      ON CONFLICT (aggregate_name) DO UPDATE
-          SET last_refresh_start = EXCLUDED.last_refresh_start,
-              last_refresh_rows = EXCLUDED.last_refresh_rows;
+      ON CONFLICT (aggregate_name) DO NOTHING;
       SQL
-    - |
-      # Apply migration 006 (prediction_model_status_history) against trendx_catalog.
-      # trendx_catalog schema already exists above; the migration is idempotent and reentrant.
-      PGPASSWORD="$POSTGRES_PASSWORD" psql -h postgres -U trendx_app -d trendx \
-          -v ON_ERROR_STOP=1 -f migrations/006_prediction_model_status_history.sql
   script:
     - pytest -m integration -ra --no-header --tb=short
   rules:
