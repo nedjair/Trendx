@@ -7,6 +7,21 @@ import pytest
 from trendx.services.alerting import AlertingService
 
 
+def _session_cm(session: MagicMock) -> MagicMock:
+    """Context-manager mock whose ``__enter__`` yields ``session``.
+
+    Replaces the previous ``patch("trendx.services.alerting.next", ...)`` hack,
+    which patched the builtin ``next`` and silently accepted any argument,
+    masking the misuse of ``get_session`` (a ``@contextmanager``) as an
+    iterator. With this helper, ``with db_manager.get_session(...) as session``
+    exercises the real control flow and can no longer hide the bug.
+    """
+    cm = MagicMock()
+    cm.__enter__.return_value = session
+    cm.__exit__.return_value = False
+    return cm
+
+
 @pytest.fixture
 def alerting_service():
     svc = AlertingService(
@@ -35,11 +50,12 @@ def test_evaluate_threshold(alerting_service):
     rule.cooldown_seconds = 3600
     rule.min_duration_seconds = 60
     mock_repo.find_active.return_value = [rule]
-    mock_session.__enter__ = MagicMock(return_value=mock_session)
-    mock_session.__exit__ = MagicMock(return_value=None)
 
     with (
-        patch("trendx.services.alerting.next", return_value=mock_session),
+        patch(
+            "trendx.services.alerting.db_manager.get_session",
+            return_value=_session_cm(mock_session),
+        ),
         patch("trendx.services.alerting.AlertRuleRepository", return_value=mock_repo),
         patch.object(alerting_service, "_maybe_clear_alarm"),
         patch.object(alerting_service, "create_tb_alarm", return_value={"status": "created"}),
@@ -65,11 +81,12 @@ def test_apply_cooldown(alerting_service):
     existing.status = "ACTIVE"
     existing.opened_at = datetime.now(UTC) - timedelta(seconds=100)
     mock_repo.find_by_logical_key.return_value = existing
-    mock_session.__enter__ = MagicMock(return_value=mock_session)
-    mock_session.__exit__ = MagicMock(return_value=None)
 
     with (
-        patch("trendx.services.alerting.next", return_value=mock_session),
+        patch(
+            "trendx.services.alerting.db_manager.get_session",
+            return_value=_session_cm(mock_session),
+        ),
         patch("trendx.services.alerting.AlertIncidentRepository", return_value=mock_repo),
     ):
         result = alerting_service.apply_cooldown(incident)
@@ -83,11 +100,12 @@ def test_apply_cooldown_no_existing(alerting_service):
     mock_session = MagicMock()
     mock_repo = MagicMock()
     mock_repo.find_by_logical_key.return_value = None
-    mock_session.__enter__ = MagicMock(return_value=mock_session)
-    mock_session.__exit__ = MagicMock(return_value=None)
 
     with (
-        patch("trendx.services.alerting.next", return_value=mock_session),
+        patch(
+            "trendx.services.alerting.db_manager.get_session",
+            return_value=_session_cm(mock_session),
+        ),
         patch("trendx.services.alerting.AlertIncidentRepository", return_value=mock_repo),
     ):
         result = alerting_service.apply_cooldown(incident)
@@ -107,11 +125,12 @@ def test_apply_hysteresis(alerting_service):
     existing = MagicMock()
     existing.status = "ACTIVE"
     mock_repo.find_by_logical_key.return_value = existing
-    mock_session.__enter__ = MagicMock(return_value=mock_session)
-    mock_session.__exit__ = MagicMock(return_value=None)
 
     with (
-        patch("trendx.services.alerting.next", return_value=mock_session),
+        patch(
+            "trendx.services.alerting.db_manager.get_session",
+            return_value=_session_cm(mock_session),
+        ),
         patch("trendx.services.alerting.AlertIncidentRepository", return_value=mock_repo),
     ):
         result = alerting_service.apply_hysteresis(incident, current_value=0.2)
@@ -136,11 +155,12 @@ def test_no_data_rule(alerting_service):
     rule.cooldown_seconds = 3600
     rule.min_duration_seconds = 60
     mock_repo.find_active.return_value = [rule]
-    mock_session.__enter__ = MagicMock(return_value=mock_session)
-    mock_session.__exit__ = MagicMock(return_value=None)
 
     with (
-        patch("trendx.services.alerting.next", return_value=mock_session),
+        patch(
+            "trendx.services.alerting.db_manager.get_session",
+            return_value=_session_cm(mock_session),
+        ),
         patch("trendx.services.alerting.AlertRuleRepository", return_value=mock_repo),
         patch.object(alerting_service, "_maybe_clear_alarm"),
         patch.object(alerting_service, "create_tb_alarm", return_value={"status": "created"}),
@@ -172,11 +192,12 @@ def test_no_data_rule_not_triggered(alerting_service):
     rule.cooldown_seconds = 3600
     rule.min_duration_seconds = 60
     mock_repo.find_active.return_value = [rule]
-    mock_session.__enter__ = MagicMock(return_value=mock_session)
-    mock_session.__exit__ = MagicMock(return_value=None)
 
     with (
-        patch("trendx.services.alerting.next", return_value=mock_session),
+        patch(
+            "trendx.services.alerting.db_manager.get_session",
+            return_value=_session_cm(mock_session),
+        ),
         patch.object(alerting_service, "_maybe_clear_alarm"),
         patch.object(alerting_service, "create_tb_alarm"),
     ):

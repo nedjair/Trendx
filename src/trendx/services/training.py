@@ -1,25 +1,22 @@
 from __future__ import annotations
 
 import time
-import uuid
-from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import numpy as np
 import pandas as pd
 from loguru import logger
 from sqlalchemy import text
-
 from trendx.config import settings
 from trendx.database.connection import manager as db_manager
 from trendx.database.models import PredictionModel
 from trendx.database.repositories import (
     BusinessEntityRepository,
     MetricDefinitionRepository,
-    PredictionModelRepository,
 )
-from trendx.forecasting import MODEL_REGISTRY, Strategy, create_model
-from trendx.forecasting.base import ForecastMetrics, ForecastResult, compute_metrics
+from trendx.forecasting import Strategy, create_model
+from trendx.forecasting.base import ForecastMetrics, compute_metrics
 from trendx.forecasting.selector import CompetitionResult, ModelSelector
 from trendx.mlops.registry import ModelRegistry
 from trendx.mlops.tracking import MLflowTracker
@@ -58,7 +55,7 @@ class TrainingService:
         lookback_days: int | None = None,
     ) -> pd.DataFrame:
         lookback = lookback_days or settings.training_lookback_days
-        end = datetime.now(timezone.utc)
+        end = datetime.now(UTC)
         start = end - timedelta(days=lookback)
         engine = db_manager.get_engine("analytics")
         stmt = text(
@@ -84,7 +81,12 @@ class TrainingService:
                 },
             ).fetchall()
         if not rows:
-            logger.warning("No training data for {}/{} in the last {} days", entity_id[:12], metric_key, lookback)
+            logger.warning(
+                "No training data for {}/{} in the last {} days",
+                entity_id[:12],
+                metric_key,
+                lookback,
+            )
             return pd.DataFrame()
         df = pd.DataFrame(rows, columns=["ts", "value"])
         df["ts"] = pd.to_datetime(df["ts"])
@@ -138,7 +140,12 @@ class TrainingService:
             return None
         df = self._prepare_data(df, frequency, min_val, max_val)
         if df.empty or len(df) < 10:
-            logger.error("Insufficient data ({}) for {}/{} after preparation", len(df), entity_id[:12], metric_key)
+            logger.error(
+                "Insufficient data ({}) for {}/{} after preparation",
+                len(df),
+                entity_id[:12],
+                metric_key,
+            )
             return None
         normalizer = Normalizer(method="auto")
         y_values = df["y"].values.reshape(-1, 1).astype(np.float64)
@@ -159,7 +166,9 @@ class TrainingService:
             "frequency": frequency,
             "horizon": str(horizon),
         }
-        run_id = self._tracker.start_run(experiment_name, run_name=f"{algorithm}_{int(time.time())}", tags=tags)
+        run_id = self._tracker.start_run(
+            experiment_name, run_name=f"{algorithm}_{int(time.time())}", tags=tags
+        )
         try:
             model = create_model(algorithm, params)
             start_fit = time.monotonic()
@@ -197,17 +206,19 @@ class TrainingService:
             metrics.inference_duration = pred_duration
             data_version = MLflowTracker.compute_data_hash(df)
             code_version = MLflowTracker.compute_git_hash()
-            self._tracker.log_params({
-                "algorithm": algorithm,
-                "frequency": frequency,
-                "horizon": horizon,
-                "lookback_days": lookback_days or settings.training_lookback_days,
-                "data_version": data_version,
-                "code_version": code_version,
-                "train_samples": len(train_df),
-                "test_samples": len(test_df),
-                "scaler_method": normalizer.method or "auto",
-            })
+            self._tracker.log_params(
+                {
+                    "algorithm": algorithm,
+                    "frequency": frequency,
+                    "horizon": horizon,
+                    "lookback_days": lookback_days or settings.training_lookback_days,
+                    "data_version": data_version,
+                    "code_version": code_version,
+                    "train_samples": len(train_df),
+                    "test_samples": len(test_df),
+                    "scaler_method": normalizer.method or "auto",
+                }
+            )
             if params:
                 self._tracker.log_params(params)
             self._tracker.log_metrics(metrics.to_dict())
@@ -227,8 +238,12 @@ class TrainingService:
                 horizon=horizon,
                 lookback_days=lookback_days or settings.training_lookback_days,
                 data_version=data_version,
-                train_period_start=datetime.fromisoformat(str(df["ds"].iloc[0])) if not df.empty else None,
-                train_period_end=datetime.fromisoformat(str(df["ds"].iloc[-1])) if not df.empty else None,
+                train_period_start=datetime.fromisoformat(str(df["ds"].iloc[0]))
+                if not df.empty
+                else None,
+                train_period_end=datetime.fromisoformat(str(df["ds"].iloc[-1]))
+                if not df.empty
+                else None,
                 code_version=code_version,
                 mlflow_run_id=run_id,
             )
@@ -244,12 +259,11 @@ class TrainingService:
         profile_id: str | None = None,
     ) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
-        session = next(db_manager.get_session("catalog"))
-        entity_repo = BusinessEntityRepository(session)
-        metric_repo = MetricDefinitionRepository(session)
-        entities = entity_repo.find_by_type("DEVICE")
-        metrics = metric_repo.find_active()
-        session.close()
+        with db_manager.get_session("catalog") as session:
+            entity_repo = BusinessEntityRepository(session)
+            metric_repo = MetricDefinitionRepository(session)
+            entities = entity_repo.find_by_type("DEVICE")
+            metrics = metric_repo.find_active()
         for entity in entities:
             for metric in metrics:
                 try:
@@ -257,20 +271,26 @@ class TrainingService:
                         entity_id=str(entity.id),
                         metric_key=metric.item_name,
                     )
-                    results.append({
-                        "entity_id": str(entity.id)[:12],
-                        "metric_key": metric.item_name,
-                        "success": model is not None,
-                        "model_id": str(model.id) if model else None,
-                    })
+                    results.append(
+                        {
+                            "entity_id": str(entity.id)[:12],
+                            "metric_key": metric.item_name,
+                            "success": model is not None,
+                            "model_id": str(model.id) if model else None,
+                        }
+                    )
                 except Exception as exc:
-                    logger.error("Train_all failed for {}/{}: {}", str(entity.id)[:12], metric.item_name, exc)
-                    results.append({
-                        "entity_id": str(entity.id)[:12],
-                        "metric_key": metric.item_name,
-                        "success": False,
-                        "error": str(exc),
-                    })
+                    logger.error(
+                        "Train_all failed for {}/{}: {}", str(entity.id)[:12], metric.item_name, exc
+                    )
+                    results.append(
+                        {
+                            "entity_id": str(entity.id)[:12],
+                            "metric_key": metric.item_name,
+                            "success": False,
+                            "error": str(exc),
+                        }
+                    )
         return results
 
     def run_competition(
@@ -297,7 +317,9 @@ class TrainingService:
             "metric_key": metric_key,
             "type": "competition",
         }
-        self._tracker.start_run(experiment_name, run_name=f"competition_{int(time.time())}", tags=tags)
+        self._tracker.start_run(
+            experiment_name, run_name=f"competition_{int(time.time())}", tags=tags
+        )
         try:
             results = self._selector.run_competition(
                 entity_id=entity_id,
@@ -308,9 +330,7 @@ class TrainingService:
             champion = self._selector.select_champion(results)
             if champion is not None:
                 self._selector.promote_champion(entity_id, metric_key, champion)
-            candidate_data = [
-                {"algorithm": alg, "params": p} for alg, p in candidates
-            ]
+            candidate_data = [{"algorithm": alg, "params": p} for alg, p in candidates]
             self._registry.store_selection_run(
                 entity_id=entity_id,
                 metric_key=metric_key,
@@ -320,7 +340,9 @@ class TrainingService:
                 champion_score=champion.aggregated_metrics.smape if champion else None,
                 margin_gain=None,
                 status="completed" if champion else "failed",
-                mlflow_parent_run_id=self._tracker.active_run.info.run_id if self._tracker.active_run else None,
+                mlflow_parent_run_id=self._tracker.active_run.info.run_id
+                if self._tracker.active_run
+                else None,
             )
             self._tracker.end_run("FINISHED")
             return champion

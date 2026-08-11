@@ -1,15 +1,12 @@
 from __future__ import annotations
 
-import time
-import uuid
-from datetime import datetime, timezone
-from typing import Any, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 import numpy as np
 import pandas as pd
 from loguru import logger
 from sqlalchemy import text
-
 from trendx.config import settings
 from trendx.database.connection import manager as db_manager
 from trendx.database.models import PredictionModel
@@ -20,8 +17,10 @@ from trendx.database.repositories import (
 )
 from trendx.forecasting import create_model
 from trendx.forecasting.base import ForecastResult
+
 try:
     from trendx.mlops.registry import ModelRegistry
+
     HAS_MODEL_REGISTRY = True
 except RuntimeError:
     HAS_MODEL_REGISTRY = False
@@ -37,6 +36,7 @@ class InferenceService:
         self,
         model_registry: ModelRegistry | None = None,
         resampler: Resampler | None = None,
+        *,
         dry_run: bool = True,
     ) -> None:
         self._registry = model_registry or (ModelRegistry() if HAS_MODEL_REGISTRY else None)
@@ -122,7 +122,9 @@ class InferenceService:
             return None
         df = df.rename(columns={"ts": "ds", "value": "y"}).dropna(subset=["y"])
         scaler_params = getattr(model_record, "scaler", {}) or {}
-        normalizer = Normalizer(method=scaler_params.get("method", "auto") if scaler_params else "auto")
+        normalizer = Normalizer(
+            method=scaler_params.get("method", "auto") if scaler_params else "auto"
+        )
         y_values = df["y"].values.reshape(-1, 1).astype(np.float64)
         if scaler_params and scaler_params.get("fitted"):
             try:
@@ -138,7 +140,9 @@ class InferenceService:
         df_scaled = df.copy()
         df_scaled["y"] = y_scaled
         try:
-            model_algorithm = getattr(model_record, "algorithm", None) or model_record.type or "Prophet"
+            model_algorithm = (
+                getattr(model_record, "algorithm", None) or model_record.type or "Prophet"
+            )
             hyperparameters = getattr(model_record, "hyperparameters", {}) or {}
             model = create_model(model_algorithm, hyperparameters)
             model.fit(df_scaled)
@@ -157,8 +161,12 @@ class InferenceService:
                         normalizer.inverse_transform(np.array([[forecast.upper_bound[step]]]))[0, 0]
                     )
             forecast.values = np.clip(forecast.values, self._forecast_min, self._forecast_max)
-            forecast.lower_bound = np.clip(forecast.lower_bound, self._forecast_min, self._forecast_max)
-            forecast.upper_bound = np.clip(forecast.upper_bound, self._forecast_min, self._forecast_max)
+            forecast.lower_bound = np.clip(
+                forecast.lower_bound, self._forecast_min, self._forecast_max
+            )
+            forecast.upper_bound = np.clip(
+                forecast.upper_bound, self._forecast_min, self._forecast_max
+            )
             last_ts = df["ds"].max()
             forecast_timestamps = pd.date_range(
                 start=last_ts + pd.Timedelta(hours=1),
@@ -176,17 +184,18 @@ class InferenceService:
             )
             return forecast
         except Exception as exc:
-            logger.error("Forecast generation failed for {}/{}: {}", entity_id[:12], metric_key, exc)
+            logger.error(
+                "Forecast generation failed for {}/{}: {}", entity_id[:12], metric_key, exc
+            )
             return None
 
     def generate_bulk_forecasts(self) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
-        session = next(db_manager.get_session("catalog"))
-        entity_repo = BusinessEntityRepository(session)
-        metric_repo = MetricDefinitionRepository(session)
-        entities = entity_repo.list()
-        metrics = metric_repo.list()
-        session.close()
+        with db_manager.get_session("catalog") as session:
+            entity_repo = BusinessEntityRepository(session)
+            metric_repo = MetricDefinitionRepository(session)
+            entities = entity_repo.list()
+            metrics = metric_repo.list()
         for entity in entities:
             for metric in metrics:
                 try:
@@ -200,28 +209,39 @@ class InferenceService:
                             metric.item_name,
                             forecast,
                         )
-                        results.append({
-                            "entity_id": str(entity.id)[:12],
-                            "metric_key": metric.item_name,
-                            "success": True,
-                            "points": len(forecast.values),
-                            "saved": save_result,
-                        })
+                        results.append(
+                            {
+                                "entity_id": str(entity.id)[:12],
+                                "metric_key": metric.item_name,
+                                "success": True,
+                                "points": len(forecast.values),
+                                "saved": save_result,
+                            }
+                        )
                     else:
-                        results.append({
+                        results.append(
+                            {
+                                "entity_id": str(entity.id)[:12],
+                                "metric_key": metric.item_name,
+                                "success": False,
+                                "error": "No forecast generated",
+                            }
+                        )
+                except Exception as exc:
+                    logger.error(
+                        "Bulk forecast failed for {}/{}: {}",
+                        str(entity.id)[:12],
+                        metric.item_name,
+                        exc,
+                    )
+                    results.append(
+                        {
                             "entity_id": str(entity.id)[:12],
                             "metric_key": metric.item_name,
                             "success": False,
-                            "error": "No forecast generated",
-                        })
-                except Exception as exc:
-                    logger.error("Bulk forecast failed for {}/{}: {}", str(entity.id)[:12], metric.item_name, exc)
-                    results.append({
-                        "entity_id": str(entity.id)[:12],
-                        "metric_key": metric.item_name,
-                        "success": False,
-                        "error": str(exc),
-                    })
+                            "error": str(exc),
+                        }
+                    )
         return results
 
     def save_forecast_results(
@@ -254,7 +274,12 @@ class InferenceService:
             self._dry_run,
         )
         if self._dry_run or not self._writeback_enabled:
-            logger.info("Dry-run mode: would write {} points to device {} key '{}'", len(forecast_result.values), entity_id[:12], target_key)
+            logger.info(
+                "Dry-run mode: would write {} points to device {} key '{}'",
+                len(forecast_result.values),
+                entity_id[:12],
+                target_key,
+            )
             return {
                 "dry_run": True,
                 "entity_id": entity_id[:12],
@@ -265,8 +290,10 @@ class InferenceService:
             }
         # Real writeback goes through ThingsBoard API, not writeback_batch table.
         from trendx.thingsboard.client import ThingsBoardClient
+
         tb = ThingsBoardClient()
         import asyncio
+
         try:
             loop = asyncio.get_event_loop()
         except RuntimeError:
@@ -274,15 +301,21 @@ class InferenceService:
             asyncio.set_event_loop(loop)
         points = []
         for i in range(len(forecast_result.values)):
-            ts_val = forecast_result.timestamps[i] if forecast_result.timestamps is not None and i < len(forecast_result.timestamps) else datetime.now(timezone.utc)
+            ts_val = (
+                forecast_result.timestamps[i]
+                if forecast_result.timestamps is not None and i < len(forecast_result.timestamps)
+                else datetime.now(UTC)
+            )
             if isinstance(ts_val, np.datetime64):
                 ts_dt = pd.Timestamp(ts_val).to_pydatetime()
             else:
                 ts_dt = ts_val
-            points.append({
-                "ts": int(ts_dt.timestamp() * 1000),
-                "value": float(forecast_result.values[i]),
-            })
+            points.append(
+                {
+                    "ts": int(ts_dt.timestamp() * 1000),
+                    "value": float(forecast_result.values[i]),
+                }
+            )
         loop.run_until_complete(
             tb.post_telemetry(
                 entity_type="DEVICE",
@@ -306,13 +339,12 @@ class InferenceService:
             "forecast_min": self._forecast_min,
             "forecast_max": self._forecast_max,
         }
-        session = next(db_manager.get_session("catalog"))
-        entity_repo = BusinessEntityRepository(session)
-        entities = entity_repo.find_by_type("DEVICE")
-        checks["entities_count"] = len(entities)
-        models_count = len(PredictionModelRepository(session).find_by_status("champion"))
+        with db_manager.get_session("catalog") as session:
+            entity_repo = BusinessEntityRepository(session)
+            entities = entity_repo.find_by_type("DEVICE")
+            checks["entities_count"] = len(entities)
+            models_count = len(PredictionModelRepository(session).find_by_status("champion"))
         checks["champion_models"] = models_count
-        session.close()
         checks["ready"] = self._writeback_enabled and models_count > 0 and len(entities) > 0
         return checks
 
@@ -344,7 +376,7 @@ class InferenceService:
             return "NULL"
         if isinstance(value, bool):
             return "TRUE" if value else "FALSE"
-        if isinstance(value, (int, float)):
+        if isinstance(value, int | float):
             if np.isnan(value) or np.isinf(value):
                 return "NULL"
             return str(value)
