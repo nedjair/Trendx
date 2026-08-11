@@ -1,15 +1,21 @@
 from __future__ import annotations
 
+import asyncio
+import json
 import os
 import sys
 import threading
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any
+from typing import Any, cast
 
 from loguru import logger
 from trendx.config import settings
+from trendx.services.ingestion import IngestionService
+from trendx.services.tasks import TaskService
+from trendx.thingsboard.discovery import TopologyDiscoveryService
 
 EXECUTOR_PORT = int(os.environ.get("SERVER_PORT", settings.trendx_python_executor_port))
 
@@ -91,6 +97,184 @@ def task_forecast_dryrun(device_id: str, metric_name: str, horizon: int = 24) ->
         "metric_name": metric_name,
         "horizon": horizon,
     }
+
+
+# ————————————————————————————————————————————————
+# Worker execution loop : claim -> dispatch -> run -> progress -> complete/fail
+# Découplé du BackgroundScheduler de maintenance (voir bloc APScheduler ci-dessous).
+# ————————————————————————————————————————————————
+
+
+def _run_topology_discovery(
+    json_job: dict[str, Any], task_id: str, execution_id: str
+) -> dict[str, Any]:
+    """Découverte topologique complète + persistance du catalog."""
+    svc = TopologyDiscoveryService()
+    asyncio.run(svc.full_sync())
+    asyncio.run(svc.update_catalog())
+    return {"job_type": "topology_discovery", "status": "ok"}
+
+
+def _run_topology_sync(json_job: dict[str, Any], task_id: str, execution_id: str) -> dict[str, Any]:
+    """Synchro topologique incrémentale + persistance du catalog."""
+    svc = TopologyDiscoveryService()
+    asyncio.run(svc.incremental_sync())
+    asyncio.run(svc.update_catalog())
+    return {"job_type": "topology_sync", "status": "ok"}
+
+
+def _run_ingestion(json_job: dict[str, Any], task_id: str, execution_id: str) -> dict[str, Any]:
+    """Ingestion incrémentale (auto-découvre devices/metrics)."""
+    svc = IngestionService()
+    results = asyncio.run(svc.run_incremental_ingest())
+    return {"job_type": "ingestion", "status": "ok", "tasks": len(results) if results else 0}
+
+
+# Registre explicite job_type -> exécuteur. Aucun fallback silencieux : un
+# job_type absent conduit à fail_task() (voir _process_one_task).
+JOB_DISPATCH: dict[str, Callable[[dict[str, Any], str, str], Any]] = {
+    "topology_discovery": _run_topology_discovery,
+    "topology_sync": _run_topology_sync,
+    "ingestion": _run_ingestion,
+}
+
+
+def _parse_json_job(raw: Any) -> dict[str, Any]:
+    """Parse le json_job de la requête. Retourne {} si None/"".
+    Lève json.JSONDecodeError si le contenu n'est pas du JSON valide.
+    """
+    if raw is None or raw == "":
+        return {}
+    if isinstance(raw, dict):
+        return raw
+    return cast("dict[str, Any]", json.loads(raw))
+
+
+def _process_one_task(worker_id: str) -> bool:
+    """Cycle atomique claim -> dispatch -> exécution -> complete/fail.
+
+    Retourne True si une tâche a été claimée (et traitée), False si aucune
+    tâche claimable n'était disponible.
+    """
+    svc = TaskService()
+    request = svc.claim_task(worker_id=worker_id)
+    if request is None:
+        return False
+
+    task_id = str(request.task_id)
+    execution_id = str(request.execution_id)
+    job_type = request.job_type
+
+    # 1) json_job obligatoire et valide -> sinon FAILED
+    try:
+        json_job = _parse_json_job(request.json_job)
+    except (json.JSONDecodeError, TypeError, ValueError) as exc:
+        logger.error(
+            "Worker {} : json_job invalide pour task {} execution {} : {}",
+            worker_id,
+            task_id,
+            execution_id,
+            exc,
+        )
+        svc.fail_task(task_id, error_message=f"Invalid json_job: {exc}")
+        return True
+
+    # 2) Transition CREATED -> RUNNING
+    try:
+        svc.update_progress(task_id, 0)
+    except Exception as exc:
+        logger.error(
+            "Worker {} : update_progress échoué pour task {} execution {} : {}",
+            worker_id,
+            task_id,
+            execution_id,
+            exc,
+        )
+        svc.fail_task(task_id, error_message=f"update_progress failed: {exc}")
+        return True
+
+    # 3) Dispatch explicite (aucun fallback silencieux)
+    handler = JOB_DISPATCH.get(job_type)
+    if handler is None:
+        logger.error(
+            "Worker {} : job_type inconnu '{}' pour task {} execution {}",
+            worker_id,
+            job_type,
+            task_id,
+            execution_id,
+        )
+        svc.fail_task(task_id, error_message=f"Unknown job_type: {job_type}")
+        return True
+
+    # 4) Exécution + persistance, puis complete (succès) ou fail (exception)
+    try:
+        result = handler(json_job, task_id, execution_id)
+        svc.complete_task(task_id, result=result)
+        logger.info(
+            "Worker {} : task {} (job_type={}) terminée FINISHED",
+            worker_id,
+            task_id,
+            job_type,
+        )
+    except Exception as exc:
+        logger.error(
+            "Worker {} : échec handler job_type={} pour task {} execution {} : {}",
+            worker_id,
+            job_type,
+            task_id,
+            execution_id,
+            exc,
+        )
+        svc.fail_task(task_id, error_message=f"{job_type} failed: {exc}")
+    return True
+
+
+_execution_stop = threading.Event()
+_execution_thread: threading.Thread | None = None
+
+
+def _worker_execution_loop(
+    worker_id: str, poll_interval: float, stop_event: threading.Event
+) -> None:
+    logger.info("trendx-worker execution loop démarrée (worker_id={})", worker_id)
+    while not stop_event.is_set():
+        try:
+            _process_one_task(worker_id)
+        except Exception as exc:  # la boucle ne doit jamais mourir
+            logger.error(
+                "Worker {} : erreur non gérée dans la boucle d'exécution : {}",
+                worker_id,
+                exc,
+            )
+        stop_event.wait(poll_interval)
+
+
+def start_execution_loop(
+    poll_interval: float = 5.0, worker_id: str = "worker-execution"
+) -> threading.Thread:
+    """Démarre (idempotent) le thread d'exécution dédié (non-daemon) qui garde
+    le process en vie indépendamment du scheduler APScheduler de maintenance.
+    """
+    global _execution_thread
+    if _execution_thread is not None and _execution_thread.is_alive():
+        return _execution_thread
+    _execution_stop.clear()
+    _execution_thread = threading.Thread(
+        target=_worker_execution_loop,
+        args=(worker_id, poll_interval, _execution_stop),
+        name="trendx-worker-execution",
+        daemon=False,
+    )
+    _execution_thread.start()
+    logger.info("trendx-worker execution thread démarré (poll={}s)", poll_interval)
+    return _execution_thread
+
+
+def stop_execution_loop(timeout: float = 5.0) -> None:
+    """Demande l'arrêt du thread d'exécution et attend sa fin."""
+    _execution_stop.set()
+    if _execution_thread is not None:
+        _execution_thread.join(timeout=timeout)
 
 
 # ————————————————————————————————————————————————
@@ -228,6 +412,12 @@ if HAS_APSCHEDULER:
     _scheduler = _start_scheduler()
 
 
+# Worker execution loop (découplé de la maintenance APScheduler). Désactivé par
+# défaut ; activé en production via TRENDX_WORKER_EXECUTION=1 (Dockerfile.worker).
+if os.environ.get("TRENDX_WORKER_EXECUTION", "0") == "1":
+    start_execution_loop()
+
+
 logger.info(
     "trendx-worker initialized (APScheduler process, no broker). port={port}, engine={engine}",
     port=EXECUTOR_PORT,
@@ -245,10 +435,12 @@ except Exception as exc:
         raise
 
 if __name__ == "__main__":
+    start_execution_loop()
     try:
         while True:
             time.sleep(3600)
     except KeyboardInterrupt:
+        stop_execution_loop()
         if _scheduler is not None:
             _scheduler.shutdown(wait=False)
         logger.info("trendx-worker stopped by signal")

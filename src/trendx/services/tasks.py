@@ -119,7 +119,7 @@ class TaskService:
                 reference_type=reference_type,
                 reference_key=reference_key or uuid.uuid4().hex,
                 job_type=job_type,
-                json_job=str(json_job),
+                json_job=json.dumps(json_job),
                 schedule_type=schedule_type,
                 schedule_period_ts=0,
                 schedule_planned_ts=0,
@@ -145,7 +145,7 @@ class TaskService:
                 user_id=user_id,
                 scheduled=False,
                 job_type=job_type,
-                json_job=str(json_job),
+                json_job=json.dumps(json_job),
                 created_ts=int(time.time() * 1000),
                 state=PENDING_STATE,
             )
