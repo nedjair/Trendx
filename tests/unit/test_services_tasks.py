@@ -7,7 +7,12 @@ from unittest.mock import MagicMock, patch
 import pytest
 from sqlalchemy.dialects import postgresql
 from trendx.config import settings
-from trendx.database.models import TrendzTaskExecutionRequest
+from trendx.database.models import (
+    TrendzTask,
+    TrendzTaskExecutionProgressStep,
+    TrendzTaskExecutionRequest,
+    TrendzTaskExecutionStateRecord,
+)
 from trendx.services.tasks import PENDING_STATE, TaskService
 
 # ── Issue: trendx_task_execution_request + trendz_task_execution_state_record
@@ -257,55 +262,139 @@ def test_claim_stmt_job_type_filter_present_only_when_requested(service):
     assert any(v == "forecast" for v in params.values())
 
 
-# ── update_progress — STUB (returns None) ───────────────────────────────
+# ── update_progress / complete_task / fail_task — REAL schema (trendz_task_execution*) ──
+# No migration: trendz_task_execution.id == request.execution_id; execution.status uses the
+# canonical Trendz values {CREATED,RUNNING,FINISHED,FAILED,CANCELED,LOST,NONE}; state_record.state
+# uses {WORKING,CANCELLED}. PENDING stays request-only. These tests assert on the real ORM
+# objects (execution / state_record / progress_step), not on non-existent trendz_task columns.
+
+
+def _fake_execution(status="CREATED", start_ts=1000):
+    ex = MagicMock()
+    ex.id = uuid.uuid4()
+    ex.status = status
+    ex.start_ts = start_ts
+    ex.finish_ts = 0
+    ex.duration = 0
+    ex.json_progress_content = "{}"
+    ex.json_result = "{}"
+    return ex
+
+
+def _configure_session(session, execution, task_id="task-1"):
+    """Wire a mock session so the service resolves `execution` and a task."""
+    res = MagicMock()
+    res.scalars.return_value.first.return_value = execution
+    session.execute.return_value = res
+
+    def _get(model, ident):
+        if model is TrendzTask:
+            return MagicMock(id=task_id)
+        if model is TrendzTaskExecutionStateRecord:
+            # force the creation path so we can assert a state_record is added
+            return None
+        return MagicMock()
+
+    session.get.side_effect = _get
+    return session
 
 
 @pytest.mark.unit
-@pytest.mark.xfail(strict=True, reason="update_progress is a stub returning None — " + _STUB_REASON)
 def test_update_progress(service, mock_session_repo):
-    session, repo, cm = mock_session_repo
-    existing = MagicMock(id="task-1", payload={"progress": 0})
-    repo.get.return_value = existing
-    repo.update.return_value = existing
+    session, _repo, cm = mock_session_repo
+    execution = _fake_execution(status="CREATED")
+    _configure_session(session, execution)
+    added = []
+    session.add.side_effect = added.append
 
     with patch.object(service, "_get_session_and_repo", return_value=cm):
         result = service.update_progress("task-1", 50)
 
     assert result is not None
+    assert result.id == "task-1"
+    # progress is persisted on the execution row (real JSON column)
+    assert '"progress": 50' in execution.json_progress_content
+    # CREATED -> RUNNING on first progress update
+    assert execution.status == "RUNNING"
+    steps = [o for o in added if isinstance(o, TrendzTaskExecutionProgressStep)]
+    assert len(steps) == 1
+    assert steps[0].execution_id == execution.id
+    state_records = [o for o in added if isinstance(o, TrendzTaskExecutionStateRecord)]
+    assert len(state_records) == 1
+    assert state_records[0].state == "WORKING"
 
 
 @pytest.mark.unit
-@pytest.mark.xfail(
-    strict=True, reason="update_progress is a stub — no progress validation — " + _STUB_REASON
-)
+def test_update_progress_with_explicit_status(service, mock_session_repo):
+    session, _repo, cm = mock_session_repo
+    execution = _fake_execution(status="RUNNING")
+    _configure_session(session, execution)
+    added = []
+    session.add.side_effect = added.append
+
+    with patch.object(service, "_get_session_and_repo", return_value=cm):
+        result = service.update_progress("task-1", 75, status="RUNNING")
+
+    assert result is not None
+    assert execution.status == "RUNNING"
+    assert '"progress": 75' in execution.json_progress_content
+
+
+@pytest.mark.unit
 def test_update_progress_invalid(service):
     with pytest.raises(ValueError, match="Progress must be between"):
         service.update_progress("task-1", -1)
-
-
-# ── complete_task — STUB (returns None, signature mismatch) ────────────
+    with pytest.raises(ValueError, match="Progress must be between"):
+        service.update_progress("task-1", 150)
 
 
 @pytest.mark.unit
-@pytest.mark.xfail(strict=True, reason="complete_task is a stub returning None — " + _STUB_REASON)
+def test_update_progress_invalid_status(service):
+    with pytest.raises(ValueError, match="Invalid execution status"):
+        service.update_progress("task-1", 10, status="COMPLETED")
+
+
+@pytest.mark.unit
+def test_update_progress_not_found(service, mock_session_repo):
+    session, _repo, cm = mock_session_repo
+    res = MagicMock()
+    res.scalars.return_value.first.return_value = None
+    session.execute.return_value = res
+
+    with patch.object(service, "_get_session_and_repo", return_value=cm):
+        result = service.update_progress("task-nonexistent", 50)
+
+    assert result is None
+
+
+@pytest.mark.unit
 def test_complete_task(service, mock_session_repo):
-    _, repo, cm = mock_session_repo
-    completed = MagicMock(id="task-1")
-    repo.complete.return_value = completed
+    session, _repo, cm = mock_session_repo
+    execution = _fake_execution(status="RUNNING")
+    _configure_session(session, execution)
+    added = []
+    session.add.side_effect = added.append
 
     with patch.object(service, "_get_session_and_repo", return_value=cm):
         result = service.complete_task("task-1", result={"ok": True})
 
     assert result is not None
     assert result.id == "task-1"
-    repo.complete.assert_called_once()
+    assert execution.status == "FINISHED"
+    assert '"ok": true' in execution.json_result
+    assert execution.finish_ts != 0
+    assert execution.duration >= 0
+    state_records = [o for o in added if isinstance(o, TrendzTaskExecutionStateRecord)]
+    assert len(state_records) == 1
+    assert state_records[0].state == "WORKING"
 
 
 @pytest.mark.unit
-@pytest.mark.skip(reason="complete_task is a stub returning None — " + _STUB_REASON)
 def test_complete_task_not_found(service, mock_session_repo):
-    _, repo, cm = mock_session_repo
-    repo.complete.return_value = None
+    session, _repo, cm = mock_session_repo
+    res = MagicMock()
+    res.scalars.return_value.first.return_value = None
+    session.execute.return_value = res
 
     with patch.object(service, "_get_session_and_repo", return_value=cm):
         result = service.complete_task("task-nonexistent")
@@ -313,18 +402,37 @@ def test_complete_task_not_found(service, mock_session_repo):
     assert result is None
 
 
-# ── fail_task — STUB (returns None, signature mismatch) ─────────────────
+@pytest.mark.unit
+def test_complete_task_idempotent_when_terminal(service, mock_session_repo):
+    session, _repo, cm = mock_session_repo
+    execution = _fake_execution(status="FINISHED")
+    _configure_session(session, execution)
+
+    with patch.object(service, "_get_session_and_repo", return_value=cm):
+        result = service.complete_task("task-1", result={"again": True})
+
+    assert result is not None
+    # idempotent: stays FINISHED, result not overwritten
+    assert execution.status == "FINISHED"
+    assert execution.json_result == "{}"
 
 
 @pytest.mark.unit
-@pytest.mark.xfail(strict=True, reason="fail_task is a stub returning None — " + _STUB_REASON)
 def test_fail_task(service, mock_session_repo):
-    _, repo, cm = mock_session_repo
-    failed = MagicMock(id="task-1")
-    repo.complete.return_value = failed
+    session, _repo, cm = mock_session_repo
+    execution = _fake_execution(status="RUNNING")
+    _configure_session(session, execution)
+    added = []
+    session.add.side_effect = added.append
 
     with patch.object(service, "_get_session_and_repo", return_value=cm):
         result = service.fail_task("task-1", error_message="Something broke")
 
     assert result is not None
     assert result.id == "task-1"
+    assert execution.status == "FAILED"
+    assert "Something broke" in execution.json_result
+    assert execution.finish_ts != 0
+    state_records = [o for o in added if isinstance(o, TrendzTaskExecutionStateRecord)]
+    assert len(state_records) == 1
+    assert state_records[0].state == "WORKING"
