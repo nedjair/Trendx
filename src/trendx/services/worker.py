@@ -1,17 +1,14 @@
 from __future__ import annotations
 
 import os
-import shutil
-import socket
 import sys
 import threading
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 from loguru import logger
-
 from trendx.config import settings
 
 EXECUTOR_PORT = int(os.environ.get("SERVER_PORT", settings.trendx_python_executor_port))
@@ -31,11 +28,15 @@ class _HealthHandler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.end_headers()
-            self.wfile.write(b'{"status":"ok","service":"trendx-worker","port":' + str(EXECUTOR_PORT).encode() + b'}')
-        except Exception:  # noqa: BLE001
+            self.wfile.write(
+                b'{"status":"ok","service":"trendx-worker","port":'
+                + str(EXECUTOR_PORT).encode()
+                + b"}"
+            )
+        except Exception:
             pass
 
-    def log_message(self, format: str, *args: Any, **kwargs: Any) -> None:  # noqa: A003,ARG002
+    def log_message(self, format: str, *args: Any, **kwargs: Any) -> None:
         return
 
 
@@ -79,7 +80,9 @@ def task_noop() -> bool:
 
 
 def task_forecast_dryrun(device_id: str, metric_name: str, horizon: int = 24) -> dict[str, Any]:
-    logger.info(f"Prophet dryrun requested device={device_id} metric={metric_name} horizon={horizon}")
+    logger.info(
+        f"Prophet dryrun requested device={device_id} metric={metric_name} horizon={horizon}"
+    )
     return {
         "ok": True,
         "placeholder": True,
@@ -105,10 +108,8 @@ except ImportError:  # pragma: no cover - dépendance ajoutée au Dockerfile.wor
 
 if HAS_APSCHEDULER:
     from sqlalchemy import text
-
     from trendx.database.connection import get_analytics_engine
     from trendx.services.scheduler_guards import (
-        check_source_rows_exist,
         get_watermark,
         verify_aggregate_refresh,
         verify_aggregate_rows,
@@ -118,7 +119,7 @@ if HAS_APSCHEDULER:
     _AGG_ALERT_THRESHOLD = 2
 
     def _call_db_function(sql: str, params: dict[str, Any]) -> Any:
-        engine = get_analytics_engine()
+        engine = get_analytics_engine()  # type: ignore[no-untyped-call]
         with engine.begin() as conn:
             return conn.execute(text(sql), params).scalar_one()
 
@@ -132,7 +133,7 @@ if HAS_APSCHEDULER:
                     f"ensure_partitions_forward a échoué : missing={result.get('missing')} sans création"
                 )
             logger.info(f"[scheduler] ensure_partitions_forward(3) -> {result}")
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.error(f"[scheduler] ensure_partitions_forward(3) échec: {exc}")
 
     def _job_aggregate(agg: str) -> None:
@@ -149,17 +150,21 @@ if HAS_APSCHEDULER:
             )
             _agg_unchanged_cycles[agg] = 0
             logger.info(f"[scheduler] refresh_aggregate('{agg}') -> {result}")
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             _agg_unchanged_cycles[agg] = _agg_unchanged_cycles.get(agg, 0) + 1
             logger.error(
                 "[scheduler] refresh_aggregate('{}') échec: {} (cycles inaltérés={}/{})",
-                agg, exc, _agg_unchanged_cycles[agg], _AGG_ALERT_THRESHOLD,
+                agg,
+                exc,
+                _agg_unchanged_cycles[agg],
+                _AGG_ALERT_THRESHOLD,
             )
             if _agg_unchanged_cycles[agg] >= _AGG_ALERT_THRESHOLD:
                 logger.critical(
                     "[scheduler] refresh_aggregate('{}') : AUCUNE progression "
                     "pendant {} cycles consécutifs — maintenance requise",
-                    agg, _agg_unchanged_cycles[agg],
+                    agg,
+                    _agg_unchanged_cycles[agg],
                 )
 
     def _start_scheduler() -> BackgroundScheduler:
@@ -203,7 +208,7 @@ if HAS_APSCHEDULER:
         sched.add_job(
             _job_partitions,
             "date",
-            run_date=datetime.now(timezone.utc) + timedelta(seconds=10),
+            run_date=datetime.now(UTC) + timedelta(seconds=10),
             id="partitions_boot_check",
             max_instances=1,
             coalesce=True,
@@ -229,8 +234,9 @@ logger.info(
 
 try:
     from trendx.services.ingestion import probe_disk_mounts
+
     probe_disk_mounts("worker")
-except Exception as exc:  # noqa: BLE001
+except Exception as exc:
     logger.error("[disk] impossible de valider les montages : {}", exc)
     # Les erreurs tmpfs sont fatales au démarrage
     if isinstance(exc, RuntimeError) and "tmpfs" in str(exc):
