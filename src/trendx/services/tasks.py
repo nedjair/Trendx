@@ -420,7 +420,7 @@ class TaskService:
 
     def cancel_task(self, task_id: str) -> TrendzTask | None:
         with self._get_session_and_repo() as (session, repo):
-            task = repo.get(task_id)
+            task = repo.get(self._coerce_uuid(task_id))
             if task is None:
                 return None
             task.enabled = False
@@ -429,12 +429,43 @@ class TaskService:
             return task
 
     def retry_task(self, task_id: str) -> TrendzTask | None:
+        """Re-queue a task for execution by creating a fresh execution request.
+
+        A new TrendzTaskExecutionRequest is inserted with the same task_id but a
+        brand-new execution_id, state=PENDING and scheduled=False, cloning the
+        job_type/json_job/tenant/customer/user from the parent trendz_task. The
+        previous request and its (possibly FAILED) execution are left untouched.
+
+        Because the claim guard (claim_task) selects only requests where
+        NOT EXISTS(trendz_task_execution.id == request.execution_id), the new
+        request — with an execution_id that has no matching execution — becomes
+        immediately claimable again. This makes retry actually re-runnable,
+        whereas flipping only `enabled` left the task permanently un-claimable.
+        """
         with self._get_session_and_repo() as (session, repo):
-            task = repo.get(task_id)
-            if task is not None:
-                task.enabled = True
-                session.commit()
-                logger.info("Task {} retried", task_id)
+            task = repo.get(self._coerce_uuid(task_id))
+            if task is None:
+                return None
+            request = TrendzTaskExecutionRequest(
+                task_id=task.id,
+                execution_id=uuid.uuid4(),
+                tenant_id=task.tenant_id,
+                customer_id=task.customer_id,
+                user_id=task.user_id,
+                scheduled=False,
+                job_type=task.job_type,
+                json_job=task.json_job,
+                created_ts=int(time.time() * 1000),
+                state=PENDING_STATE,
+            )
+            session.add(request)
+            task.enabled = True
+            session.commit()
+            logger.info(
+                "Task {} retried: new execution request {} state=PENDING",
+                task_id,
+                request.execution_id,
+            )
             return task
 
     def list_tasks(
@@ -473,7 +504,7 @@ class TaskService:
     def get_task(self, task_id: str) -> dict[str, Any] | None:
         with db_manager.get_session("catalog") as session:
             repo = TrendzTaskRepository(session)
-            task = repo.get(task_id)
+            task = repo.get(self._coerce_uuid(task_id))
             if task is None:
                 return None
             return {

@@ -116,8 +116,19 @@ def test_cancel_task_not_found(service, mock_session_repo):
 @pytest.mark.unit
 def test_retry_task(service, mock_session_repo):
     session, repo, cm = mock_session_repo
-    retried = MagicMock(id="task-1", enabled=False)
+    retried = MagicMock(
+        id="task-1",
+        enabled=False,
+        tenant_id=uuid.uuid4(),
+        customer_id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        job_type="forecast",
+        json_job='{"device_id": "dev-001"}',
+    )
     repo.get.return_value = retried
+
+    added: list[Any] = []
+    session.add.side_effect = added.append
 
     with patch.object(service, "_get_session_and_repo", return_value=cm):
         result = service.retry_task("task-1")
@@ -125,6 +136,16 @@ def test_retry_task(service, mock_session_repo):
     assert result is not None
     assert result.enabled is True
     session.commit.assert_called_once()
+    # A brand-new PENDING execution request must be queued (the actual fix).
+    requests = [o for o in added if isinstance(o, TrendzTaskExecutionRequest)]
+    assert len(requests) == 1
+    req = requests[0]
+    assert req.task_id == "task-1"
+    assert req.state == PENDING_STATE
+    assert req.scheduled is False
+    assert req.job_type == "forecast"
+    assert req.json_job == '{"device_id": "dev-001"}'
+    assert isinstance(req.execution_id, uuid.UUID)
 
 
 @pytest.mark.unit
@@ -137,6 +158,331 @@ def test_retry_task_not_found(service, mock_session_repo):
 
     assert result is None
     repo.get.assert_called_once_with("task-nonexistent")
+
+
+# ── retry_task behavioral: real end-to-end re-claim via in-memory catalog ──
+# Self-contained SQLite engine (no conftest change, no real DB touched). It
+# proves the retried request is actually consumable by claim_task, while the
+# original FAILED execution is preserved and the consumed request is excluded.
+
+
+def _in_memory_catalog_session():
+    """Build an isolated in-memory SQLite session with only the catalog
+    lifecycle tables needed for the claim/retry flow."""
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from trendx.database.models import (
+        Base,
+        TrendzTask,
+        TrendzTaskExecution,
+        TrendzTaskExecutionRequest,
+        TrendzTaskExecutionStateRecord,
+    )
+
+    engine = create_engine(
+        "sqlite://", poolclass=__import__("sqlalchemy.pool", fromlist=["StaticPool"]).StaticPool
+    )
+    Base.metadata.create_all(
+        engine,
+        tables=[
+            TrendzTask.__table__,
+            TrendzTaskExecution.__table__,
+            TrendzTaskExecutionRequest.__table__,
+            TrendzTaskExecutionStateRecord.__table__,
+        ],
+    )
+    return sessionmaker(bind=engine)()
+
+
+@pytest.mark.unit
+def test_retry_makes_task_reclaimable_and_preserves_failed_execution():
+    from trendx.database.models import (
+        TrendzTask,
+        TrendzTaskExecution,
+        TrendzTaskExecutionRequest,
+    )
+    from trendx.database.repositories import TrendzTaskRepository
+
+    session = _in_memory_catalog_session()
+    task_id = uuid.uuid4()
+    tenant = uuid.uuid4()
+    customer = uuid.uuid4()
+    user = uuid.uuid4()
+    first_exec_id = uuid.uuid4()
+    task = TrendzTask(
+        id=task_id,
+        tenant_id=tenant,
+        customer_id=customer,
+        user_id=user,
+        created_ts=1,
+        updated_ts=1,
+        name="retryable",
+        enabled=False,
+        reference_type="MANUAL",
+        reference_key="rk",
+        job_type="topology_discovery",
+        json_job='{"k": "v"}',
+        schedule_type="NOT_SCHEDULED",
+        schedule_period_ts=0,
+        schedule_planned_ts=0,
+        schedule_scheduling_unit="",
+        schedule_scheduling_unit_count=0,
+        schedule_scheduling_time_zone="UTC",
+        ttl_enabled=False,
+        ttl_duration=0,
+        store_execution_enabled=False,
+        store_execution_count=0,
+        json_configs="{}",
+    )
+    first_request = TrendzTaskExecutionRequest(
+        task_id=task_id,
+        execution_id=first_exec_id,
+        tenant_id=tenant,
+        customer_id=customer,
+        user_id=user,
+        scheduled=False,
+        job_type="topology_discovery",
+        json_job='{"k": "v"}',
+        created_ts=1,
+        state=PENDING_STATE,
+    )
+    failed_execution = TrendzTaskExecution(
+        id=first_exec_id,
+        task_id=task_id,
+        tenant_id=tenant,
+        customer_id=customer,
+        user_id=user,
+        status="FAILED",
+        created_ts=1,
+        start_ts=1,
+        finish_ts=2,
+        duration=1,
+        json_progress_content="{}",
+        job_type="topology_discovery",
+        json_job='{"k": "v"}',
+        json_result='{"error": "boom"}',
+    )
+    session.add_all([task, first_request, failed_execution])
+    session.commit()
+
+    svc = TaskService()
+    with patch.object(svc, "_get_session_and_repo") as get_session:
+        get_session.return_value.__enter__.return_value = (session, TrendzTaskRepository(session))
+
+        # Sanity: before retry, the original request is excluded by NOT EXISTS
+        # (its execution_id already has a FAILED execution) → nothing claimable.
+        claimed_before = svc.claim_task(worker_id="worker-1")
+        assert claimed_before is None
+
+        # Retry: must queue a NEW PENDING request with a fresh execution_id.
+        svc.retry_task(str(task_id))
+
+    requests = (
+        session.query(TrendzTaskExecutionRequest)
+        .filter_by(task_id=task_id)
+        .order_by(TrendzTaskExecutionRequest.created_ts.asc())
+        .all()
+    )
+    assert len(requests) == 2
+    new_request = requests[-1]
+    assert new_request.execution_id != first_exec_id
+    assert new_request.state == PENDING_STATE
+    assert new_request.scheduled is False
+    assert new_request.job_type == "topology_discovery"
+    assert new_request.json_job == '{"k": "v"}'
+
+    # The original FAILED execution is preserved, untouched.
+    still_failed = session.query(TrendzTaskExecution).filter_by(id=first_exec_id).one()
+    assert still_failed.status == "FAILED"
+
+    # The new request IS claimable: claim_task selects it and creates a new
+    # execution for the new execution_id (NOT EXISTS now satisfied).
+    with patch.object(svc, "_get_session_and_repo") as get_session:
+        get_session.return_value.__enter__.return_value = (session, TrendzTaskRepository(session))
+        claimed = svc.claim_task(worker_id="worker-2")
+    assert claimed is not None
+    assert claimed.execution_id == new_request.execution_id
+    assert claimed.task_id == task_id
+
+    # After claiming, the new request is also excluded (its execution now exists).
+    with patch.object(svc, "_get_session_and_repo") as get_session:
+        get_session.return_value.__enter__.return_value = (session, TrendzTaskRepository(session))
+        claimed_again = svc.claim_task(worker_id="worker-3")
+    assert claimed_again is None
+
+
+@pytest.mark.unit
+def test_retry_leaves_original_request_untouched():
+    """The previous execution request must NOT be deleted or mutated."""
+
+    from trendx.database.models import (
+        TrendzTask,
+        TrendzTaskExecutionRequest,
+    )
+    from trendx.database.repositories import TrendzTaskRepository
+
+    session = _in_memory_catalog_session()
+    task_id = uuid.uuid4()
+    tenant = uuid.uuid4()
+    customer = uuid.uuid4()
+    user = uuid.uuid4()
+    first_exec_id = uuid.uuid4()
+    task = TrendzTask(
+        id=task_id,
+        tenant_id=tenant,
+        customer_id=customer,
+        user_id=user,
+        created_ts=1,
+        updated_ts=1,
+        name="retryable",
+        enabled=False,
+        reference_type="MANUAL",
+        reference_key="rk",
+        job_type="topology_discovery",
+        json_job='{"k": "v"}',
+        schedule_type="NOT_SCHEDULED",
+        schedule_period_ts=0,
+        schedule_planned_ts=0,
+        schedule_scheduling_unit="",
+        schedule_scheduling_unit_count=0,
+        schedule_scheduling_time_zone="UTC",
+        ttl_enabled=False,
+        ttl_duration=0,
+        store_execution_enabled=False,
+        store_execution_count=0,
+        json_configs="{}",
+    )
+    original_request = TrendzTaskExecutionRequest(
+        task_id=task_id,
+        execution_id=first_exec_id,
+        tenant_id=tenant,
+        customer_id=customer,
+        user_id=user,
+        scheduled=False,
+        job_type="topology_discovery",
+        json_job='{"k": "v"}',
+        created_ts=1,
+        state=PENDING_STATE,
+    )
+    session.add_all([task, original_request])
+    session.commit()
+
+    svc = TaskService()
+    with patch.object(svc, "_get_session_and_repo") as get_session:
+        get_session.return_value.__enter__.return_value = (session, TrendzTaskRepository(session))
+        svc.retry_task(str(task_id))
+
+    remaining = session.query(TrendzTaskExecutionRequest).filter_by(task_id=task_id).all()
+    assert len(remaining) == 2
+    original = next(r for r in remaining if r.execution_id == first_exec_id)
+    assert original.state == PENDING_STATE  # unchanged (NOT deleted/mutated)
+
+
+@pytest.mark.unit
+def test_retry_then_claim_full_lifecycle_failed_to_running():
+    """End-to-end chain: FAILED -> retry -> PENDING request -> claim -> CREATED
+    execution (WORKING state record), with the original FAILED execution kept."""
+    from trendx.database.models import (
+        TrendzTask,
+        TrendzTaskExecution,
+        TrendzTaskExecutionRequest,
+        TrendzTaskExecutionStateRecord,
+    )
+    from trendx.database.repositories import TrendzTaskRepository
+    from trendx.services.tasks import EXECUTION_STATUS_CREATED, STATE_RECORD_WORKING
+
+    session = _in_memory_catalog_session()
+    task_id = uuid.uuid4()
+    tenant = uuid.uuid4()
+    customer = uuid.uuid4()
+    user = uuid.uuid4()
+    first_exec_id = uuid.uuid4()
+    task = TrendzTask(
+        id=task_id,
+        tenant_id=tenant,
+        customer_id=customer,
+        user_id=user,
+        created_ts=1,
+        updated_ts=1,
+        name="retryable",
+        enabled=False,
+        reference_type="MANUAL",
+        reference_key="rk",
+        job_type="topology_discovery",
+        json_job='{"k": "v"}',
+        schedule_type="NOT_SCHEDULED",
+        schedule_period_ts=0,
+        schedule_planned_ts=0,
+        schedule_scheduling_unit="",
+        schedule_scheduling_unit_count=0,
+        schedule_scheduling_time_zone="UTC",
+        ttl_enabled=False,
+        ttl_duration=0,
+        store_execution_enabled=False,
+        store_execution_count=0,
+        json_configs="{}",
+    )
+    first_request = TrendzTaskExecutionRequest(
+        task_id=task_id,
+        execution_id=first_exec_id,
+        tenant_id=tenant,
+        customer_id=customer,
+        user_id=user,
+        scheduled=False,
+        job_type="topology_discovery",
+        json_job='{"k": "v"}',
+        created_ts=1,
+        state=PENDING_STATE,
+    )
+    failed_execution = TrendzTaskExecution(
+        id=first_exec_id,
+        task_id=task_id,
+        tenant_id=tenant,
+        customer_id=customer,
+        user_id=user,
+        status="FAILED",
+        created_ts=1,
+        start_ts=1,
+        finish_ts=2,
+        duration=1,
+        json_progress_content="{}",
+        job_type="topology_discovery",
+        json_job='{"k": "v"}',
+        json_result='{"error": "boom"}',
+    )
+    session.add_all([task, first_request, failed_execution])
+    session.commit()
+
+    svc = TaskService()
+    with patch.object(svc, "_get_session_and_repo") as get_session:
+        get_session.return_value.__enter__.return_value = (session, TrendzTaskRepository(session))
+
+        # retry re-queues a fresh PENDING request with a new execution_id
+        svc.retry_task(str(task_id))
+
+        # claim picks up the new request and creates a CREATED execution
+        claimed = svc.claim_task(worker_id="worker-1")
+
+    assert claimed is not None
+    new_exec = session.get(TrendzTaskExecution, claimed.execution_id)
+    assert new_exec is not None
+    assert new_exec.status == EXECUTION_STATUS_CREATED
+    state_record = (
+        session.query(TrendzTaskExecutionStateRecord)
+        .filter_by(execution_id=claimed.execution_id)
+        .one()
+    )
+    assert state_record.state == STATE_RECORD_WORKING
+
+    # original FAILED execution is preserved in history
+    still_failed = session.get(TrendzTaskExecution, first_exec_id)
+    assert still_failed is not None
+    assert still_failed.status == "FAILED"
+
+    # after claiming, the new request is excluded (its execution now exists)
+    with patch.object(svc, "_get_session_and_repo") as get_session:
+        get_session.return_value.__enter__.return_value = (session, TrendzTaskRepository(session))
+        assert svc.claim_task(worker_id="worker-2") is None
 
 
 # ── create_task → populates trendz_task_execution_request (PENDING, scheduled=False) ──
