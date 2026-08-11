@@ -87,9 +87,6 @@ def test_segment_anomalies(scorer):
 
 
 @pytest.mark.unit
-@pytest.mark.xfail(
-    reason="hysteresis label reset / cooldown episode merge calculation — attend le future commit sur feat/detector-scoring-and-forecasting-fixes"
-)
 def test_apply_hysteresis(scorer):
     scores = np.array([0.1, 0.2, 0.7, 0.6, 0.4, 0.2, 0.8, 0.3, 0.1], dtype=np.float64)
     labels = scorer.apply_hysteresis(scores, open_threshold=0.6, close_threshold=0.3)
@@ -131,10 +128,29 @@ def test_apply_min_duration(scorer):
 
 
 @pytest.mark.unit
-@pytest.mark.xfail(
-    reason="hysteresis label reset / cooldown episode merge calculation — attend le future commit sur feat/detector-scoring-and-forecasting-fixes"
-)
 def test_apply_cooldown(scorer):
+    scores = np.array(
+        [0.8, 0.7, 0.9, 0.6, 0.8, 0.7, 0.9, 0.85, 0.6, 0.7, 0.8, 0.9, 0.75],
+        dtype=np.float64,
+    )
+    timestamps = np.array(
+        [
+            "2024-01-01T00:00",
+            "2024-01-01T00:15",
+            "2024-01-01T00:30",
+            "2024-01-01T00:45",
+            "2024-01-01T01:00",
+            "2024-01-01T01:30",
+            "2024-01-01T01:45",
+            "2024-01-01T02:00",
+            "2024-01-01T02:15",
+            "2024-01-01T02:30",
+            "2024-01-01T02:45",
+            "2024-01-01T03:00",
+            "2024-01-01T03:15",
+        ],
+        dtype="datetime64",
+    )
     ep1 = AnomalyEpisode(
         start=np.datetime64("2024-01-01T00:00").astype(object),
         end=np.datetime64("2024-01-01T01:00").astype(object),
@@ -157,7 +173,12 @@ def test_apply_cooldown(scorer):
         points_count=8,
         indices=[5, 6, 7, 8, 9, 10, 11, 12],
     )
-    merged = scorer.apply_cooldown([ep1, ep2], cooldown_duration=7200.0)
+    merged = scorer.apply_cooldown(
+        [ep1, ep2],
+        cooldown_duration=7200.0,
+        scores=scores,
+        timestamps=timestamps,
+    )
     assert len(merged) == 1
 
 

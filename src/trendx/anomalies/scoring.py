@@ -200,7 +200,9 @@ class AnomalyScorer:
             if in_anomaly:
                 if scores[i] < close_threshold:
                     in_anomaly = False
-                labels[i] = 1
+                    labels[i] = 0
+                else:
+                    labels[i] = 1
             else:
                 if scores[i] > open_threshold:
                     in_anomaly = True
@@ -324,6 +326,8 @@ class AnomalyScorer:
     def apply_cooldown(
         episodes: list[AnomalyEpisode],
         cooldown_duration: float,
+        scores: npt.NDArray[np.float64],
+        timestamps: npt.NDArray[np.datetime64],
     ) -> list[AnomalyEpisode]:
         """Merge episodes separated by less than ``cooldown_duration`` seconds.
 
@@ -333,6 +337,12 @@ class AnomalyScorer:
             Already-filtered episodes.
         cooldown_duration : float
             Minimum gap (seconds) between distinct episodes.
+        scores : ndarray of float
+            Original detector scores, indexed by ``episode.indices``. Required
+            to recompute the merged episode's real peak/mean/asi.
+        timestamps : ndarray of datetime64
+            Original timestamps, indexed by ``episode.indices``. Required to
+            recompute the merged episode's real start/end/duration.
 
         Returns
         -------
@@ -348,9 +358,7 @@ class AnomalyScorer:
                 prev = merged[-1]
                 merged_indices = prev.indices + ep.indices
                 merged_ep = AnomalyScorer._build_episode(
-                    merged_indices,
-                    np.array([prev.mean_score, ep.mean_score]),
-                    np.array([prev.start, ep.end], dtype="datetime64"),
+                    merged_indices, scores, timestamps,
                 )
                 merged[-1] = merged_ep
             else:
