@@ -102,7 +102,9 @@ try:
     from apscheduler.triggers.interval import IntervalTrigger
 
     HAS_APSCHEDULER = True
-except ImportError:  # pragma: no cover - dépendance ajoutée au Dockerfile.worker
+except (
+    ImportError
+):  # pragma: no cover - dépendance runtime déclarée dans pyproject.toml (APScheduler)
     HAS_APSCHEDULER = False
     logger.error("APScheduler non installé — maintenance partitions/agrégats DÉSACTIVÉE")
 
@@ -242,10 +244,11 @@ except Exception as exc:
     if isinstance(exc, RuntimeError) and "tmpfs" in str(exc):
         raise
 
-try:
-    while True:
-        time.sleep(3600)
-except KeyboardInterrupt:
-    if _scheduler is not None:
-        _scheduler.shutdown(wait=False)
-    logger.info("trendx-worker stopped by signal")
+if __name__ == "__main__":
+    try:
+        while True:
+            time.sleep(3600)
+    except KeyboardInterrupt:
+        if _scheduler is not None:
+            _scheduler.shutdown(wait=False)
+        logger.info("trendx-worker stopped by signal")

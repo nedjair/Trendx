@@ -24,6 +24,7 @@ dependencies = [
   "starlette>=0.36,<0.37",
   "sqlalchemy>=2.0,<2.1",
   "alembic>=1.13,<1.14",
+  "apscheduler>=3.10,<3.11",
   "psycopg2-binary>=2.9,<2.10",
   "redis>=5.0,<5.1",
   "celery>=5.3,<5.4",
