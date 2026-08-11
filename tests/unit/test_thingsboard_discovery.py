@@ -142,8 +142,6 @@ async def test_discover_devices(service):
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_discover_relations(service):
-    d1 = _fake_device(eid="dev-a")
-    d2 = _fake_device(eid="dev-b")
     service._catalog.devices["dev-a"] = service._catalog.devices.get("dev-a") or Mock()
     service._catalog.devices["dev-a"].entity_id = "dev-a"
     service._catalog.devices["dev-b"] = service._catalog.devices.get("dev-b") or Mock()
@@ -170,7 +168,6 @@ async def test_validate_topology(service):
 
     assert any("empty" in i.lower() for i in issues)
 
-    d1 = _fake_device(name="good-device", eid="dev-ok")
     service._catalog.devices["dev-ok"] = service._catalog.devices.get("dev-ok") or Mock()
     service._catalog.devices["dev-ok"].name = "good-device"
     service._catalog.device_profiles.append(DeviceProfile(name="prof", type="DEFAULT"))
