@@ -292,8 +292,8 @@ class AnomalyScorer:
         ep_scores = scores[indices]
         ep_times = timestamps[indices]
 
-        start_ts = ep_times[0].astype(datetime)
-        end_ts = ep_times[-1].astype(datetime)
+        start_ts = datetime.utcfromtimestamp(np.datetime64(ep_times[0], "s").astype(np.int64))
+        end_ts = datetime.utcfromtimestamp(np.datetime64(ep_times[-1], "s").astype(np.int64))
         duration = (end_ts - start_ts).total_seconds()
         peak = float(np.max(ep_scores))
         mean = float(np.mean(ep_scores))
