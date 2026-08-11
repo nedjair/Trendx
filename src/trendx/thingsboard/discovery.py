@@ -3,12 +3,17 @@ from __future__ import annotations
 import asyncio
 import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
 from loguru import logger
+from sqlalchemy import JSON, DateTime, Integer, String, Text
+from sqlalchemy.orm import Mapped, mapped_column
 from trendx.config import settings
+from trendx.database.connection import manager as db_manager
+from trendx.database.models import Base
 from trendx.thingsboard.client import (
     Asset,
     Device,
@@ -43,13 +48,61 @@ class Catalog:
     sync_count: int = 0
 
 
+# --- Topology persistence models (schema: trendx_catalog, see migration 007) ---
+class TopologyEntity(Base):
+    __tablename__ = "topology_entities"
+    # __table_args__ is a SQLAlchemy class-level configuration mapping, not a
+    # per-instance mutable default; ClassVar is rejected by mypy because
+    # DeclarativeBase declares it as an instance attribute.
+    __table_args__ = {"schema": "trendx_catalog"}  # noqa: RUF012
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    entity_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    entity_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    label: Mapped[str] = mapped_column(String(255), default="")
+    entity_data: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    attributes: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    telemetry_keys: Mapped[list[str] | None] = mapped_column(JSON)
+    first_seen: Mapped[datetime | None] = mapped_column(DateTime)
+    last_seen: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class TopologyRelation(Base):
+    __tablename__ = "topology_relations"
+    # __table_args__ is a SQLAlchemy class-level configuration mapping, not a
+    # per-instance mutable default; ClassVar is rejected by mypy because
+    # DeclarativeBase declares it as an instance attribute.
+    __table_args__ = {"schema": "trendx_catalog"}  # noqa: RUF012
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    from_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    from_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    to_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    to_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    relation_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    relation_data: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+
+
+class SyncMetadata(Base):
+    __tablename__ = "sync_metadata"
+    # __table_args__ is a SQLAlchemy class-level configuration mapping, not a
+    # per-instance mutable default; ClassVar is rejected by mypy because
+    # DeclarativeBase declares it as an instance attribute.
+    __table_args__ = {"schema": "trendx_catalog"}  # noqa: RUF012
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    sync_key: Mapped[str] = mapped_column(String(128), unique=True, nullable=False)
+    sync_value: Mapped[str] = mapped_column(Text, default="")
+
+
 @dataclass
 class InclusionRules:
     tenant_ids: set[str] = field(default_factory=set)
     customer_ids: set[str] = field(default_factory=set)
     profile_names: set[str] = field(default_factory=set)
-    device_name_patterns: list[re.Pattern] = field(default_factory=list)
-    asset_name_patterns: list[re.Pattern] = field(default_factory=list)
+    device_name_patterns: list[re.Pattern[Any]] = field(default_factory=list)
+    asset_name_patterns: list[re.Pattern[Any]] = field(default_factory=list)
 
     def include_device(self, device: Device) -> bool:
         if self.tenant_ids and device.tenantId and device.tenantId.id not in self.tenant_ids:
@@ -121,7 +174,9 @@ class TopologyDiscoveryService:
     def catalog(self) -> Catalog:
         return self._catalog
 
-    async def _paginate(self, fetch_page, *args, **kwargs) -> list[Any]:
+    async def _paginate(
+        self, fetch_page: Callable[..., Any], *args: Any, **kwargs: Any
+    ) -> list[Any]:
         items: list[Any] = []
         page = 0
         while True:
@@ -375,54 +430,21 @@ class TopologyDiscoveryService:
         # Persistence failures are NOT swallowed: they propagate to the caller
         # (e.g. the worker execution loop), which decides how to handle them
         # (typically marking the task FAILED rather than FINISHED).
-        from sqlalchemy import JSON, Column, DateTime, Integer, String, Text, create_engine
-        from sqlalchemy.orm import declarative_base, sessionmaker
-
-        dsn = settings.catalog_dsn_app()
-        engine = create_engine(dsn)
-        Base = declarative_base()  # noqa: N806
-
-        class TopologyEntity(Base):
-            __tablename__ = "topology_entities"
-            id = Column(Integer, primary_key=True, autoincrement=True)
-            entity_type = Column(String(32), nullable=False)
-            entity_id = Column(String(64), nullable=False, index=True)
-            name = Column(String(255), nullable=False)
-            label = Column(String(255), default="")
-            entity_data = Column(JSON)
-            attributes = Column(JSON)
-            telemetry_keys = Column(JSON)
-            first_seen = Column(DateTime, default=datetime.utcnow)
-            last_seen = Column(DateTime, default=datetime.utcnow)
-
-        class TopologyRelation(Base):
-            __tablename__ = "topology_relations"
-            id = Column(Integer, primary_key=True, autoincrement=True)
-            from_type = Column(String(32), nullable=False)
-            from_id = Column(String(64), nullable=False)
-            to_type = Column(String(32), nullable=False)
-            to_id = Column(String(64), nullable=False)
-            relation_type = Column(String(64), nullable=False)
-            relation_data = Column(JSON)
-
-        class SyncMetadata(Base):
-            __tablename__ = "sync_metadata"
-            id = Column(Integer, primary_key=True, autoincrement=True)
-            sync_key = Column(String(128), unique=True, nullable=False)
-            sync_value = Column(Text, default="")
-
-        Base.metadata.create_all(engine)
-        Session = sessionmaker(bind=engine)  # noqa: N806
-        session = Session()
-
-        try:
+        # Persistence now routes through the configured Catalog engine
+        # (db_manager "catalog" -> search_path=trendx_catalog,public). The tables
+        # are created by migration 007, never at runtime, so there is no
+        # create_all(). Transaction/rollback semantics are preserved by the
+        # db_manager context manager: any failure rolls back and propagates to
+        # the caller (the worker marks the task FAILED). No CREATE grant is
+        # required on trendx_app, and the public schema is never used.
+        with db_manager.get_session("catalog") as session:
             session.query(TopologyEntity).delete()
             session.query(TopologyRelation).delete()
             now = datetime.utcnow()
             for entry in self._catalog.devices.values():
                 session.add(
                     TopologyEntity(
-                        entity_type="DEVICE",
+                        entity_type=entry.entity_type,
                         entity_id=entry.entity_id,
                         name=entry.name,
                         label=entry.label,
@@ -438,7 +460,7 @@ class TopologyDiscoveryService:
             for entry in self._catalog.assets.values():
                 session.add(
                     TopologyEntity(
-                        entity_type="ASSET",
+                        entity_type=entry.entity_type,
                         entity_id=entry.entity_id,
                         name=entry.name,
                         label=entry.label,
@@ -462,8 +484,13 @@ class TopologyDiscoveryService:
                         relation_data=rel.additionalInfo or {},
                     )
                 )
-            meta = SyncMetadata(sync_key="last_sync_ts", sync_value=str(self._catalog.last_sync_ts))
-            session.merge(meta)
+            # Idempotent upsert of the sync marker keyed by sync_key
+            # (merge() would re-INSERT without a PK and violate the UNIQUE).
+            sync_meta = session.query(SyncMetadata).filter_by(sync_key="last_sync_ts").first()
+            if sync_meta is None:
+                sync_meta = SyncMetadata(sync_key="last_sync_ts")
+            sync_meta.sync_value = str(self._catalog.last_sync_ts)
+            session.add(sync_meta)
             session.commit()
             logger.info(
                 "Catalog persisted to database ({devices} devices, {assets} assets, {relations} relations)",
@@ -471,12 +498,6 @@ class TopologyDiscoveryService:
                 assets=len(self._catalog.assets),
                 relations=len(self._catalog.relations),
             )
-        except Exception:
-            session.rollback()
-            raise
-        finally:
-            session.close()
-            engine.dispose()
 
     async def close(self) -> None:
         logger.info(
