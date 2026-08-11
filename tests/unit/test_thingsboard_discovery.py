@@ -5,7 +5,15 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from faker import Faker
-from trendx.thingsboard.client import Asset, Device, DeviceProfile, EntityId, PageData, Relation
+from trendx.thingsboard.client import (
+    Asset,
+    AttributeEntry,
+    Device,
+    DeviceProfile,
+    EntityId,
+    PageData,
+    Relation,
+)
 from trendx.thingsboard.discovery import InclusionRules, TopologyDiscoveryService
 
 fake = Faker()
@@ -137,6 +145,34 @@ async def test_discover_devices(service):
     assert len(devices) == 2
     assert devices[0].name == "alpha"
     assert d1.id.id in service.catalog.devices
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_discover_attributes_keeps_scalar_scope_without_dropping_others(service):
+    """A scope returning bare JSON scalars (which used to raise and drop the
+    whole scope) must now be conserved; other scopes/entities are unaffected."""
+    scalar_attrs = [
+        AttributeEntry(key="message", value="hello"),
+        AttributeEntry(key="count", value=3),
+    ]
+    wrapper_attrs = [
+        AttributeEntry(key="temperature", value=25, lastUpdateTs=123456789),
+    ]
+    service._client.get_attributes = AsyncMock(
+        side_effect=[
+            scalar_attrs,  # SERVER_SCOPE
+            wrapper_attrs,  # SHARED_SCOPE
+            [],  # CLIENT_SCOPE
+        ]
+    )
+
+    attrs = await service.discover_attributes("DEVICE", "dev-1")
+
+    assert attrs.get("message") == "hello"
+    assert attrs.get("count") == 3
+    assert attrs.get("temperature") == 25
+    assert len(attrs) == 3
 
 
 @pytest.mark.unit

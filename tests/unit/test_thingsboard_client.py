@@ -14,7 +14,6 @@ from trendx.thingsboard.client import (
     PageData,
     ThingsBoardAuthError,
     ThingsBoardClient,
-    ThingsBoardError,
     ThingsBoardWriteDisabledError,
     TimeseriesEntry,
 )
@@ -345,16 +344,117 @@ async def test_get_attributes_parses_tb_object_payload(mock_client):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
-async def test_get_attributes_handles_unexpected_scalar_gracefully(mock_client):
-    """A non-dict/non-object value must raise a clear error, not a cryptic one."""
-    attr_data = {"message": "plain-string-instead-of-object"}
+async def test_get_attributes_keeps_raw_string_value(mock_client):
+    """TB may return a bare JSON scalar (str) instead of the {value,lastUpdateTs}
+    wrapper. The value must be conserved as-is, not rejected (Wave 0/1 defect:
+    a scalar used to raise and drop the whole scope)."""
+    attr_data = {"message": "hello"}
     mock_resp = Mock(spec=httpx.Response)
     mock_resp.status_code = 200
     mock_resp.json.return_value = attr_data
 
     with patch.object(mock_client._http_client, "request", new=AsyncMock(return_value=mock_resp)):
-        with pytest.raises(ThingsBoardError):
-            await mock_client.get_attributes("DEVICE", "dev-1", scope="SERVER_SCOPE")
+        result = await mock_client.get_attributes("DEVICE", "dev-1", scope="SERVER_SCOPE")
+
+    assert len(result) == 1
+    assert isinstance(result[0], AttributeEntry)
+    assert result[0].key == "message"
+    assert result[0].value == "hello"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_get_attributes_keeps_raw_scalar_values(mock_client):
+    """str/int/float/bool scalars are all conserved individually."""
+    attr_data = {
+        "s": "hello",
+        "i": 42,
+        "f": 3.14,
+        "b": True,
+    }
+    mock_resp = Mock(spec=httpx.Response)
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = attr_data
+
+    with patch.object(mock_client._http_client, "request", new=AsyncMock(return_value=mock_resp)):
+        result = await mock_client.get_attributes("DEVICE", "dev-1", scope="SERVER_SCOPE")
+
+    by_key = {e.key: e for e in result}
+    assert set(by_key) == {"s", "i", "f", "b"}
+    assert by_key["s"].value == "hello"
+    assert by_key["i"].value == 42
+    assert by_key["f"].value == 3.14
+    assert by_key["b"].value is True
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_get_attributes_keeps_raw_json_object(mock_client):
+    """A JSON object that is NOT a {value,lastUpdateTs} wrapper is conserved
+    as-is (valid, unambiguously representable JSON — do not invent a meaning)."""
+    attr_data = {"config": {"a": 1, "b": [1, 2, 3]}}
+    mock_resp = Mock(spec=httpx.Response)
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = attr_data
+
+    with patch.object(mock_client._http_client, "request", new=AsyncMock(return_value=mock_resp)):
+        result = await mock_client.get_attributes("DEVICE", "dev-1", scope="SERVER_SCOPE")
+
+    assert len(result) == 1
+    assert result[0].key == "config"
+    assert result[0].value == {"a": 1, "b": [1, 2, 3]}
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_get_attributes_skips_null_value(mock_client):
+    """An explicit null carries no information; skip it rather than persist None."""
+    attr_data = {"empty": None, "real": "kept"}
+    mock_resp = Mock(spec=httpx.Response)
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = attr_data
+
+    with patch.object(mock_client._http_client, "request", new=AsyncMock(return_value=mock_resp)):
+        result = await mock_client.get_attributes("DEVICE", "dev-1", scope="SERVER_SCOPE")
+
+    assert [e.key for e in result] == ["real"]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_get_attributes_mixed_wrapper_and_scalar(mock_client):
+    """A scope mixing a TB-wrapper entry and a bare scalar must keep BOTH
+    (no silent loss of the other entry)."""
+    attr_data = {
+        "temperature": {"value": 25, "lastUpdateTs": 123456789},
+        "message": "hello",
+    }
+    mock_resp = Mock(spec=httpx.Response)
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = attr_data
+
+    with patch.object(mock_client._http_client, "request", new=AsyncMock(return_value=mock_resp)):
+        result = await mock_client.get_attributes("DEVICE", "dev-1", scope="SERVER_SCOPE")
+
+    by_key = {e.key: e for e in result}
+    assert set(by_key) == {"temperature", "message"}
+    assert by_key["temperature"].value == 25
+    assert by_key["temperature"].lastUpdateTs == 123456789
+    assert by_key["message"].value == "hello"
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_get_attributes_empty_scope(mock_client):
+    """An empty scope yields no entries (no error)."""
+    mock_resp = Mock(spec=httpx.Response)
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = {}
+
+    with patch.object(mock_client._http_client, "request", new=AsyncMock(return_value=mock_resp)):
+        result = await mock_client.get_attributes("DEVICE", "dev-1", scope="SERVER_SCOPE")
+
+    assert result == []
 
 
 @pytest.mark.unit

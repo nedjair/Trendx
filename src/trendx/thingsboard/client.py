@@ -479,27 +479,36 @@ class ThingsBoardClient:
                 if isinstance(value, AttributeEntry):
                     entries.append(value)
                 elif isinstance(value, dict):
-                    entry = dict(value)
-                    entry.setdefault("key", key)
-                    entries.append(AttributeEntry.model_validate(entry))
+                    if "value" in value:
+                        # ThingsBoard {value, lastUpdateTs} wrapper.
+                        entry = dict(value)
+                        entry.setdefault("key", key)
+                        entries.append(AttributeEntry.model_validate(entry))
+                    else:
+                        # A JSON object that is not a TB wrapper: conserve the
+                        # whole object as-is (valid, representable JSON).
+                        entries.append(AttributeEntry(key=key, value=value))
+                elif value is None:
+                    # TB returned an explicit null for this key: no information
+                    # to persist, so skip it rather than invent a value.
+                    continue
                 else:
-                    raise ThingsBoardError(
-                        0,
-                        f"Unexpected attribute value type from ThingsBoard: "
-                        f"{type(value).__name__} (expected object or dict)",
-                    )
+                    # ThingsBoard may return a bare JSON scalar (str/int/float/
+                    # bool) or a JSON object that is not the {value,lastUpdateTs}
+                    # wrapper. Both are valid, unambiguously representable JSON,
+                    # so conserve the value as-is. lastUpdateTs is left at its
+                    # model default (0) because TB supplied no timestamp.
+                    entries.append(AttributeEntry(key=key, value=value))
         elif isinstance(data, list):
             for item in data:
                 if isinstance(item, AttributeEntry):
                     entries.append(item)
                 elif isinstance(item, dict):
                     entries.append(AttributeEntry.model_validate(item))
+                elif item is None:
+                    continue
                 else:
-                    raise ThingsBoardError(
-                        0,
-                        f"Unexpected attribute entry type from ThingsBoard: "
-                        f"{type(item).__name__} (expected object or dict)",
-                    )
+                    entries.append(AttributeEntry.model_validate({"value": item}))
         return entries
 
     async def get_timeseries_keys(self, entity_type: str, entity_id: str) -> list[str]:
