@@ -467,7 +467,40 @@ class ThingsBoardClient:
         data = await self._get(
             f"/api/plugins/telemetry/{entity_type}/{entity_id}/attributes/{scope}",
         )
-        return [AttributeEntry.model_validate(item) for item in data]
+        # ThingsBoard returns an object keyed by attribute name:
+        #   {"message": {"value": "...", "lastUpdateTs": 123}, ...}
+        # The dict key IS the attribute name; the value object carries
+        # value/lastUpdateTs but NOT the key itself. Merge the key in so
+        # AttributeEntry validates. Guard unexpected shapes so a bad payload
+        # yields a clear error instead of a cryptic one.
+        entries: list[AttributeEntry] = []
+        if isinstance(data, dict):
+            for key, value in data.items():
+                if isinstance(value, AttributeEntry):
+                    entries.append(value)
+                elif isinstance(value, dict):
+                    entry = dict(value)
+                    entry.setdefault("key", key)
+                    entries.append(AttributeEntry.model_validate(entry))
+                else:
+                    raise ThingsBoardError(
+                        0,
+                        f"Unexpected attribute value type from ThingsBoard: "
+                        f"{type(value).__name__} (expected object or dict)",
+                    )
+        elif isinstance(data, list):
+            for item in data:
+                if isinstance(item, AttributeEntry):
+                    entries.append(item)
+                elif isinstance(item, dict):
+                    entries.append(AttributeEntry.model_validate(item))
+                else:
+                    raise ThingsBoardError(
+                        0,
+                        f"Unexpected attribute entry type from ThingsBoard: "
+                        f"{type(item).__name__} (expected object or dict)",
+                    )
+        return entries
 
     async def get_timeseries_keys(self, entity_type: str, entity_id: str) -> list[str]:
         data = await self._get(

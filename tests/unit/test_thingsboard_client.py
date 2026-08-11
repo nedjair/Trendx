@@ -8,11 +8,13 @@ import pytest
 from faker import Faker
 from trendx.thingsboard.client import (
     Asset,
+    AttributeEntry,
     Device,
     LoginResponse,
     PageData,
     ThingsBoardAuthError,
     ThingsBoardClient,
+    ThingsBoardError,
     ThingsBoardWriteDisabledError,
     TimeseriesEntry,
 )
@@ -309,3 +311,66 @@ async def test_whitelist_blocks_put(mock_client):
 async def test_whitelist_blocks_delete(mock_client):
     with pytest.raises(ThingsBoardWriteDisabledError, match="Whitelist violation"):
         await mock_client._request("DELETE", "/api/device/dev-id")
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_get_attributes_parses_tb_object_payload(mock_client):
+    """TB returns an object keyed by attribute name; iterate over values().
+
+    Regression guard for the attribute-mapping defect (run failed with
+    'Input should be a valid dictionary or instance of AttributeEntry,
+    input_value='message'' because code iterated over the dict keys).
+    """
+    attr_data = {
+        "message": {"value": "hello", "lastUpdateTs": 123},
+        "foo": {"value": "bar", "lastUpdateTs": 456},
+    }
+    mock_resp = Mock(spec=httpx.Response)
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = attr_data
+
+    with patch.object(mock_client._http_client, "request", new=AsyncMock(return_value=mock_resp)):
+        result = await mock_client.get_attributes("DEVICE", "dev-1", scope="SERVER_SCOPE")
+
+    assert len(result) == 2
+    assert all(isinstance(e, AttributeEntry) for e in result)
+    # TB object payload: the key is the dict key, injected into each entry.
+    assert {e.key for e in result} == {"message", "foo"}
+    by_key = {e.key: e for e in result}
+    assert by_key["message"].value == "hello"
+    assert by_key["message"].lastUpdateTs == 123
+    assert by_key["foo"].lastUpdateTs == 456
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_get_attributes_handles_unexpected_scalar_gracefully(mock_client):
+    """A non-dict/non-object value must raise a clear error, not a cryptic one."""
+    attr_data = {"message": "plain-string-instead-of-object"}
+    mock_resp = Mock(spec=httpx.Response)
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = attr_data
+
+    with patch.object(mock_client._http_client, "request", new=AsyncMock(return_value=mock_resp)):
+        with pytest.raises(ThingsBoardError):
+            await mock_client.get_attributes("DEVICE", "dev-1", scope="SERVER_SCOPE")
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_get_attributes_handles_list_payload(mock_client):
+    """A list-shaped response (unexpected but tolerated) is validated per item."""
+    attr_data = [
+        {"key": "message", "value": "hello", "lastUpdateTs": 123},
+        {"key": "foo", "value": "bar", "lastUpdateTs": 456},
+    ]
+    mock_resp = Mock(spec=httpx.Response)
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = attr_data
+
+    with patch.object(mock_client._http_client, "request", new=AsyncMock(return_value=mock_resp)):
+        result = await mock_client.get_attributes("DEVICE", "dev-1", scope="SERVER_SCOPE")
+
+    assert len(result) == 2
+    assert {e.key for e in result} == {"message", "foo"}
