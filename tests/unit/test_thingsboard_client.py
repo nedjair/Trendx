@@ -1,21 +1,18 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, Mock, PropertyMock, patch
+from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 import pytest
 from faker import Faker
-
 from trendx.thingsboard.client import (
+    Asset,
     Device,
-    EntityId,
     LoginResponse,
     PageData,
     ThingsBoardAuthError,
     ThingsBoardClient,
-    ThingsBoardError,
-    ThingsBoardRateLimitError,
     ThingsBoardWriteDisabledError,
     TimeseriesEntry,
 )
@@ -37,7 +34,7 @@ def mock_client():
     )
     client._token = "test_token"
     client._refresh_token = "test_refresh"
-    client._token_expiry = datetime.now(timezone.utc) + timedelta(hours=1)
+    client._token_expiry = datetime.now(UTC) + timedelta(hours=1)
     return client
 
 
@@ -75,7 +72,7 @@ async def test_login_failure(mock_client):
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_token_renewal(mock_client):
-    mock_client._token_expiry = datetime.now(timezone.utc) - timedelta(minutes=5)
+    mock_client._token_expiry = datetime.now(UTC) - timedelta(minutes=5)
     mock_client._token = None
 
     login_data = LoginResponse(token="new_jwt", refreshToken="new_refresh")
@@ -85,16 +82,65 @@ async def test_token_renewal(mock_client):
 
     mock_data_resp = Mock(spec=httpx.Response)
     mock_data_resp.status_code = 200
-    mock_data_resp.json.return_value = {"data": [], "totalPages": 0, "totalElements": 0, "hasNext": False}
+    mock_data_resp.json.return_value = {
+        "data": [],
+        "totalPages": 0,
+        "totalElements": 0,
+        "hasNext": False,
+    }
 
     with (
         patch.object(mock_client._http_client, "post", new=AsyncMock(return_value=mock_login_resp)),
-        patch.object(mock_client._http_client, "request", new=AsyncMock(return_value=mock_data_resp)),
+        patch.object(
+            mock_client._http_client, "request", new=AsyncMock(return_value=mock_data_resp)
+        ),
     ):
         result = await mock_client.get_devices()
 
     assert mock_client._token == "new_jwt"
     assert isinstance(result, PageData)
+
+
+@pytest.mark.unit
+def test_device_label_null_normalized_to_empty_string():
+    """ThingsBoard returns null labels; the internal contract requires str (bug #FAILED+WORKING)."""
+    dev = Device.model_validate(
+        {"id": {"entityType": "DEVICE", "id": fake.uuid4()}, "name": "d1", "label": None}
+    )
+    assert dev.label == ""
+    assert isinstance(dev.label, str)
+
+
+@pytest.mark.unit
+def test_device_label_missing_defaults_to_empty_string():
+    dev = Device.model_validate({"id": {"entityType": "DEVICE", "id": fake.uuid4()}, "name": "d1"})
+    assert dev.label == ""
+
+
+@pytest.mark.unit
+def test_device_label_present_preserved():
+    dev = Device.model_validate(
+        {"id": {"entityType": "DEVICE", "id": fake.uuid4()}, "name": "d1", "label": "sensor-1"}
+    )
+    assert dev.label == "sensor-1"
+
+
+@pytest.mark.unit
+def test_asset_label_null_normalized_to_empty_string():
+    """Asset labels are null in the wild TB data as well."""
+    asset = Asset.model_validate(
+        {"id": {"entityType": "ASSET", "id": fake.uuid4()}, "name": "a1", "label": None}
+    )
+    assert asset.label == ""
+    assert isinstance(asset.label, str)
+
+
+@pytest.mark.unit
+def test_asset_label_present_preserved():
+    asset = Asset.model_validate(
+        {"id": {"entityType": "ASSET", "id": fake.uuid4()}, "name": "a1", "label": "zone-1"}
+    )
+    assert asset.label == "zone-1"
 
 
 @pytest.mark.unit
@@ -164,7 +210,9 @@ async def test_retry_on_401(mock_client):
     login_resp.json.return_value = {"token": "renewed", "refreshToken": "ref"}
 
     with (
-        patch.object(mock_client._http_client, "request", new=AsyncMock(side_effect=[resp_401, resp_200])),
+        patch.object(
+            mock_client._http_client, "request", new=AsyncMock(side_effect=[resp_401, resp_200])
+        ),
         patch.object(mock_client._http_client, "post", new=AsyncMock(return_value=login_resp)),
     ):
         result = await mock_client.get_devices()
@@ -184,7 +232,9 @@ async def test_retry_on_429(mock_client):
     resp_200.status_code = 200
     resp_200.json.return_value = {"data": [], "totalPages": 0, "totalElements": 0, "hasNext": False}
 
-    with patch.object(mock_client._http_client, "request", new=AsyncMock(side_effect=[resp_429, resp_200])):
+    with patch.object(
+        mock_client._http_client, "request", new=AsyncMock(side_effect=[resp_429, resp_200])
+    ):
         result = await mock_client.get_devices()
 
     assert isinstance(result, PageData)
@@ -208,7 +258,12 @@ async def test_context_manager(mock_client):
 async def test_whitelist_allows_get(mock_client):
     mock_resp = Mock(spec=httpx.Response)
     mock_resp.status_code = 200
-    mock_resp.json.return_value = {"data": [], "totalPages": 0, "totalElements": 0, "hasNext": False}
+    mock_resp.json.return_value = {
+        "data": [],
+        "totalPages": 0,
+        "totalElements": 0,
+        "hasNext": False,
+    }
 
     with patch.object(mock_client._http_client, "request", new=AsyncMock(return_value=mock_resp)):
         result = await mock_client.get_devices()
