@@ -20,8 +20,16 @@ def get_watermark(agg: str) -> tuple[Any, Any] | None:
         return (row[0], row[1]) if row else None
 
 
-def verify_aggregate_refresh(agg: str) -> None:
-    before = get_watermark(agg)
+def verify_aggregate_refresh(agg: str, before: tuple[Any, Any] | None) -> None:
+    """Vérifie que le rafraîchissement d'agrégat a fait avancer le filigrane.
+
+    `before` est le filigrane capturé par l'appelant AVANT l'exécution de
+    `refresh_aggregate` ; la fonction relit le filigrane (`after`) APRÈS le
+    refresh et compare les deux. L'ancien code relisait `before` et `after`
+    tous les deux ici, après le refresh, sur la même table : les deux valeurs
+    étaient toujours égales et la garde levait systématiquement « n'a pas
+    progressé » (fausse alerte CRITICAL au 2e cycle).
+    """
     after = get_watermark(agg)
     if before is None or after is None:
         raise RuntimeError(

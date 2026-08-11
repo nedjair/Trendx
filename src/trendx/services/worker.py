@@ -109,6 +109,7 @@ if HAS_APSCHEDULER:
     from trendx.database.connection import get_analytics_engine
     from trendx.services.scheduler_guards import (
         check_source_rows_exist,
+        get_watermark,
         verify_aggregate_refresh,
         verify_aggregate_rows,
     )
@@ -136,10 +137,11 @@ if HAS_APSCHEDULER:
 
     def _job_aggregate(agg: str) -> None:
         try:
+            before = get_watermark(agg)
             result = _call_db_function(
                 "SELECT trendx_analytics.refresh_aggregate(:agg)", {"agg": agg}
             )
-            verify_aggregate_refresh(agg)
+            verify_aggregate_refresh(agg, before)
             verify_aggregate_rows(
                 agg,
                 result.get("rows_upserted", 0),

@@ -110,29 +110,37 @@ def test_engine_connect_rolls_back_aggregate_watermark() -> None:
 
 
 def test_verify_aggregate_refresh_raises_on_stagnant_watermark() -> None:
-    with patch.object(
-        scheduler_guards, "get_watermark", side_effect=lambda agg: ("2020-01-01T00:00:00+00:00", 0)
-    ):
+    # Avant == Après : le refresh n'a pas fait avancer le filigrane.
+    before = ("2020-01-01T00:00:00+00:00", 0)
+    with patch.object(scheduler_guards, "get_watermark", side_effect=lambda agg: before):
         with pytest.raises(RuntimeError, match="n'a pas progressé"):
-            verify_aggregate_refresh(_WATERMARK_ROW["aggregate_name"])
+            verify_aggregate_refresh(_WATERMARK_ROW["aggregate_name"], before)
 
 
 def test_verify_aggregate_refresh_passes_when_advanced() -> None:
+    # Flux réel : l'appelant capture `before` (ancien), le refresh avance le
+    # filigrane, verify relit `after` (plus récent) et ne doit pas lever.
+    before = ("2020-01-01T00:00:00+00:00", 0)
     with patch.object(
-        scheduler_guards,
-        "get_watermark",
-        side_effect=[
-            ("2020-01-01T00:00:00+00:00", 0),
-            ("2026-08-03T09:00:00+00:00", 5),
-        ],
+        scheduler_guards, "get_watermark", return_value=("2026-08-03T09:00:00+00:00", 5)
     ):
-        verify_aggregate_refresh(_WATERMARK_ROW["aggregate_name"])  # ne doit pas lever
+        verify_aggregate_refresh(_WATERMARK_ROW["aggregate_name"], before)  # ne doit pas lever
+
+
+def test_verify_aggregate_refresh_real_flow_before_refresh_advanced() -> None:
+    # Représentation explicite du flux : before (capturé) -> refresh -> after avancé.
+    before = ("2026-08-03T08:00:00+00:00", 0)
+    after = ("2026-08-03T09:00:00+00:00", 5)
+    with patch.object(scheduler_guards, "get_watermark", return_value=after):
+        verify_aggregate_refresh(_WATERMARK_ROW["aggregate_name"], before)
+        # after[0] > before[0] : le refresh a bien progressé
+        assert after[0] > before[0]
 
 
 def test_verify_aggregate_refresh_raises_when_watermark_missing() -> None:
     with patch.object(scheduler_guards, "get_watermark", return_value=None):
         with pytest.raises(RuntimeError, match="filigrane introuvable"):
-            verify_aggregate_refresh(_WATERMARK_ROW["aggregate_name"])
+            verify_aggregate_refresh(_WATERMARK_ROW["aggregate_name"], None)
 
 
 def test_verify_aggregate_rows_raises_when_source_rows_exist() -> None:
