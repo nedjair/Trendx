@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import uuid
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from sqlalchemy.dialects import postgresql
 from trendx.config import settings
-from trendx.services.tasks import TaskService
+from trendx.database.models import TrendzTaskExecutionRequest
+from trendx.services.tasks import PENDING_STATE, TaskService
 
 # ── Issue: trendx_task_execution_request + trendz_task_execution_state_record
 #    Le cycle de vie réel (claim/update/complete/fail) doit passer par ces
@@ -131,35 +134,127 @@ def test_retry_task_not_found(service, mock_session_repo):
     repo.get.assert_called_once_with("task-nonexistent")
 
 
-# ── claim_task — STUB (returns None) ──────────────────────────────────
+# ── create_task → populates trendz_task_execution_request (PENDING, scheduled=False) ──
 
 
 @pytest.mark.unit
-@pytest.mark.xfail(strict=True, reason="claim_task is a stub returning None — " + _STUB_REASON)
+def test_create_task_populates_execution_request(service, mock_session_repo):
+    session, repo, cm = mock_session_repo
+    created_task = MagicMock()
+    created_task.id = uuid.uuid4()
+    repo.create.return_value = created_task
+
+    added: list[Any] = []
+    session.add.side_effect = added.append
+
+    with patch.object(service, "_get_session_and_repo", return_value=cm):
+        task = service.create_task(
+            name="t",
+            job_type="forecast",
+            json_job={"device_id": "dev-001"},
+        )
+
+    assert task is created_task
+    requests = [o for o in added if isinstance(o, TrendzTaskExecutionRequest)]
+    assert len(requests) == 1
+    req = requests[0]
+    assert req.state == PENDING_STATE
+    assert req.state == "PENDING"
+    assert req.scheduled is False
+    assert req.task_id == created_task.id
+    assert req.job_type == "forecast"
+    assert req.tenant_id is not None
+    assert req.customer_id is not None
+    assert req.user_id is not None
+    assert req.execution_id is not None
+
+
+# ── claim_task — REAL implementation (trendz_task_execution_request) ──
+
+
+def _mock_claim_result(session, row):
+    result = MagicMock()
+    result.scalars.return_value.first.return_value = row
+    session.execute.return_value = result
+
+
+@pytest.mark.unit
 def test_claim_task(service, mock_session_repo):
-    _, repo, cm = mock_session_repo
-    pending_task = MagicMock(id="task-1")
-    repo.find_pending.return_value = [pending_task]
-    repo.claim.return_value = pending_task
+    session, _repo, cm = mock_session_repo
+    request_row = TrendzTaskExecutionRequest(
+        task_id=uuid.uuid4(),
+        execution_id=uuid.uuid4(),
+        tenant_id=uuid.uuid4(),
+        customer_id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        scheduled=False,
+        job_type="forecast",
+        json_job="{}",
+        created_ts=123,
+        state=PENDING_STATE,
+    )
+    _mock_claim_result(session, request_row)
 
     with patch.object(service, "_get_session_and_repo", return_value=cm):
         claimed = service.claim_task(worker_id="worker-1")
 
-    assert claimed is not None
-    assert claimed.id == "task-1"
-    repo.claim.assert_called_with("task-1", "worker-1")
+    assert claimed is request_row
+    session.execute.assert_called_once()
 
 
 @pytest.mark.unit
-@pytest.mark.skip(reason="claim_task is a stub returning None — " + _STUB_REASON)
 def test_claim_task_no_pending(service, mock_session_repo):
-    _, repo, cm = mock_session_repo
-    repo.find_pending.return_value = []
+    session, _repo, cm = mock_session_repo
+    _mock_claim_result(session, None)
 
     with patch.object(service, "_get_session_and_repo", return_value=cm):
         claimed = service.claim_task(worker_id="worker-1")
 
     assert claimed is None
+    session.execute.assert_called_once()
+
+
+@pytest.mark.unit
+def test_claim_task_respects_job_type_filter(service, mock_session_repo):
+    session, _repo, cm = mock_session_repo
+    _mock_claim_result(session, None)
+
+    with patch.object(service, "_get_session_and_repo", return_value=cm):
+        claimed = service.claim_task(worker_id="worker-1", job_type_filter="forecast")
+
+    assert claimed is None
+    stmt = session.execute.call_args.args[0]
+    sql = str(stmt.compile(dialect=postgresql.dialect()))
+    assert "job_type =" in sql
+
+
+# ── claim SELECT statement construction (SKIP LOCKED / criteria) ──
+
+
+@pytest.mark.unit
+def test_claim_stmt_uses_skip_locked(service):
+    stmt = service._build_claim_stmt()
+    sql = str(stmt.compile(dialect=postgresql.dialect()))
+    assert "FOR UPDATE" in sql
+    assert "SKIP LOCKED" in sql
+    # available-task criteria
+    assert "scheduled" in sql
+    assert "state" in sql
+    # PENDING bound value
+    params = dict(stmt.compile(dialect=postgresql.dialect()).params)
+    assert any(v == PENDING_STATE for v in params.values())
+
+
+@pytest.mark.unit
+def test_claim_stmt_job_type_filter_present_only_when_requested(service):
+    stmt_no = service._build_claim_stmt()
+    stmt_yes = service._build_claim_stmt(job_type_filter="forecast")
+    sql_no = str(stmt_no.compile(dialect=postgresql.dialect()))
+    sql_yes = str(stmt_yes.compile(dialect=postgresql.dialect()))
+    assert "job_type =" not in sql_no
+    assert "job_type =" in sql_yes
+    params = dict(stmt_yes.compile(dialect=postgresql.dialect()).params)
+    assert any(v == "forecast" for v in params.values())
 
 
 # ── update_progress — STUB (returns None) ───────────────────────────────

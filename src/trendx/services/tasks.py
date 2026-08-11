@@ -2,15 +2,21 @@ from __future__ import annotations
 
 import time
 import uuid
+from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any
 
 from loguru import logger
-from sqlalchemy import text
+from sqlalchemy import Select, select, text
+from sqlalchemy.orm import Session
 from trendx.config import settings
 from trendx.database.connection import manager as db_manager
-from trendx.database.models import TrendzTask
+from trendx.database.models import TrendzTask, TrendzTaskExecutionRequest
 from trendx.database.repositories import TrendzTaskRepository
+
+# Single canonical state for execution-request queue rows (per validation 0.7-B).
+# No other state value (CLAIMED, RUNNING, ...) may be introduced.
+PENDING_STATE = "PENDING"
 
 
 class TaskService:
@@ -30,7 +36,7 @@ class TaskService:
         pass
 
     @contextmanager
-    def _get_session_and_repo(self):
+    def _get_session_and_repo(self) -> Iterator[tuple[Session, TrendzTaskRepository]]:
         with db_manager.get_session("catalog") as session:
             repo = TrendzTaskRepository(session)
             yield session, repo
@@ -81,18 +87,79 @@ class TaskService:
                 store_execution_count=0,
                 json_configs="{}",
             )
+            # Populate the execution-request queue row (validation 0.7-B).
+            # A task is claimed later via trendz_task_execution_request; the
+            # only valid state at creation time is PENDING and it is not
+            # scheduled.
+            execution_id = uuid.uuid4()
+            request = TrendzTaskExecutionRequest(
+                task_id=task.id,
+                execution_id=execution_id,
+                tenant_id=tenant_id,
+                customer_id=customer_id,
+                user_id=user_id,
+                scheduled=False,
+                job_type=job_type,
+                json_job=str(json_job),
+                created_ts=int(time.time() * 1000),
+                state=PENDING_STATE,
+            )
+            session.add(request)
             session.commit()
-            logger.info("Created task {} (job_type={})", task.id, job_type)
+            logger.info(
+                "Created task {} (job_type={}) and execution request {} state=PENDING",
+                task.id,
+                job_type,
+                execution_id,
+            )
             return task
+
+    def _build_claim_stmt(
+        self, job_type_filter: str | None = None
+    ) -> Select[tuple[TrendzTaskExecutionRequest]]:
+        """Build the atomic claim SELECT over trendz_task_execution_request.
+
+        Available tasks are those not scheduled (scheduled=False) and still in
+        the PENDING state. The row is locked with FOR UPDATE SKIP LOCKED so that
+        concurrent workers never claim the same request, and ordering by
+        created_ts gives FIFO behaviour.
+        """
+        stmt = select(TrendzTaskExecutionRequest).where(
+            TrendzTaskExecutionRequest.scheduled.is_(False),
+            TrendzTaskExecutionRequest.state == PENDING_STATE,
+        )
+        if job_type_filter is not None:
+            stmt = stmt.where(TrendzTaskExecutionRequest.job_type == job_type_filter)
+        stmt = stmt.order_by(TrendzTaskExecutionRequest.created_ts.asc())
+        stmt = stmt.with_for_update(skip_locked=True)
+        return stmt
 
     def claim_task(
         self,
         worker_id: str,
         job_type_filter: str | None = None,
-    ) -> TrendzTask | None:
-        # TODO: Real task claiming uses trendz_task_execution_request + state records.
-        # Simplified stub for backward compatibility.
-        return None
+    ) -> TrendzTaskExecutionRequest | None:
+        """Atomically claim one available execution request.
+
+        Returns the claimed TrendzTaskExecutionRequest row, or None when no
+        available task exists. The claim is protected against concurrent
+        workers by FOR UPDATE SKIP LOCKED (see _build_claim_stmt).
+        """
+        stmt = self._build_claim_stmt(job_type_filter)
+        with self._get_session_and_repo() as (session, _repo):
+            logger.debug("Worker {} attempting to claim a task", worker_id)
+            result = session.execute(stmt)
+            row: TrendzTaskExecutionRequest | None = result.scalars().first()
+            if row is None:
+                logger.debug("Worker {} found no claimable task", worker_id)
+            else:
+                logger.info(
+                    "Worker {} claimed task {} execution {}",
+                    worker_id,
+                    row.task_id,
+                    row.execution_id,
+                )
+            return row
 
     def update_progress(
         self,
