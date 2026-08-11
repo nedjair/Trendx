@@ -166,7 +166,7 @@ class TrainingService:
             "frequency": frequency,
             "horizon": str(horizon),
         }
-        run_id = self._tracker.start_run(
+        self._tracker.start_run(
             experiment_name, run_name=f"{algorithm}_{int(time.time())}", tags=tags
         )
         try:
@@ -226,26 +226,16 @@ class TrainingService:
             self._tracker.log_tags(tags)
             model_uri = self._tracker.log_model(model, artifact_path="model", model_name=None)
             self._tracker.end_run("FINISHED")
+            # Contrat actuel de ModelRegistry.register() (schéma/ORM Trendz 1.15.0) :
+            # business_entity_id / tb_telemetry_key / model_type / model_uri.
+            # Les metadonnees (metrics, hyperparameters, scaler, frequency, horizon,
+            # lookback_days, data_version, train_period_*, code_version, mlflow_run_id)
+            # sont deja enregistrees via MLflowTracker (log_params/metrics/scaler) plus haut.
             champion = self._registry.register(
-                entity_id=entity_id,
-                metric_key=metric_key,
-                algorithm=algorithm,
+                business_entity_id=entity_id,
+                tb_telemetry_key=metric_key,
+                model_type=algorithm,
                 model_uri=model_uri,
-                metrics={"test": metrics.to_dict(), "train": {}},
-                hyperparameters=params or {},
-                scaler=normalizer.get_params(),
-                frequency=frequency,
-                horizon=horizon,
-                lookback_days=lookback_days or settings.training_lookback_days,
-                data_version=data_version,
-                train_period_start=datetime.fromisoformat(str(df["ds"].iloc[0]))
-                if not df.empty
-                else None,
-                train_period_end=datetime.fromisoformat(str(df["ds"].iloc[-1]))
-                if not df.empty
-                else None,
-                code_version=code_version,
-                mlflow_run_id=run_id,
             )
             return champion
         except Exception as exc:
