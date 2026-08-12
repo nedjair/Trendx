@@ -159,6 +159,13 @@ test-migration-008:
     TRENDX_DB_PORT: "5432"
     TRENDX_DB_USER: trendx_app
     TRENDX_DB_PASSWORD: trendx_app_pass
+    # catalog_dsn_app()/analytics_dsn_app() read TRENDX_APP_USER/TRENDX_APP_PASSWORD
+    # (NOT TRENDX_DB_PASSWORD). Without these, the 'catalog' engine authenticates
+    # with the default CHANGE_ME password and the job fails at conftest._db_available()
+    # (FATAL: password authentication failed for user "trendx_app"). Mirrors the
+    # test-migration-001 job, which defines these and succeeds.
+    TRENDX_APP_USER: trendx_app
+    TRENDX_APP_PASSWORD: trendx_app_pass
   before_script:
     - python -m pip install --upgrade pip
     - pip install -c constraints.txt -e ".[dev]"
