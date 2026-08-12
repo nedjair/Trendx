@@ -58,8 +58,6 @@ from trendx.thingsboard.discovery import (  # noqa: E402
 ROOT = Path(__file__).parents[2]
 MIGRATIONS = ROOT / "migrations"
 
-pytestmark = pytest.mark.integration
-
 TOPOLOGY_TABLES = ("topology_entities", "topology_relations", "sync_metadata")
 
 EXPECTED_COLUMNS = {

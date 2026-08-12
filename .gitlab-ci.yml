@@ -239,6 +239,6 @@ test-migration-007:
       PGPASSWORD="$POSTGRES_PASSWORD" psql -h postgres -U trendx_app -d trendx \
           -v ON_ERROR_STOP=1 -f migrations/007_topology_tables.sql
   script:
-    - pytest -m integration tests/integration/test_migration_007_topology.py --run-integration -ra --no-header --tb=short
+    - pytest tests/integration/test_migration_007_topology.py --run-integration -ra --no-header --tb=short
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
