@@ -95,12 +95,13 @@ test-integration:
       GRANT trendx_migration TO trendx_app;
       SQL
     - |
-      # Apply the migration chain (001 -> 006) in lexical order. Migration 000 is a privileged
+      # Apply the migration chain 001 -> 006 ONLY (P1 scope). Migration 000 is a privileged
       # bootstrap (creates separate analytics/airflow/mlflow databases + roles) and is excluded
-      # here on purpose: the integration job uses a single trendx_app role on the trendx database.
-      # Running the full chain (instead of a hand-rolled subset) guarantees every integration
-      # test finds the schema its prerequisite migration created. All files are idempotent/reentrant.
-      for f in migrations/00[1-9]*.sql migrations/0[1-9][0-9]*.sql; do
+      # here on purpose. Migrations 007+ are intentionally excluded: they require roles
+      # (e.g. trendx_ro) not provisioned by the integration job, and are outside P1 scope.
+      # Each file is applied with ON_ERROR_STOP=1 and is idempotent/reentrant.
+      for f in migrations/001_*.sql migrations/002_*.sql migrations/003_*.sql \
+               migrations/004_*.sql migrations/005_*.sql migrations/006_*.sql; do
         [ -e "${f}" ] || continue
         echo ">>> applying ${f}"
         PGPASSWORD="$POSTGRES_PASSWORD" psql -h postgres -U trendx_app -d trendx \
