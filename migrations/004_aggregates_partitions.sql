@@ -323,6 +323,13 @@ GRANT EXECUTE ON FUNCTION trendx_analytics.ensure_partitions_forward(integer) TO
 GRANT EXECUTE ON FUNCTION trendx_analytics.partition_coverage(integer) TO trendx_app;
 
 -- 8) Pré-création immédiate des partitions manquantes (mois courant → +3 mois)
-SELECT trendx_analytics.ensure_partitions_forward(3);
+-- Conditionné : ts_kv n'existe que si TimescaleDB était présent (guarde du haut du fichier).
+DO $$
+BEGIN
+  IF to_regclass('trendx_analytics.ts_kv') IS NOT NULL THEN
+    PERFORM trendx_analytics.ensure_partitions_forward(3);
+  END IF;
+END;
+$$;
 
 COMMIT;

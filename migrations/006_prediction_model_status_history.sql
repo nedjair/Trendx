@@ -18,3 +18,13 @@ CREATE INDEX IF NOT EXISTS prediction_model_status_history_lookup_idx
 
 COMMENT ON TABLE trendx_catalog.prediction_model_status_history IS
     'Historique Trendx des transitions champion/challenger pour permettre un rollback sûr.';
+
+-- ============================================================================
+-- Droits trendx_app : DML sur l'historique des transitions de statut.
+-- En production la migration est exécutée par trendx_migration ; sans ce GRANT,
+-- trendx_app (rôle applicatif) reçoit un permission denied à la promotion champion.
+-- Cohérent avec les GRANT des migrations 002/004. Idempotent : rejouable sans erreur.
+-- ============================================================================
+GRANT SELECT, INSERT, UPDATE, DELETE
+    ON trendx_catalog.prediction_model_status_history
+    TO trendx_app;

@@ -12,19 +12,19 @@ SET standard_conforming_strings = ON;
 SET check_function_bodies = FALSE;
 SET client_min_messages = WARNING;
 
--- Guarde anti-échec si TimescaleDB nest pas installé (profil minimal PG natif)
+-- Guarde anti-échec : si TimescaleDB nest pas installé (profil minimal PG natif),
+-- tout le corps de la migration est sauté (hypertables/CAGGs inutilisables sans
+-- l'extension). En production (image TimescaleDB), le corps s'exécute normalement.
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'timescaledb') THEN
     RAISE NOTICE '[trendx-migrate] TimescaleDB non installé, saut de 002_hypertables_analytics.sql';
     RETURN;
   END IF;
-END;
-$$;
 
--- TimescaleDB est déjà activé par 010-create-databases.sh dans entrypoint TSDB.
-CREATE EXTENSION IF NOT EXISTS timescaledb;
-CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+  -- TimescaleDB est déjà activé par 010-create-databases.sh dans entrypoint TSDB.
+  CREATE EXTENSION IF NOT EXISTS timescaledb;
+  CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
 
 -- ============================================================================
 -- 1. Table principale ts_kv — télémétrie brute (équivalent ts_kv de TB)
@@ -383,3 +383,6 @@ CREATE TABLE IF NOT EXISTS schema_version (
 INSERT INTO schema_version (migration_name, checksum, execution_seconds, status)
 VALUES ('002_hypertables_analytics.sql', 'trendx-phase2-hypercaggs', 0, 'OK')
 ON CONFLICT (migration_name) DO NOTHING;
+
+END;
+$$;
