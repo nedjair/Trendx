@@ -123,7 +123,13 @@ test-integration:
       ON CONFLICT (aggregate_name) DO NOTHING;
       SQL
   script:
-    - pytest -m integration -ra --no-header --tb=short
+    # The migration-apply tests (001, 008) each re-run migration 001, which is
+    # NON-idempotent (plain CREATE TABLE / FUNCTION / INDEX, no IF NOT EXISTS).
+    # They can only run on a FRESH database provided by their own dedicated jobs,
+    # so they are excluded here via the migration_apply marker. Collecting them
+    # in this shared job (where 001->006 is already applied in before_script)
+    # would make psql fail with ON_ERROR_STOP on the first re-created object.
+    - pytest -m "integration and not migration_apply" -ra --no-header --tb=short
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
 
@@ -153,6 +159,13 @@ test-migration-008:
     TRENDX_DB_PORT: "5432"
     TRENDX_DB_USER: trendx_app
     TRENDX_DB_PASSWORD: trendx_app_pass
+    # catalog_dsn_app()/analytics_dsn_app() read TRENDX_APP_USER/TRENDX_APP_PASSWORD
+    # (NOT TRENDX_DB_PASSWORD). Without these, the 'catalog' engine authenticates
+    # with the default CHANGE_ME password and the job fails at conftest._db_available()
+    # (FATAL: password authentication failed for user "trendx_app"). Mirrors the
+    # test-migration-001 job, which defines these and succeeds.
+    TRENDX_APP_USER: trendx_app
+    TRENDX_APP_PASSWORD: trendx_app_pass
   before_script:
     - python -m pip install --upgrade pip
     - pip install -c constraints.txt -e ".[dev]"
@@ -163,7 +176,9 @@ test-migration-008:
         sleep 1
       done
   script:
-    - pytest tests/integration/test_migration_008_model_uri.py --run-integration -ra --no-header --tb=short
+    # -m integration is REQUIRED: without it conftest.py skips integration-marked
+    # tests (fail-open), so the job would go green while running zero tests.
+    - pytest tests/integration/test_migration_008_model_uri.py -m integration --run-integration -ra --no-header --tb=short
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
 
@@ -242,3 +257,58 @@ test-migration-007:
     - pytest tests/integration/test_migration_007_topology.py --run-integration -ra --no-header --tb=short
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+
+# ── Migration 001 native schema DB test (issue: \restrict artefact) ───────
+# Applies migration 001 against a real PostgreSQL service and proves the
+# migration applies completely under ON_ERROR_STOP=1 (no masked error, no
+# partial application) and that the stray \restrict/\unrestrict restricted-mode
+# artefact is absent (regression guard for this chantier). 001 creates all its
+# objects in the public schema with no OWNER TO / GRANT / CREATE ROLE, so it
+# needs neither the trendx_catalog / trendx_analytics schemas nor the
+# trendx_migration role: it runs under the single trendx_app role.
+# Runs on MR events (with -m integration so the integration marker is actually
+# executed, fail-closed) and on branch push (so the before/after fix can be
+# validated on a real PostgreSQL without opening an MR).
+# Migration 001 is NON-idempotent, so this dedicated FRESH database is the only
+# valid place to run this test; it must NOT be collected by the shared
+# test-integration job (excluded via the migration_apply marker there).
+test-migration-001:
+  stage: test
+  image: python:3.12-slim
+  services:
+    - name: postgres:16-alpine
+      alias: postgres
+  variables:
+    PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+    POSTGRES_DB: trendx
+    POSTGRES_USER: trendx_app
+    POSTGRES_PASSWORD: trendx_app_pass
+    PG_ADMIN_HOST: postgres
+    PG_ADMIN_PORT: "5432"
+    PG_ADMIN_DB: trendx
+    PG_ADMIN_USER: trendx_app
+    PG_ADMIN_PASSWORD: trendx_app_pass
+    TRENDX_DB_NAME: trendx
+    TRENDX_DB_HOST: postgres
+    TRENDX_DB_PORT: "5432"
+    TRENDX_DB_USER: trendx_app
+    TRENDX_DB_PASSWORD: trendx_app_pass
+    TRENDX_APP_USER: trendx_app
+    TRENDX_APP_PASSWORD: trendx_app_pass
+  before_script:
+    - python -m pip install --upgrade pip
+    - pip install -c constraints.txt -e ".[dev]"
+    - apt-get update && apt-get install -y --no-install-recommends postgresql-client
+    - |
+      # Wait for PostgreSQL
+      for i in $(seq 1 30); do
+        pg_isready -h postgres -p 5432 && break
+        sleep 1
+      done
+  script:
+    # -m integration is REQUIRED (see test-migration-008 above): without it the
+    # integration-marked test is skipped by conftest.py and the job runs nothing.
+    - pytest tests/integration/test_migration_001_native_schema.py -m integration --run-integration -ra --no-header --tb=short
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_PIPELINE_SOURCE == "push"'

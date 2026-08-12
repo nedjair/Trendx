@@ -35,6 +35,12 @@ def pytest_configure(config: pytest.Config) -> None:
         "integration: tests requiring external services (DB, API). "
         "Skips locally if the service is unavailable; runs in CI.",
     )
+    config.addinivalue_line(
+        "markers",
+        "migration_apply: tests that (re-)apply a non-idempotent migration "
+        "(e.g. 001) and therefore require a FRESH database. Excluded from the "
+        "shared test-integration job, which runs against a pre-migrated DB.",
+    )
 
 
 def _in_ci() -> bool:

@@ -9,8 +9,6 @@
 -- PostgreSQL database dump
 --
 
-\restrict MAllD1INettbrEuwhnZbiTZ1q8dLArEe3DSxRddZqU3BVJ5QyjPQpudEPqtZsgS
-
 -- Dumped from database version 16.11 (Debian 16.11-1.pgdg13+1)
 -- Dumped by pg_dump version 16.11 (Debian 16.11-1.pgdg13+1)
 
@@ -2690,5 +2688,3 @@ ALTER TABLE ONLY public.view_assistance_chat_message
 --
 -- PostgreSQL database dump complete
 --
-
-
