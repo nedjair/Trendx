@@ -106,6 +106,7 @@ def _expected_table_count(migration_file: Path) -> int:
 
 
 @pytest.mark.integration
+@pytest.mark.migration_apply
 def test_migration_001_applies_completely_on_real_postgres():
     params = _pg_conn_params()
     migration_001 = next(MIGRATIONS.glob("001_*.sql"))

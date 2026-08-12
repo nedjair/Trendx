@@ -123,7 +123,13 @@ test-integration:
       ON CONFLICT (aggregate_name) DO NOTHING;
       SQL
   script:
-    - pytest -m integration -ra --no-header --tb=short
+    # The migration-apply tests (001, 008) each re-run migration 001, which is
+    # NON-idempotent (plain CREATE TABLE / FUNCTION / INDEX, no IF NOT EXISTS).
+    # They can only run on a FRESH database provided by their own dedicated jobs,
+    # so they are excluded here via the migration_apply marker. Collecting them
+    # in this shared job (where 001->006 is already applied in before_script)
+    # would make psql fail with ON_ERROR_STOP on the first re-created object.
+    - pytest -m "integration and not migration_apply" -ra --no-header --tb=short
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
 
@@ -163,7 +169,9 @@ test-migration-008:
         sleep 1
       done
   script:
-    - pytest tests/integration/test_migration_008_model_uri.py --run-integration -ra --no-header --tb=short
+    # -m integration is REQUIRED: without it conftest.py skips integration-marked
+    # tests (fail-open), so the job would go green while running zero tests.
+    - pytest tests/integration/test_migration_008_model_uri.py -m integration --run-integration -ra --no-header --tb=short
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
 
