@@ -24,6 +24,8 @@ import re
 import subprocess
 from pathlib import Path
 
+import pytest
+
 # Keep behaviour identical to the dedicated CI job (postgres:16-alpine service).
 os.environ.setdefault("PG_ADMIN_HOST", "postgres")
 os.environ.setdefault("PG_ADMIN_PORT", "5432")
@@ -103,6 +105,7 @@ def _expected_table_count(migration_file: Path) -> int:
     return len(re.findall(r"CREATE TABLE\s+(?:IF NOT EXISTS\s+)?public\.", text))
 
 
+@pytest.mark.integration
 def test_migration_001_applies_completely_on_real_postgres():
     params = _pg_conn_params()
     migration_001 = next(MIGRATIONS.glob("001_*.sql"))
