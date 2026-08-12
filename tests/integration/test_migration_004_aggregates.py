@@ -77,9 +77,9 @@ pytestmark = [pytest.mark.integration]
 
 TABLES = ("ts_kv_hourly", "ts_kv_daily", "ts_kv_weekly", "aggregate_watermarks")
 FUNCTIONS = {
-    "refresh_aggregate": "text",
-    "ensure_partitions_forward": "integer",
-    "partition_coverage": "integer",
+    "refresh_aggregate": "p_agg text",
+    "ensure_partitions_forward": "min_months integer",
+    "partition_coverage": "min_months integer",
 }
 EXPECTED_COLUMNS = {
     "ts_kv_hourly": {
@@ -243,7 +243,7 @@ def _has_function_privilege(
         with conn.cursor() as cur:
             cur.execute(
                 """
-                SELECT oid FROM pg_proc p
+                SELECT p.oid FROM pg_proc p
                 JOIN pg_namespace n ON n.oid = p.pronamespace
                 WHERE n.nspname = %s AND p.proname = %s
                   AND pg_get_function_identity_arguments(p.oid) = %s
