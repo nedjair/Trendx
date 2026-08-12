@@ -24,6 +24,12 @@ _METRIC_KEY = "integration_006_metric"
 _MODEL_ID = uuid.UUID("aaaaaaaa-0000-0000-0000-0000000000a1")
 _ENTITY_ID = uuid.UUID("11111111-0000-0000-0000-000000000006")
 
+# Required (NOT NULL, no default) columns on public.prediction_model (migration 001).
+_TENANT_ID = uuid.UUID("22222222-0000-0000-0000-000000000006")
+_CUSTOMER_ID = uuid.UUID("33333333-0000-0000-0000-000000000006")
+_ASSOCIATED_ENTITY_FIELD_ID = uuid.UUID("44444444-0000-0000-0000-000000000006")
+_BUSINESS_ENTITY_FIELD_ID = uuid.UUID("55555555-0000-0000-0000-000000000006")
+
 _STATUS_HISTORY = "trendx_catalog.prediction_model_status_history"
 
 
@@ -44,10 +50,27 @@ def _seed(conn) -> None:
     ts = int(datetime.now(UTC).timestamp() * 1000)
     conn.execute(
         text(
-            "INSERT INTO prediction_model (id, name, model_type, artifact_path) "
-            "VALUES (:mid, 'm006', 'Prophet', 's3://x')"
+            "INSERT INTO prediction_model ("
+            "id, tenant_id, customer_id, created_ts, updated_ts, name, enabled, "
+            "partial_fit_enabled, status, type, associated_entity_field_id, "
+            "tb_telemetry_key, model_parameters, datasource_parameters, "
+            "method_parameters, item_state_map, trained_item_set, "
+            "business_entity_id, business_entity_field_id, avoid_disabling"
+            ") VALUES ("
+            ":mid, :tid, :cid, :ts, :ts, 'm006', true, false, 'CHAMPION', 'Prophet', "
+            ":afid, :mk, '{}', '{}', '{}', '{}', '{}', :eid, :bfid, false"
+            ")"
         ),
-        {"mid": str(_MODEL_ID)},
+        {
+            "mid": str(_MODEL_ID),
+            "tid": str(_TENANT_ID),
+            "cid": str(_CUSTOMER_ID),
+            "ts": ts,
+            "afid": str(_ASSOCIATED_ENTITY_FIELD_ID),
+            "mk": _METRIC_KEY,
+            "eid": str(_ENTITY_ID),
+            "bfid": str(_BUSINESS_ENTITY_FIELD_ID),
+        },
     )
     conn.execute(
         text(
