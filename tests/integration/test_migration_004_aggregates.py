@@ -78,8 +78,8 @@ pytestmark = [pytest.mark.integration]
 TABLES = ("ts_kv_hourly", "ts_kv_daily", "ts_kv_weekly", "aggregate_watermarks")
 FUNCTIONS = {
     "refresh_aggregate": "p_agg text",
-    "ensure_partitions_forward": "min_months integer",
-    "partition_coverage": "min_months integer",
+    "ensure_partitions_forward": "p_min_months integer DEFAULT 3",
+    "partition_coverage": "p_min_months integer DEFAULT 3",
 }
 EXPECTED_COLUMNS = {
     "ts_kv_hourly": {
