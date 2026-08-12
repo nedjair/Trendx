@@ -105,6 +105,10 @@ test-integration:
       # integration test was rewritten to validate migration 006's own artifact
       # (trendx_catalog.prediction_model_status_history) without depending on 008.
       # Each file is applied with ON_ERROR_STOP=1 and is idempotent/reentrant.
+      # NOTE: migrations/003_*.sql is intentionally absent from this repo.
+      # Migration 003 (003_schema_alignment.sql) was applied OUT-OF-BAND
+      # (see docs/audit-phase2-after.md) and is not part of the file-based CI
+      # chain; the [ -e ] guard below simply skips it. Do NOT create a 003 file here.
       for f in migrations/001_*.sql migrations/002_*.sql migrations/003_*.sql \
                migrations/004_*.sql migrations/005_*.sql migrations/006_*.sql; do
         [ -e "${f}" ] || continue
@@ -254,7 +258,7 @@ test-migration-007:
       PGPASSWORD="$POSTGRES_PASSWORD" psql -h postgres -U trendx_app -d trendx \
           -v ON_ERROR_STOP=1 -f migrations/007_topology_tables.sql
   script:
-    - pytest tests/integration/test_migration_007_topology.py --run-integration -ra --no-header --tb=short
+    - pytest tests/integration/test_migration_007_topology.py -m integration --run-integration -ra --no-header --tb=short
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
 

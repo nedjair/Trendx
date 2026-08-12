@@ -219,6 +219,8 @@ def _has_sequence_privilege(params: dict[str, str], role: str, sequence: str, pr
         conn.close()
 
 
+@pytest.mark.integration
+@pytest.mark.migration_apply
 def test_migration_007_creates_topology_tables():
     params = _pg_conn_params()
     migration_007 = MIGRATIONS / "007_topology_tables.sql"
@@ -231,6 +233,8 @@ def test_migration_007_creates_topology_tables():
         assert _table_exists(params, table), f"trendx_catalog.{table} missing after 007"
 
 
+@pytest.mark.integration
+@pytest.mark.migration_apply
 def test_migration_007_table_structure():
     params = _pg_conn_params()
     migration_007 = MIGRATIONS / "007_topology_tables.sql"
@@ -247,6 +251,8 @@ def test_migration_007_table_structure():
     ), "sync_metadata.sync_key must be UNIQUE"
 
 
+@pytest.mark.integration
+@pytest.mark.migration_apply
 def test_migration_007_grants():
     params = _pg_conn_params()
     migration_007 = MIGRATIONS / "007_topology_tables.sql"
@@ -270,6 +276,8 @@ def test_migration_007_grants():
         ), f"trendx_app missing USAGE on trendx_catalog.{seq}"
 
 
+@pytest.mark.integration
+@pytest.mark.migration_apply
 def test_migration_007_idempotent():
     params = _pg_conn_params()
     migration_007 = MIGRATIONS / "007_topology_tables.sql"
@@ -281,6 +289,8 @@ def test_migration_007_idempotent():
         assert _table_exists(params, table), f"trendx_catalog.{table} missing after re-apply"
 
 
+@pytest.mark.integration
+@pytest.mark.migration_apply
 @pytest.mark.asyncio
 async def test_topology_orm_update_catalog_persists():
     params = _pg_conn_params()
