@@ -1,7 +1,7 @@
 -- ============================================================================
 -- Trendx Catalogue — Add model_uri column to prediction_model
 -- Database : trendx
--- Schema : trendx_catalog
+-- Schema : public
 -- DDL owner : trendx_migration
 -- Read/write privileges : trendx_app
 -- Read-only privileges : trendx_ro
@@ -18,8 +18,8 @@
 -- ownership and grants (trendx_app / trendx_ro); no per-column GRANT needed.
 -- ============================================================================
 
-ALTER TABLE trendx_catalog.prediction_model
+ALTER TABLE public.prediction_model
     ADD COLUMN IF NOT EXISTS model_uri TEXT;
 
-COMMENT ON COLUMN trendx_catalog.prediction_model.model_uri IS
+COMMENT ON COLUMN public.prediction_model.model_uri IS
     'MLflow model URI (runs:/<run_id>/model) persisté lors de register().';
