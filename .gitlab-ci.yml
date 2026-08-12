@@ -106,3 +106,43 @@ test-integration:
     - pytest -m integration -ra --no-header --tb=short
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+
+# ── Migration 008 targeted DB test (issue #2) ────────────────────────
+# Applies migrations 001 -> 008 on a real PostgreSQL service and proves
+# public.prediction_model.model_uri exists and that 008 is idempotent.
+# Runs only on MR events with --run-integration so the integration marker
+# is actually executed (fail-closed: any psql/assertion error fails the job).
+test-migration-008:
+  stage: test
+  image: python:3.12-slim
+  services:
+    - name: postgres:16-alpine
+      alias: postgres
+  variables:
+    PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+    POSTGRES_DB: trendx
+    POSTGRES_USER: trendx_app
+    POSTGRES_PASSWORD: trendx_app_pass
+    PG_ADMIN_HOST: postgres
+    PG_ADMIN_PORT: "5432"
+    PG_ADMIN_DB: trendx
+    PG_ADMIN_USER: trendx_app
+    PG_ADMIN_PASSWORD: trendx_app_pass
+    TRENDX_DB_NAME: trendx
+    TRENDX_DB_HOST: postgres
+    TRENDX_DB_PORT: "5432"
+    TRENDX_DB_USER: trendx_app
+    TRENDX_DB_PASSWORD: trendx_app_pass
+  before_script:
+    - python -m pip install --upgrade pip
+    - pip install -c constraints.txt -e ".[dev]"
+    - apt-get update && apt-get install -y --no-install-recommends postgresql-client
+    - |
+      for i in $(seq 1 30); do
+        pg_isready -h postgres -p 5432 && break
+        sleep 1
+      done
+  script:
+    - pytest tests/integration/test_migration_008_model_uri.py --run-integration -ra --no-header --tb=short
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
