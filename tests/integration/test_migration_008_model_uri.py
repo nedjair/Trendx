@@ -24,8 +24,6 @@ import pytest
 ROOT = Path(__file__).parents[2]
 MIGRATIONS = ROOT / "migrations"
 
-pytestmark = pytest.mark.integration
-
 
 def _env(key: str, default: str) -> str:
     return os.environ.get(key, default)
