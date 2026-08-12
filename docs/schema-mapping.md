@@ -119,7 +119,7 @@ Tables héritées de Trendz (source : docs/trendz-parity-matrix.md + docs/archit
 | `calculated_field` | Arbre AST champs calculés | id, entity_id, type, configuration JSON |
 | `calculated_field_execution` | Exécution CF | id, cf_id, ts, result_json |
 | `data_source` | Source de données | id, name, type, config_json |
-| `prediction_model` | Config modèle | id, tenant_id, name, type, configuration JSON |
+| `prediction_model` | Config modèle | id, tenant_id, name, type, model_uri, configuration JSON |
 | `prediction_model_task_data` | Planification entraînement | id, model_id, refresh_time_unit, partial_fit |
 | `prediction_model_last_item_point` | Checkpoint last ts | id, model_id, item_id, ts |
 | `anomaly` | Épisodes anomalies | id, detector_id, start_ts, end_ts, score, score_index |
@@ -139,6 +139,13 @@ Tables héritées de Trendz (source : docs/trendz-parity-matrix.md + docs/archit
 | `app_setting` | Paramètre application | id, key, value_json |
 | `writeback_log` | Journal writeback | id, job_id, device_id, entity_id, key, ts_start, ts_end, nb_points, written_at, operator, dry_run |
 | `prediction_model_status_history` | Historique Trendx des transitions de statut modèle | id, prediction_model_id, business_entity_id, metric_key, previous_status, new_status, changed_ts |
+
+> **Migration 008** (`migrations/008_add_model_uri.sql`) ajoute la colonne
+> `model_uri` (TEXT, nullable) à `trendx_catalog.prediction_model` afin de
+> persister l'URI MLflow des modèles enregistrés via `ModelRegistry.register()`.
+> Cette migration **n'a pas été appliquée ni vérifiée sur une base réelle** dans
+> cet environnement (contrainte identique aux migrations précédentes) ; elle est
+> idempotente (`IF NOT EXISTS`) et doit être exécutée par le rôle `trendx_migration`.
 
 ### 3.2 Schéma `trendx_analytics` dans base `trendx`
 

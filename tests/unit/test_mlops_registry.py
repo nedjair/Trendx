@@ -61,6 +61,33 @@ def test_register_model(registry):
 
 
 @pytest.mark.unit
+def test_register_persists_model_uri(registry):
+    mock_session = MagicMock()
+    mock_repo = MagicMock()
+    mock_model = MagicMock()
+    mock_model.id = 1
+    mock_repo.create.return_value = mock_model
+
+    with (
+        patch(
+            "trendx.mlops.registry.db_manager.get_session",
+            return_value=_session_cm(mock_session),
+        ),
+        patch("trendx.mlops.registry.PredictionModelRepository", return_value=mock_repo),
+    ):
+        registry.register(
+            business_entity_id="dev-001",
+            tb_telemetry_key="temperature",
+            model_type="Prophet",
+            model_uri="runs:/run-123/model",
+        )
+
+    mock_repo.create.assert_called_once()
+    # model_uri must reach the persistence layer (was silently dropped before).
+    assert mock_repo.create.call_args.kwargs.get("model_uri") == "runs:/run-123/model"
+
+
+@pytest.mark.unit
 def test_get_champion(registry):
     mock_session = MagicMock()
     mock_repo = MagicMock()
