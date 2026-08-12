@@ -396,6 +396,7 @@ class PredictionModel(Base):
     business_entity_field_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), nullable=False
     )
+    model_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
     avoid_disabling: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 

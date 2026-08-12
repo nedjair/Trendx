@@ -64,6 +64,7 @@ class ModelRegistry:
                 type=model_type,
                 associated_entity_field_id=business_entity_field_id,
                 tb_telemetry_key=tb_telemetry_key,
+                model_uri=model_uri or None,
                 model_parameters=model_parameters,
                 datasource_parameters=datasource_parameters,
                 method_parameters=method_parameters,
