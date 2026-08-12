@@ -35,13 +35,23 @@ class Settings(BaseSettings):
     trendx_disk_min_free_gb: int = Field(default=50, alias="TRENDX_DISK_MIN_FREE_GB")
 
     # Verrou d'ingestion : false par défaut. L'endpoint /api/v1/ingestion/trigger
-    # refuse (409) tant que TRENDX_INGEST_ENABLED n'est pas explicitement true.
+    # refuse (409) tant que TRENDX_INGEST_ENABLED n'est pas set a true.
     trendx_ingest_enabled: bool = Field(default=False, alias="TRENDX_INGEST_ENABLED")
 
     trendx_api_host: str = Field(default="0.0.0.0", alias="TRENDX_API_HOST")
     trendx_api_port: int = Field(default=8000, alias="TRENDX_API_PORT")
     trendx_python_executor_port: int = Field(default=8181, alias="TRENDX_PYTHON_EXECUTOR_PORT")
     trendx_workers: int = Field(default=2, alias="TRENDX_WORKERS")
+
+    # Port hôte de Grafana (service optionnel du profil minimal). 3001 et non 3000 :
+    # le port 3000 de l'hôte est déjà occupé par Gitea (décision consignée dans
+    # docs/audit-phase1.md et docs/rapport_phase2_infrastructure.md, .env : GRAFANA_HOST_PORT=3001).
+    # Purement informatif côté API : sert à composer l'URL affichée par GET /.
+    grafana_host_port: int = Field(default=3001, alias="GRAFANA_HOST_PORT")
+
+    # Cache Redis (service optionnel : absent du profil minimal, cf. AGENTS.md).
+    # Consommé par CacheService quand aucune URL n'est fournie en argument.
+    redis_url: str = Field(default="redis://localhost:6379/0", alias="REDIS_URL")
 
     tb_base_url: str = Field(
         default="http://thingsboard_thingsboard-ce_1:8080", alias="TB_BASE_URL"
@@ -55,7 +65,7 @@ class Settings(BaseSettings):
     tb_page_size: int = Field(default=100, alias="TB_PAGE_SIZE")
     tb_writeback_enabled: bool = Field(default=False, alias="TB_WRITEBACK_ENABLED")
     tb_alarms_enabled: bool = Field(default=False, alias="TB_ALARMS_ENABLED")
-    # Authentification ThingsBoard réelle configurée (compte service) : true uniquement
+    # Authentication ThingsBoard réelle configurée (compte service) : true uniquement
     # quand des identifiants vérifiés sont en place. Verrou d'ingestion : absent => false.
     tb_auth_configured: bool = Field(default=False, alias="TB_AUTH_CONFIGURED")
     tb_device_id: str = Field(default="ALG16025001", alias="TB_DEVICE_ID")
@@ -93,8 +103,6 @@ class Settings(BaseSettings):
         default=SecretStr("CHANGE_ME"), alias="TRENDX_APP_PASSWORD"
     )
 
-    trendx_profile: str = Field(default="minimal", alias="TRENDX_PROFILE")
-
     trendx_default_tenant_id: str = Field(default="", alias="TRENDX_DEFAULT_TENANT_ID")
     trendx_default_customer_id: str = Field(default="", alias="TRENDX_DEFAULT_CUSTOMER_ID")
     trendx_default_user_id: str = Field(default="", alias="TRENDX_DEFAULT_USER_ID")
@@ -124,7 +132,7 @@ class Settings(BaseSettings):
     def tb_login(self) -> tuple[str, str]:
         """Identifiants ThingsBoard (email, password).
 
-        .env (TB_USERNAME/TB_PASSWORD) d'abord s'ils sont réels ; sinon fallback
+        .env (TB_USERNAME/TB_PASSWORD) en priorité s'ils sont réels ; sinon fallback
         sur le coffre .secrets/service-accounts.env (TB_SERVICE_USER_EMAIL /
         TB_SERVICE_USER_PASSWORD). Ne jamais journaliser les valeurs.
         """

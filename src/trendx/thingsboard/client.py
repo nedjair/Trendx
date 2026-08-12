@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import logging
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
-from typing import Any, Self
+from typing import Any, Self, cast
 
 import httpx
 from loguru import logger
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from tenacity import (
     before_sleep_log,
     retry,
@@ -23,12 +25,17 @@ class LoginRequest(BaseModel):
 
 class LoginResponse(BaseModel):
     token: str
-    refreshToken: str
+    refreshToken: str  # noqa: N815
 
 
 class EntityId(BaseModel):
-    entityType: str
+    entityType: str  # noqa: N815
     id: str
+
+
+def _normalize_label(value: Any) -> str:
+    """ThingsBoard may return a null label; the internal contract requires str."""
+    return "" if value is None else cast("str", value)
 
 
 class Device(BaseModel):
@@ -36,10 +43,15 @@ class Device(BaseModel):
     name: str = ""
     type: str = ""
     label: str = ""
-    tenantId: EntityId | None = None
-    customerId: EntityId | None = None
-    deviceProfileId: EntityId | None = None
-    additionalInfo: dict[str, Any] | None = None
+    tenantId: EntityId | None = None  # noqa: N815
+    customerId: EntityId | None = None  # noqa: N815
+    deviceProfileId: EntityId | None = None  # noqa: N815
+    additionalInfo: dict[str, Any] | None = None  # noqa: N815
+
+    @field_validator("label", mode="before")
+    @classmethod
+    def _coerce_label(cls, value: Any) -> str:
+        return _normalize_label(value)
 
 
 class DeviceProfile(BaseModel):
@@ -48,7 +60,7 @@ class DeviceProfile(BaseModel):
     type: str = ""
     description: str = ""
     default: bool = False
-    transportType: str = "DEFAULT"
+    transportType: str = "DEFAULT"  # noqa: N815
 
 
 class Asset(BaseModel):
@@ -56,9 +68,14 @@ class Asset(BaseModel):
     name: str = ""
     type: str = ""
     label: str = ""
-    tenantId: EntityId | None = None
-    customerId: EntityId | None = None
-    additionalInfo: dict[str, Any] | None = None
+    tenantId: EntityId | None = None  # noqa: N815
+    customerId: EntityId | None = None  # noqa: N815
+    additionalInfo: dict[str, Any] | None = None  # noqa: N815
+
+    @field_validator("label", mode="before")
+    @classmethod
+    def _coerce_label(cls, value: Any) -> str:
+        return _normalize_label(value)
 
 
 class Relation(BaseModel):
@@ -67,8 +84,8 @@ class Relation(BaseModel):
     from_: EntityId = Field(alias="from")
     to: EntityId
     type: str = ""
-    typeGroup: str = "COMMON"
-    additionalInfo: dict[str, Any] | None = None
+    typeGroup: str = "COMMON"  # noqa: N815
+    additionalInfo: dict[str, Any] | None = None  # noqa: N815
 
 
 class Tenant(BaseModel):
@@ -76,22 +93,22 @@ class Tenant(BaseModel):
     title: str = ""
     email: str = ""
     region: str = ""
-    additionalInfo: dict[str, Any] | None = None
+    additionalInfo: dict[str, Any] | None = None  # noqa: N815
 
 
 class Customer(BaseModel):
     id: EntityId | None = None
     title: str = ""
     email: str = ""
-    tenantId: EntityId | None = None
-    additionalInfo: dict[str, Any] | None = None
+    tenantId: EntityId | None = None  # noqa: N815
+    additionalInfo: dict[str, Any] | None = None  # noqa: N815
 
 
 class PageData(BaseModel):
     data: list[Any] = Field(default_factory=list)
-    totalPages: int = 0
-    totalElements: int = 0
-    hasNext: bool = False
+    totalPages: int = 0  # noqa: N815
+    totalElements: int = 0  # noqa: N815
+    hasNext: bool = False  # noqa: N815
 
 
 class TimeseriesEntry(BaseModel):
@@ -102,7 +119,7 @@ class TimeseriesEntry(BaseModel):
 class AttributeEntry(BaseModel):
     key: str
     value: Any
-    lastUpdateTs: int = 0
+    lastUpdateTs: int = 0  # noqa: N815
 
 
 class AlarmData(BaseModel):
@@ -111,13 +128,13 @@ class AlarmData(BaseModel):
     originator: EntityId
     severity: str = "CRITICAL"
     status: str = "ACTIVE_UNACK"
-    startTs: int = 0
-    endTs: int = 0
-    ackTs: int = 0
-    clearTs: int = 0
+    startTs: int = 0  # noqa: N815
+    endTs: int = 0  # noqa: N815
+    ackTs: int = 0  # noqa: N815
+    clearTs: int = 0  # noqa: N815
     details: dict[str, Any] = Field(default_factory=dict)
     propagate: bool = True
-    propagateRelationTypes: list[str] = Field(default_factory=list)
+    propagateRelationTypes: list[str] = Field(default_factory=list)  # noqa: N815
 
 
 class ThingsBoardError(Exception):
@@ -181,6 +198,7 @@ class ThingsBoardClient:
         retry_backoff_seconds: int | None = None,
         jwt_leeway_seconds: int | None = None,
         page_size: int | None = None,
+        *,
         verify_ssl: bool = False,
     ) -> None:
         self._base_url = (base_url or settings.tb_base_url).rstrip("/")
@@ -305,19 +323,22 @@ class ThingsBoardClient:
             "Only GET and POST /api/auth/login are permitted.",
         )
 
-    @retry(
-        retry=retry_if_exception_type(
-            (
-                httpx.TimeoutException,
-                httpx.NetworkError,
-                httpx.RemoteProtocolError,
-                ThingsBoardRateLimitError,
-            )
+    @cast(
+        "Callable[..., Any]",
+        retry(
+            retry=retry_if_exception_type(
+                (
+                    httpx.TimeoutException,
+                    httpx.NetworkError,
+                    httpx.RemoteProtocolError,
+                    ThingsBoardRateLimitError,
+                )
+            ),
+            wait=wait_exponential(multiplier=2, min=1, max=30),
+            stop=stop_after_attempt(3),
+            before_sleep=before_sleep_log(cast("logging.Logger", logger), cast("int", "DEBUG")),
+            reraise=True,
         ),
-        wait=wait_exponential(multiplier=2, min=1, max=30),
-        stop=stop_after_attempt(3),
-        before_sleep=before_sleep_log(logger, "DEBUG"),
-        reraise=True,
     )
     async def _request(
         self,
@@ -434,7 +455,7 @@ class ThingsBoardClient:
         if isinstance(data, list):
             return data
         if isinstance(data, dict):
-            return data.get("data", data.get("list", []))
+            return cast("list[dict[str, Any]]", data.get("data", data.get("list", [])))
         return []
 
     async def get_attributes(
@@ -446,7 +467,49 @@ class ThingsBoardClient:
         data = await self._get(
             f"/api/plugins/telemetry/{entity_type}/{entity_id}/attributes/{scope}",
         )
-        return [AttributeEntry.model_validate(item) for item in data]
+        # ThingsBoard returns an object keyed by attribute name:
+        #   {"message": {"value": "...", "lastUpdateTs": 123}, ...}
+        # The dict key IS the attribute name; the value object carries
+        # value/lastUpdateTs but NOT the key itself. Merge the key in so
+        # AttributeEntry validates. Guard unexpected shapes so a bad payload
+        # yields a clear error instead of a cryptic one.
+        entries: list[AttributeEntry] = []
+        if isinstance(data, dict):
+            for key, value in data.items():
+                if isinstance(value, AttributeEntry):
+                    entries.append(value)
+                elif isinstance(value, dict):
+                    if "value" in value:
+                        # ThingsBoard {value, lastUpdateTs} wrapper.
+                        entry = dict(value)
+                        entry.setdefault("key", key)
+                        entries.append(AttributeEntry.model_validate(entry))
+                    else:
+                        # A JSON object that is not a TB wrapper: conserve the
+                        # whole object as-is (valid, representable JSON).
+                        entries.append(AttributeEntry(key=key, value=value))
+                elif value is None:
+                    # TB returned an explicit null for this key: no information
+                    # to persist, so skip it rather than invent a value.
+                    continue
+                else:
+                    # ThingsBoard may return a bare JSON scalar (str/int/float/
+                    # bool) or a JSON object that is not the {value,lastUpdateTs}
+                    # wrapper. Both are valid, unambiguously representable JSON,
+                    # so conserve the value as-is. lastUpdateTs is left at its
+                    # model default (0) because TB supplied no timestamp.
+                    entries.append(AttributeEntry(key=key, value=value))
+        elif isinstance(data, list):
+            for item in data:
+                if isinstance(item, AttributeEntry):
+                    entries.append(item)
+                elif isinstance(item, dict):
+                    entries.append(AttributeEntry.model_validate(item))
+                elif item is None:
+                    continue
+                else:
+                    entries.append(AttributeEntry.model_validate({"value": item}))
+        return entries
 
     async def get_timeseries_keys(self, entity_type: str, entity_id: str) -> list[str]:
         data = await self._get(
@@ -556,7 +619,7 @@ class ThingsBoardClient:
         return result or {}
 
     async def get_server_info(self) -> dict[str, Any]:
-        return await self._get("/api/info")
+        return cast("dict[str, Any]", (await self._get("/api/info")) or {})
 
     async def close(self) -> None:
         if self._client is not None:

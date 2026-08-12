@@ -5,7 +5,15 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from faker import Faker
-from trendx.thingsboard.client import Asset, Device, DeviceProfile, EntityId, PageData, Relation
+from trendx.thingsboard.client import (
+    Asset,
+    AttributeEntry,
+    Device,
+    DeviceProfile,
+    EntityId,
+    PageData,
+    Relation,
+)
 from trendx.thingsboard.discovery import InclusionRules, TopologyDiscoveryService
 
 fake = Faker()
@@ -141,9 +149,35 @@ async def test_discover_devices(service):
 
 @pytest.mark.unit
 @pytest.mark.asyncio
+async def test_discover_attributes_keeps_scalar_scope_without_dropping_others(service):
+    """A scope returning bare JSON scalars (which used to raise and drop the
+    whole scope) must now be conserved; other scopes/entities are unaffected."""
+    scalar_attrs = [
+        AttributeEntry(key="message", value="hello"),
+        AttributeEntry(key="count", value=3),
+    ]
+    wrapper_attrs = [
+        AttributeEntry(key="temperature", value=25, lastUpdateTs=123456789),
+    ]
+    service._client.get_attributes = AsyncMock(
+        side_effect=[
+            scalar_attrs,  # SERVER_SCOPE
+            wrapper_attrs,  # SHARED_SCOPE
+            [],  # CLIENT_SCOPE
+        ]
+    )
+
+    attrs = await service.discover_attributes("DEVICE", "dev-1")
+
+    assert attrs.get("message") == "hello"
+    assert attrs.get("count") == 3
+    assert attrs.get("temperature") == 25
+    assert len(attrs) == 3
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
 async def test_discover_relations(service):
-    d1 = _fake_device(eid="dev-a")
-    d2 = _fake_device(eid="dev-b")
     service._catalog.devices["dev-a"] = service._catalog.devices.get("dev-a") or Mock()
     service._catalog.devices["dev-a"].entity_id = "dev-a"
     service._catalog.devices["dev-b"] = service._catalog.devices.get("dev-b") or Mock()
@@ -170,7 +204,6 @@ async def test_validate_topology(service):
 
     assert any("empty" in i.lower() for i in issues)
 
-    d1 = _fake_device(name="good-device", eid="dev-ok")
     service._catalog.devices["dev-ok"] = service._catalog.devices.get("dev-ok") or Mock()
     service._catalog.devices["dev-ok"].name = "good-device"
     service._catalog.device_profiles.append(DeviceProfile(name="prof", type="DEFAULT"))

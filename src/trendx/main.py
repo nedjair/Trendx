@@ -4,6 +4,7 @@ import hmac
 import os
 import platform
 import sys
+import time
 import uuid
 from datetime import datetime, timezone
 from enum import Enum
@@ -25,6 +26,7 @@ from trendx.database.models import (
     MetricDefinition,
     PredictionModel,
     TrendzTask,
+    TrendzTaskExecutionRequest,
 )
 from trendx.database.repositories import (
     BusinessEntityRepository,
@@ -33,7 +35,7 @@ from trendx.database.repositories import (
     PredictionModelRepository,
     TrendzTaskRepository,
 )
-from trendx.services.tasks import TaskService
+from trendx.services.tasks import PENDING_STATE, TaskService
 
 
 class HealthResponse(BaseModel):
@@ -70,7 +72,7 @@ app.add_middleware(
 )
 
 
-# ── Authentification ────────────────────────────────────────────────────
+# ── Authentication ────────────────────────────────────────────────────
 # Tous les endpoints /api/v1/* exigent un jeton (Bearer ou X-API-Key),
 # vérifié en temps constant. Endpoints publics : infrastructure seulement.
 
@@ -99,7 +101,7 @@ async def require_auth_middleware(request: Request, call_next):
             )
         expected = settings.trendx_api_token.get_secret_value()
         if not hmac.compare_digest(provided.encode("utf-8"), expected.encode("utf-8")):
-            logger.warning("API auth refusée (jeton invalide) : {}", path)
+            logger.warning("API auth refusée (jeton invalid) : {}", path)
             return JSONResponse(
                 content={"detail": "Invalid authentication credentials"},
                 status_code=401,
@@ -798,7 +800,7 @@ async def get_telemetry_stats(
 @app.post("/api/v1/ingestion/trigger", tags=["telemetry"], response_model=DiscoveryTriggerOut)
 async def trigger_ingestion(request: Request) -> JSONResponse:
     # Verrou d'ingestion : refus systématique tant que TRENDX_INGEST_ENABLED n'est
-    # pas explicitement true, et tant que l'authentification ThingsBoard n'est pas
+    # pas explicitement true, et tant que l'authentication ThingsBoard n'est pas
     # déclarée configurée (TB_AUTH_CONFIGURED=true). Toute tentative est journalisée
     # avec son déclencheur et son horodatage (loguru).
     trigger = request.client.host if request.client else "inconnu"
@@ -1230,7 +1232,7 @@ async def get_task(task_id: str) -> JSONResponse:
     try:
         with db_manager.get_session("catalog") as session:
             repo = TrendzTaskRepository(session)
-            task = repo.get(task_id)
+            task = repo.get(_uuid(task_id))
             if task is None:
                 raise HTTPException(status_code=404, detail="Task not found")
             return JSONResponse(
@@ -1263,7 +1265,7 @@ async def cancel_task(task_id: str) -> JSONResponse:
     try:
         with db_manager.get_session("catalog") as session:
             repo = TrendzTaskRepository(session)
-            task = repo.get(task_id)
+            task = repo.get(_uuid(task_id))
             if task is None:
                 raise HTTPException(status_code=404, detail="Task not found")
             task.enabled = False
@@ -1298,9 +1300,26 @@ async def retry_task(task_id: str) -> JSONResponse:
     try:
         with db_manager.get_session("catalog") as session:
             repo = TrendzTaskRepository(session)
-            task = repo.get(task_id)
+            task = repo.get(_uuid(task_id))
             if task is None:
                 raise HTTPException(status_code=404, detail="Task not found")
+            # Re-queue the task: create a fresh PENDING execution request with a
+            # new execution_id so claim_task (NOT EXISTS execution guard) can pick
+            # it up again. The previous request and its (FAILED) execution are left
+            # untouched, preserving history.
+            request = TrendzTaskExecutionRequest(
+                task_id=task.id,
+                execution_id=uuid.uuid4(),
+                tenant_id=task.tenant_id,
+                customer_id=task.customer_id,
+                user_id=task.user_id,
+                scheduled=False,
+                job_type=task.job_type,
+                json_job=task.json_job,
+                created_ts=int(time.time() * 1000),
+                state=PENDING_STATE,
+            )
+            session.add(request)
             task.enabled = True
             session.flush()
             return JSONResponse(

@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import abc
-from typing import Any, ClassVar, Optional, cast
+import time
+import uuid
+from dataclasses import dataclass
+from typing import Any, ClassVar, cast
 
 import numpy as np
 import numpy.typing as npt
+import pandas as pd
 from loguru import logger
 from sklearn.cluster import DBSCAN, KMeans
 from sklearn.ensemble import IsolationForest
+from sqlalchemy import text
 
 try:
     from pyod.models.cblof import CBLOF
@@ -18,6 +23,12 @@ try:
     PYOD_AVAILABLE = True
 except ImportError:  # pragma: no cover
     PYOD_AVAILABLE = False
+
+from trendx.anomalies.features import FeatureExtractor
+from trendx.anomalies.scoring import AnomalyEpisode, AnomalyScorer
+from trendx.config import settings
+from trendx.database.connection import manager as db_manager
+from trendx.database.models import Anomaly
 
 
 class BaseDetector(abc.ABC):
@@ -44,8 +55,7 @@ class BaseDetector(abc.ABC):
         return self._contamination
 
     @abc.abstractmethod
-    def fit(self, features: npt.NDArray[np.float64]) -> BaseDetector:
-        ...
+    def fit(self, features: npt.NDArray[np.float64]) -> BaseDetector: ...
 
     @abc.abstractmethod
     def score(self, features: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
@@ -99,7 +109,8 @@ class IsolationForestDetector(BaseDetector):
     def fit(self, features: npt.NDArray[np.float64]) -> IsolationForestDetector:
         logger.info(
             "Fitting IsolationForest on {n} samples, {f} features",
-            n=features.shape[0], f=features.shape[1] if features.ndim > 1 else 1,
+            n=features.shape[0],
+            f=features.shape[1] if features.ndim > 1 else 1,
         )
         self._model.fit(features)
         self._fitted = True
@@ -169,7 +180,8 @@ class PyODDetector(BaseDetector):
     def fit(self, features: npt.NDArray[np.float64]) -> PyODDetector:
         logger.info(
             "Fitting PyOD {algo} on {n} samples, {f} features",
-            algo=self._algorithm, n=features.shape[0],
+            algo=self._algorithm,
+            n=features.shape[0],
             f=features.shape[1] if features.ndim > 1 else 1,
         )
         self._model.fit(features)
@@ -216,7 +228,8 @@ class ClusterDetector(BaseDetector):
     def fit(self, features: npt.NDArray[np.float64]) -> ClusterDetector:
         logger.info(
             "Fitting {algo} cluster detector on {n} samples, {f} features",
-            algo=self._algorithm, n=features.shape[0],
+            algo=self._algorithm,
+            n=features.shape[0],
             f=features.shape[1] if features.ndim > 1 else 1,
         )
 
@@ -285,7 +298,7 @@ DETECTOR_REGISTRY: dict[str, type[BaseDetector]] = {
 
 def create_detector(
     algorithm: str,
-    params: Optional[dict[str, Any]] = None,
+    params: dict[str, Any] | None = None,
 ) -> BaseDetector:
     """Factory function — instantiate a detector by name.
 
@@ -318,3 +331,285 @@ def create_detector(
         return PyODDetector(algorithm=algorithm, **params)
 
     return cls(**params)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# AnomalyDetectorService
+# ─────────────────────────────────────────────────────────────────────────
+
+# Mappe les alias de l'API (ex: "IForest") vers les clés du DETECTOR_REGISTRY.
+_ALGO_ALIASES: dict[str, str] = {
+    "iforest": "IsolationForest",
+    "if": "IsolationForest",
+    "isolationforest": "IsolationForest",
+}
+
+
+def _normalize_algorithm(algorithm: str) -> str:
+    """Normalise un alias d'algorithme vers une clé du ``DETECTOR_REGISTRY``."""
+    return _ALGO_ALIASES.get(algorithm.strip().lower(), algorithm)
+
+
+@dataclass
+class TrainedDetector:
+    """Handle léger retourné par ``AnomalyDetectorService.train``.
+
+    Le schéma Trendz 1.15.0 ne possède pas de table ORM pour les détecteurs
+    d'anomalies entraînés : le service conserve le détecteur ajusté dans un
+    store mémoire injecté (clé = ``id``) et journalise (best-effort) la
+    lignée dans MLflow. L'objet expose au minimum ``.id``, ``.entity_id``,
+    ``.metric_key`` et ``.algorithm`` (consommés par l'endpoint).
+    """
+
+    id: str
+    entity_id: str
+    metric_key: str
+    algorithm: str
+    model_uri: str | None = None
+
+
+class AnomalyDetectorService:
+    """Orchestre l'entraînement et le scan de détecteurs d'anomalies.
+
+    Réutilise les abstractions existantes : ``FeatureExtractor`` (features),
+    ``AnomalyScorer`` (score/ASI/épisodes), ``create_detector`` (détecteurs),
+    et ``db_manager`` pour la lecture de télémétrie (analytics) et la
+    persistance des épisodes (catalog). N'écrit jamais dans ThingsBoard.
+    """
+
+    def __init__(
+        self,
+        tracker: Any | None = None,
+        detector_store: dict[str, BaseDetector] | None = None,
+        window_size: int | None = None,
+    ) -> None:
+        # Tous les arguments ont une valeur par défaut : l'endpoint appelle
+        # ``AnomalyDetectorService()`` sans argument.
+        self._tracker = tracker
+        self._store: dict[str, BaseDetector] = detector_store if detector_store is not None else {}
+        self._window = window_size or settings.anomaly_window_size
+
+    # ── Accès données (miroir TrainingService._fetch_training_data) ───────
+
+    def _fetch_series(self, entity_id: str, metric_key: str, limit: int) -> pd.Series:
+        engine = db_manager.get_engine("analytics")
+        stmt = text(
+            """
+            SELECT ts, dbl_v AS value
+            FROM ts_kv
+            WHERE entity_id = :eid
+              AND metric_key = :key
+              AND dbl_v IS NOT NULL
+            ORDER BY ts DESC
+            LIMIT :lim
+            """
+        )
+        with engine.connect() as conn:
+            rows = conn.execute(
+                stmt, {"eid": entity_id, "key": metric_key, "lim": limit}
+            ).fetchall()
+        if not rows:
+            return pd.Series(dtype="float64")
+        df = pd.DataFrame(rows, columns=["ts", "value"])
+        df["ts"] = pd.to_datetime(df["ts"])
+        df = df.sort_values("ts").reset_index(drop=True)
+        series = pd.Series(
+            df["value"].values.astype(np.float64),
+            index=pd.DatetimeIndex(df["ts"].values),
+        )
+        return series
+
+    @staticmethod
+    def _build_features(
+        series: pd.Series, window_size: int
+    ) -> tuple[npt.NDArray[Any] | None, npt.NDArray[Any] | None]:
+        """Construit la matrice de features normalisées + timestamps des fenêtres.
+
+        Renvoie ``(None, None)`` si la série est trop courte pour former une
+        fenêtre. La matrice est normalisée (robust) comme attendu par les
+        détecteurs et par ``AnomalyScorer``.
+        """
+        extractor = FeatureExtractor(window_size=window_size)
+        features_df = extractor.extract_features(series, window_size=window_size)
+        if features_df.empty:
+            return None, None
+        feat_cols = [c for c in features_df.columns if c not in ("_start", "_end")]
+        sub = features_df[feat_cols].select_dtypes(include=[np.number])
+        if sub.empty:
+            return None, None
+        normalized = extractor.normalize_features(sub, method="robust")
+        matrix = normalized.values.astype(np.float64)
+        timestamps = features_df.index.values
+        return matrix, timestamps
+
+    @staticmethod
+    def _as_uuid(value: Any) -> uuid.UUID | None:
+        if not value:
+            return None
+        try:
+            return uuid.UUID(str(value))
+        except (ValueError, AttributeError, TypeError):
+            return None
+
+    # ── train ─────────────────────────────────────────────────────────────
+
+    def train(
+        self,
+        entity_id: str,
+        metric_key: str,
+        algorithm: str,
+        contamination: float = 0.01,
+        window_size: int | None = None,
+    ) -> TrainedDetector | None:
+        w = window_size or self._window
+        logger.info(
+            "Training anomaly detector: {}/{} algorithm={} window={}",
+            entity_id,
+            metric_key,
+            algorithm,
+            w,
+        )
+        series = self._fetch_series(entity_id, metric_key, limit=max(w * 8, 200))
+        if series.empty or len(series) < w:
+            logger.error("Insufficient data for {}/{}", entity_id, metric_key)
+            return None
+        matrix, _ = self._build_features(series, w)
+        if matrix is None or matrix.shape[0] < 2:
+            logger.error("Insufficient windows for {}/{}", entity_id, metric_key)
+            return None
+
+        algo = _normalize_algorithm(algorithm)
+        detector = create_detector(algo, {"contamination": contamination})
+        detector.fit(matrix)
+
+        detector_id = str(uuid.uuid4())
+        self._store[detector_id] = detector
+
+        model_uri = self._log_to_mlflow(detector_id, entity_id, metric_key, algo, contamination, w)
+
+        return TrainedDetector(
+            id=detector_id,
+            entity_id=entity_id,
+            metric_key=metric_key,
+            algorithm=algo,
+            model_uri=model_uri,
+        )
+
+    def _log_to_mlflow(
+        self,
+        detector_id: str,
+        entity_id: str,
+        metric_key: str,
+        algorithm: str,
+        contamination: float,
+        window_size: int,
+    ) -> str | None:
+        """Journalise la lignée du détecteur dans MLflow (best-effort).
+
+        Ne rend PAS le fonctionnement local dépendant d'un serveur MLflow :
+        tout échec est ignoré et ``None`` est renvoyé.
+        """
+        if self._tracker is None:
+            return None
+        try:
+            run_id = self._tracker.start_run(
+                f"anomaly_{entity_id[:12]}_{metric_key}",
+                run_name=f"{algorithm}_{int(time.time())}",
+                tags={
+                    "entity_id": entity_id,
+                    "metric_key": metric_key,
+                    "algorithm": algorithm,
+                    "task": "anomaly_detector",
+                },
+            )
+            self._tracker.log_params(
+                {
+                    "contamination": contamination,
+                    "window_size": window_size,
+                    "algorithm": algorithm,
+                }
+            )
+            self._tracker.end_run("FINISHED")
+            return f"runs:/{run_id}/model"
+        except Exception as exc:  # pragma: no cover - best effort
+            logger.warning("MLflow logging skipped for anomaly detector: {}", exc)
+            return None
+
+    # ── scan ──────────────────────────────────────────────────────────────
+
+    def scan(
+        self,
+        entity_id: str,
+        metric_key: str,
+        detector_id: str | None = None,
+    ) -> list[AnomalyEpisode]:
+        w = self._window
+        logger.info("Scanning anomalies: {}/{} detector={}", entity_id, metric_key, detector_id)
+        series = self._fetch_series(entity_id, metric_key, limit=max(w * 4, 100))
+        if series.empty or len(series) < w:
+            logger.warning("Insufficient data for scan {}/{}", entity_id, metric_key)
+            return []
+        matrix, timestamps = self._build_features(series, w)
+        if matrix is None or matrix.shape[0] < 1 or timestamps is None:
+            return []
+
+        detector = self._resolve_detector(detector_id)
+        if detector is None:
+            # Comportement stateless diagnostiqué : entraînement à la volée
+            # sur les données récentes (aucun état partagé requis).
+            detector = create_detector(
+                "IsolationForest", {"contamination": settings.anomaly_contamination}
+            )
+            detector.fit(matrix)
+
+        raw = detector.score(matrix)
+        normalized = AnomalyScorer.compute_anomaly_score(raw)
+        episodes = AnomalyScorer.score_to_episodes(normalized, timestamps)
+        self._persist_episodes(episodes, entity_id, metric_key, detector_id)
+        return episodes
+
+    def _resolve_detector(self, detector_id: str | None) -> BaseDetector | None:
+        if detector_id is None:
+            return None
+        detector = self._store.get(detector_id)
+        if detector is None:
+            logger.warning("Detector {} not found in store; using stateless scan", detector_id)
+        return detector
+
+    def _persist_episodes(
+        self,
+        episodes: list[AnomalyEpisode],
+        entity_id: str,
+        metric_key: str,
+        detector_id: str | None,
+    ) -> None:
+        """Persiste les épisodes dans la table ORM ``anomaly`` existante.
+
+        Utilise exclusivement ``db_manager.get_session("catalog")`` (commit
+        automatique en sortie de contexte). Aucune écriture dans
+        ``scored_point_anomaly`` (schéma inadapté) ni dans ThingsBoard.
+
+        Risque de duplication connu (pas d'upsert/dispo en 0.4) : documenté,
+        à traiter en phase fonctionnelle ultérieure.
+        """
+        if not episodes:
+            return
+        try:
+            with db_manager.get_session("catalog") as session:
+                for ep in episodes:
+                    session.add(
+                        Anomaly(
+                            id=uuid.uuid4(),
+                            item_id=self._as_uuid(entity_id),
+                            item_name=metric_key,
+                            start_ts=int(ep.start.timestamp() * 1000),
+                            end_ts=int(ep.end.timestamp() * 1000),
+                            cluster_id=None,
+                            score=float(ep.peak_score),
+                            score_index=int(round(ep.anomaly_score_index)),
+                            model_id=self._as_uuid(detector_id) if detector_id else None,
+                            alarm_id=None,
+                        )
+                    )
+        except Exception as exc:  # non-fatal : le scan renvoie quand même les épisodes
+            logger.error("Failed to persist anomaly episodes: {}", exc)
