@@ -103,6 +103,27 @@ def _scalar(params: dict[str, str], sql: str, args: tuple = ()):
         conn.close()
 
 
+def _scalar_commit(params: dict[str, str], sql: str, args: tuple = ()):
+    """Execute a statement, fetch its scalar result, then COMMIT.
+
+    psycopg2 runs with autocommit=False by default; without an explicit
+    commit, conn.close() rolls back the transaction and discards any writes
+    performed by the statement (e.g. refresh_aggregate populating
+    ts_kv_hourly and aggregate_watermarks). Use this for statements that
+    write; keep _scalar for read-only queries.
+    """
+    conn = _connect(params)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(sql, args)
+            row = cur.fetchone()
+            value = row[0] if row else None
+        conn.commit()
+        return value
+    finally:
+        conn.close()
+
+
 def _relkind(params: dict[str, str], schema: str, table: str) -> str | None:
     conn = _connect(params)
     try:
@@ -378,7 +399,10 @@ def test_migration_010_refresh_aggregate_hourly():
         (entity_id, metric_key),
     )
 
-    result = _scalar(params, "SELECT trendx_analytics.refresh_aggregate('hourly')")
+    # refresh_aggregate('hourly') WRITES to ts_kv_hourly and aggregate_watermarks;
+    # it must be committed (see _scalar_commit) or the implicit rollback on
+    # close() would discard those writes before the assertions below run.
+    result = _scalar_commit(params, "SELECT trendx_analytics.refresh_aggregate('hourly')")
     assert result is not None, "refresh_aggregate('hourly') must execute without error"
 
     agg_rows = _scalar(
