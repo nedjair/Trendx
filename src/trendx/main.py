@@ -427,8 +427,8 @@ class StatsOut(BaseModel):
 def _uuid(val: str) -> uuid.UUID:
     try:
         return uuid.UUID(val)
-    except ValueError:
-        raise HTTPException(status_code=400, detail=f"Invalid UUID: {val}")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid UUID: {val}") from exc
 
 
 def _to_entity_out(e: Any) -> dict[str, Any]:
