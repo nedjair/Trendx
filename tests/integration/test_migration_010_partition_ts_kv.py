@@ -199,8 +199,8 @@ def test_migration_010_partitions_coverage_and_no_default():
         params,
         """
         SELECT bool_or(
-            pg_get_expr(c.relpartbound, c.oid) ILIKE '%DEFAULT%'
-            OR pg_get_expr(c.relpartbound, c.oid) ILIKE '%MAXVALUE%'
+            pg_get_expr(c.relpartbound, c.oid) ILIKE '%%DEFAULT%%'
+            OR pg_get_expr(c.relpartbound, c.oid) ILIKE '%%MAXVALUE%%'
         )
         FROM pg_inherits i
         JOIN pg_class p ON p.oid = i.inhparent
@@ -362,16 +362,20 @@ def test_migration_010_refresh_aggregate_hourly():
     params = _pg_conn_params()
     entity_id = str(uuid.uuid4())
     metric_key = f"b5_agg_{uuid.uuid4().hex[:8]}"
-    now = datetime.datetime.now(datetime.UTC)
-    ts = now.isoformat()
 
+    # Insert a row whose ts is evaluated server-side so it is guaranteed to be
+    # within refresh_aggregate('hourly')'s 3-hour window (clock_timestamp() - 3h)
+    # AND inside the current-month ts_kv partition (clamped to month start to
+    # avoid the rare month-boundary edge case). Avoids any client/server clock
+    # skew between datetime.now() and the server's clock_timestamp().
     _execute(
         params,
         "INSERT INTO trendx_analytics.ts_kv "
         "(ts, entity_id, metric_key, dbl_v, source, ingestion_id) "
-        "VALUES (%s, %s, %s, 7.0, 'test', 'b5') "
+        "VALUES (greatest(clock_timestamp() - interval '1 hour', "
+        "date_trunc('month', now())), %s, %s, 7.0, 'test', 'b5') "
         "ON CONFLICT (ts, entity_id, metric_key) DO NOTHING",
-        (ts, entity_id, metric_key),
+        (entity_id, metric_key),
     )
 
     result = _scalar(params, "SELECT trendx_analytics.refresh_aggregate('hourly')")

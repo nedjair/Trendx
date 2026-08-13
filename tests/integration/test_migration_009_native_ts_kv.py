@@ -186,6 +186,18 @@ def _scalar(params: dict[str, str], sql: str, args: tuple = ()):
         conn.close()
 
 
+def _safe_partition_ts(params: dict[str, str]) -> str:
+    """Return an ISO-8601 UTC timestamp guaranteed to fall inside the current
+    month's ts_kv partition (the first partition always created by migration
+    010's +3-months horizon on a fresh DB). Computed server-side so it does not
+    depend on any client/server clock skew."""
+    return _scalar(
+        params,
+        "SELECT to_char(date_trunc('month', now()) + interval '15 days', "
+        '\'YYYY-MM-DD"T"HH24:MI:SS"+00:00"\')',
+    )
+
+
 def test_migration_009_tables_exist():
     params = _pg_conn_params()
     assert _table_exists(
@@ -214,7 +226,7 @@ def test_migration_009_ts_kv_insert_and_upsert():
     """Real INSERT + UPSERT on ts_kv, matching IngestionService._store_telemetry."""
     params = _pg_conn_params()
     entity_id = str(uuid.uuid4())
-    ts = "2026-01-01T00:00:00+00:00"
+    ts = _safe_partition_ts(params)
     metric_key = "temperature"
 
     # First INSERT (mirrors ingestion.py:320).
@@ -275,7 +287,7 @@ def test_migration_009_ts_kv_latest_upsert():
     """Real UPSERT on ts_kv_latest, matching IngestionService._store_telemetry."""
     params = _pg_conn_params()
     entity_id = str(uuid.uuid4())
-    ts = "2026-01-01T00:00:00+00:00"
+    ts = _safe_partition_ts(params)
     metric_key = "temperature"
 
     _execute(
