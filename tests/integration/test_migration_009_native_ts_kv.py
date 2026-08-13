@@ -12,9 +12,11 @@ NATIVE PostgreSQL, NO TimescaleDB — and proves:
   * a REAL ``INSERT`` and ``UPSERT`` (``ON CONFLICT``) works on ``ts_kv``;
   * a REAL ``UPSERT`` works on ``ts_kv_latest``;
   * idempotence: re-inserting the same primary key keeps exactly one row;
-  * on native PostgreSQL the table is a plain heap (``relkind = 'r'``), i.e. NOT
-    a hypertable/partitioned table — documenting the B5 distinction:
-    "unblock ts_kv" != "full B5 compliance";
+  * on native PostgreSQL the table is a DECLARATIVELY PARTITIONED table
+    (``relkind = 'p'``), i.e. NOT a TimescaleDB hypertable — per B5
+    (TimescaleDB refused). Migration 010 turns the 009 plain heap into
+    ``PARTITION BY RANGE(ts)``; the full partitioning/BRIN contract is asserted
+    in test_migration_010_partition_ts_kv;
   * the migration file itself is idempotent (``IF NOT EXISTS``) and native-only
     (guarded by ``NOT EXISTS timescaledb``), with no ``create_hypertable`` call.
 
@@ -26,7 +28,7 @@ further and validate the real INSERT/UPSERT path that ingestion depends on.
 Selection
 ---------
 Selected by the ``integration`` marker and run inside the shared
-``test-integration`` job, which now applies ``001``->``006`` *plus* ``009``.
+``test-integration`` job, which now applies ``001``->``006`` *plus* ``009`` *plus* ``010``.
 It is intentionally NOT marked ``migration_apply``: it asserts the post-state of
 an already-applied migration rather than re-applying a non-idempotent migration
 on a fresh database.
@@ -328,13 +330,15 @@ def test_migration_009_ts_kv_latest_upsert():
 
 
 def test_migration_009_native_heap():
-    """On native PostgreSQL, ts_kv must be a plain heap (relkind 'r'), not a
-    hypertable or partitioned table — documenting the B5 distinction."""
+    """On native PostgreSQL, ts_kv must be a declaratively partitioned table
+    (relkind 'p'), not a TimescaleDB hypertable — per B5 (TimescaleDB refused).
+    Migration 010 turns the 009 plain heap into PARTITION BY RANGE(ts);
+    exhaustive partitioning/BRIN checks live in test_migration_010_partition_ts_kv."""
     params = _pg_conn_params()
     relkind = _relkind(params, SCHEMA, "ts_kv")
     assert (
-        relkind == "r"
-    ), f"{SCHEMA}.ts_kv must be a plain table on native PG (relkind='r'), got {relkind!r}"
+        relkind == "p"
+    ), f"{SCHEMA}.ts_kv must be a partitioned table on native PG (relkind='p'), got {relkind!r}"
 
 
 def test_migration_009_idempotence_characteristic():
