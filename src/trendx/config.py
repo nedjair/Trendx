@@ -79,6 +79,14 @@ class Settings(BaseSettings):
     tb_db_name: str = Field(default="thingsboard", alias="TB_DB_NAME")
     tb_db_readonly_user: str | None = Field(default=None, alias="TB_DB_READONLY_USER")
     tb_db_readonly_password: SecretStr | None = Field(default=None, alias="TB_DB_READONLY_PASSWORD")
+    # Canal 2 (SQL read-only) : bornes de session. Les deux niveaux coexistent
+    # avec la protection côté rôle PostgreSQL (ALTER ROLE trendx_ro ...).
+    tb_db_connect_timeout: int = Field(default=10, alias="TB_DB_CONNECT_TIMEOUT")
+    tb_db_statement_timeout: int = Field(default=60000, alias="TB_DB_STATEMENT_TIMEOUT")
+    tb_db_sslmode: str = Field(default="prefer", alias="TB_DB_SSLMODE")
+    # Fenêtre de recouvrement (overlap) entre deux checkpoints d'ingestion.
+    # 1h par défaut : reprise sans lacune, avec déduplication/idempotence DB.
+    tb_ingest_recovery_window_hours: int = Field(default=1, alias="TB_INGEST_RECOVERY_WINDOW_HOURS")
 
     pg_admin_host: str = Field(default="mobili_dahsboard-postgres-1", alias="PG_ADMIN_HOST")
     pg_admin_port: int = Field(default=5432, alias="PG_ADMIN_PORT")
@@ -179,9 +187,19 @@ class Settings(BaseSettings):
 
     def tb_db_readonly_dsn(self) -> str | None:
         if self.tb_db_readonly_user and self.tb_db_readonly_password:
+            # Les paramètres de session (statement_timeout, connect_timeout,
+            # sslmode, read-only) sont appliqués côté rôle PostgreSQL (ALTER ROLE
+            # trendx_ro) ET ici au niveau libpq, pour garantir le bornage même si
+            # le rôle est reconfiguré. connect_timeout n'est pas un paramètre de
+            # session : il est transmis séparément à psycopg2.connect().
+            opts = (
+                f"-c statement_timeout={self.tb_db_statement_timeout}"
+                f" -c default_transaction_read_only=on"
+            )
             return (
                 f"postgresql://{self.tb_db_readonly_user}:{self.tb_db_readonly_password.get_secret_value()}"
                 f"@{self.tb_db_host}:{self.tb_db_port}/{self.tb_db_name}"
+                f"?sslmode={self.tb_db_sslmode}&options={opts.replace(' ', '%20')}"
             )
         return None
 

@@ -537,6 +537,20 @@ class IngestionService:
             current = next_ts
         return windows
 
+    def _build_recovery_window(
+        self, checkpoint_ts: datetime, now: datetime | None = None
+    ) -> tuple[datetime, datetime]:
+        """Fenêtre de reprise avec recouvrement.
+
+        Le début est reculé de ``TB_INGEST_RECOVERY_WINDOW_HOURS`` par rapport au
+        checkpoint, pour rattraper d'éventuelles données en retard. L'UPSERT/PK
+        côté ``ts_kv`` garantit l'idempotence (aucune duplication).
+        """
+        now_dt = now or datetime.now(UTC)
+        recovery = timedelta(hours=settings.tb_ingest_recovery_window_hours)
+        start = checkpoint_ts - recovery
+        return start, now_dt
+
     async def ingest_device_metric(
         self,
         entity_id: str,
@@ -665,6 +679,11 @@ class IngestionService:
             return []
 
         now = datetime.now(UTC)
+        # Fenêtre de recouvrement (overlap) : reprise sans lacune temporelle.
+        # Quand un checkpoint existe, on recule le début de la fenêtre de
+        # `recovery_window_hours` (via _build_recovery_window) pour rattraper
+        # d'éventuelles données en retard ; l'UPSERT/PK garantit l'idempotence
+        # (aucune duplication).
         results: list[dict[str, Any]] = []
 
         for device in devices:
@@ -674,7 +693,7 @@ class IngestionService:
                 try:
                     cp = self._get_checkpoint(eid, key)
                     if cp is not None:
-                        start_ts = cp
+                        start_ts, _ = self._build_recovery_window(cp, now)
                     else:
                         start_ts = now - timedelta(days=settings.training_lookback_days)
 

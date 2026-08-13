@@ -26,9 +26,10 @@ class EngineWrapper:
         pool_size: int = DEFAULT_POOL_SIZE,
         max_overflow: int = DEFAULT_MAX_OVERFLOW,
         search_path: str | None = None,
+        connect_timeout: int = 10,
     ) -> None:
         self.name = name
-        connect_args: dict[str, Any] = {"connect_timeout": 10}
+        connect_args: dict[str, Any] = {"connect_timeout": connect_timeout}
         if search_path:
             connect_args["options"] = "-c search_path=" + search_path
         self.engine = create_engine(
@@ -65,12 +66,18 @@ class DatabaseManager:
         pool_size: int = DEFAULT_POOL_SIZE,
         max_overflow: int = DEFAULT_MAX_OVERFLOW,
         search_path: str | None = None,
+        connect_timeout: int = 10,
     ) -> None:
         if name in self._engines:
             logger.warning("Engine '{}' already registered, skipping", name)
             return
         wrapper = EngineWrapper(
-            name, dsn, pool_size=pool_size, max_overflow=max_overflow, search_path=search_path
+            name,
+            dsn,
+            pool_size=pool_size,
+            max_overflow=max_overflow,
+            search_path=search_path,
+            connect_timeout=connect_timeout,
         )
         self._engines[name] = wrapper
         self._sessionmakers[name] = sessionmaker(bind=wrapper.engine, expire_on_commit=False)
@@ -158,8 +165,20 @@ def _register_default_engines() -> None:
     )
     ro_dsn = settings.tb_db_readonly_dsn()
     if ro_dsn:
-        manager.register("tb_readonly", ro_dsn, pool_size=1, max_overflow=0, search_path="public")
-        logger.info("Registered read-only ThingsBoard engine (tb_readonly, pool=1/0)")
+        manager.register(
+            "tb_readonly",
+            ro_dsn,
+            pool_size=1,
+            max_overflow=0,
+            search_path="public",
+            connect_timeout=settings.tb_db_connect_timeout,
+        )
+        logger.info(
+            "Registered read-only ThingsBoard engine (tb_readonly, pool=1/0, "
+            "connect_timeout=%ss, statement_timeout=%sms via DSN/role)",
+            settings.tb_db_connect_timeout,
+            settings.tb_db_statement_timeout,
+        )
 
     logger.info("Default engines registered (catalog, analytics[, tb_readonly])")
 
