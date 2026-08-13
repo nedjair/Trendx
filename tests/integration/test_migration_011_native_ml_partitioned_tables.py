@@ -98,6 +98,11 @@ def _scalar(params: dict[str, str], sql: str, args: tuple = ()):
         with conn.cursor() as cur:
             cur.execute(sql, args)
             row = cur.fetchone()
+            # ensure_partitions_forward() performs DDL (CREATE TABLE PARTITION OF).
+            # psycopg2 opens a transaction for the function call and would ROLL
+            # BACK on close() if we don't commit, discarding the partitions it
+            # created. Commit unconditionally: a no-op after a plain SELECT.
+            conn.commit()
             return row[0] if row else None
     finally:
         conn.close()

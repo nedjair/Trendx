@@ -127,28 +127,7 @@ BEGIN
       extra JSONB
   ) PARTITION BY RANGE (ts);
 
-  -- Propriété / droits (modèle identique à 004) :
-  --   ensure_partitions_forward() (004) est SECURITY DEFINER, propriétaire
-  --   trendx_migration ; elle crée les partitions enfants via
-  --   'CREATE TABLE ... PARTITION OF <parent>'. Dans PostgreSQL, attacher une
-  --   partition exige la PROPRIÉTÉ du parent (pas seulement CREATE sur le
-  --   schéma). On transfère donc la propriété des 4 parents à trendx_migration
-  --   (comme 004 le fait pour ts_kv_hourly/_daily/_weekly), ce qui rend la
-  --   maintenance forward opérationnelle SANS modifier 004 ni 002.
-  --   Les partitions futures hériteront de cette propriété.
-  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'trendx_migration') THEN
-    ALTER TABLE trendx_analytics.predictions    OWNER TO trendx_migration;
-    ALTER TABLE trendx_analytics.anomaly_scores OWNER TO trendx_migration;
-    ALTER TABLE trendx_analytics.data_quality   OWNER TO trendx_migration;
-    ALTER TABLE trendx_analytics.ml_metrics     OWNER TO trendx_migration;
-    -- CREATE + USAGE sur le schéma (idempotent) : necessaires au cas où le
-    -- schéma existerait deja sans ces droits pour trendx_migration. CREATE
-    -- permet de créer les partitions enfants ; USAGE permet à la fonction
-    -- SECURITY DEFINER de référencer le parent pour l'attachement PARTITION OF.
-    GRANT CREATE, USAGE ON SCHEMA trendx_analytics TO trendx_migration;
-  END IF;
-
-  -- DML applicatif : accordé à trendx_app. Les GRANTs sur le parent PARENT
+  -- DML applicatif : accordé à trendx_app. Les GRANTs sur le parent
   -- sont hérités par les partitions futures créées par ensure_partitions_forward().
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'trendx_app') THEN
     GRANT SELECT, INSERT, UPDATE, DELETE
@@ -157,6 +136,98 @@ BEGIN
            trendx_analytics.data_quality,
            trendx_analytics.ml_metrics
         TO trendx_app;
+  END IF;
+END;
+$$;
+
+-- ============================================================================
+-- Transfert de propriété OBLIGATOIRE vers trendx_migration
+-- ----------------------------------------------------------------------------
+-- ensure_partitions_forward() (004) est SECURITY DEFINER, propriétaire
+-- trendx_migration : elle s'exécute DONC avec les droits de trendx_migration,
+-- et non de l'appelant. Pour 'CREATE TABLE ... PARTITION OF <parent>', le
+-- propriétaire effectif (trendx_migration) DOIT ÊTRE PROPRIÉTAIRE du parent
+-- (la propriété du schéma + CREATE ne suffit pas). Si les 4 parents ML
+-- restent propriété de trendx_app, la fonction ne lève PAS d'erreur mais
+-- n'attache AUCUNE partition (silencieusement) -> échec latent en CI.
+--
+-- 009/010 placent déjà ts_kv sous trendx_migration ; 011 doit en faire
+-- autant pour les 4 tables ML, SANS dépendre de l'étape de bootstrap CI
+-- (création du rôle trendx_migration / GRANT trendx_migration TO trendx_app)
+-- qui peut être sautée ou retardée. D'où le bloc auto-suffisant ci-dessous :
+--   1) crée trendx_migration si absent ;
+--   2) donne trendx_app comme MEMBRE de trendx_migration (permet le transfert
+--      de propriété et rend le chemin SECURITY DEFINER opérationnel) ;
+--   3) transfère la propriété des 4 parents à trendx_migration ;
+--   4) accorde CREATE, USAGE sur le schéma à trendx_migration.
+-- Idempotent et ré-applicable. Sauté si TimescaleDB (002 est propriétaire).
+-- ============================================================================
+DO $$
+DECLARE
+  v_role_exists boolean;
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'timescaledb') THEN
+    RAISE NOTICE '[trendx-migrate] TimescaleDB détecté, saut du transfert de propriété 011';
+    RETURN;
+  END IF;
+
+  -- 1) rôle trendx_migration (si absent). Nécessite superuser ou createrole ;
+  --    en CI le runner (trendx_app = POSTGRES_USER) est superuser.
+  SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'trendx_migration')
+    INTO v_role_exists;
+  IF NOT v_role_exists THEN
+    BEGIN
+      CREATE ROLE trendx_migration LOGIN PASSWORD 'trendx_migration_pass';
+    EXCEPTION WHEN duplicate_object THEN
+      NULL;
+    END;
+    SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'trendx_migration')
+      INTO v_role_exists;
+  END IF;
+
+  IF v_role_exists THEN
+    -- 2) trendx_app membre de trendx_migration : condition requise pour que le
+    --    transfert de propriété (ci-dessous) et le chemin SECURITY DEFINER
+    --    soient autorisés. On ne l'ajoute QUE si ce n'est pas déjà le cas, et
+    --    on ignore silencieusement l'échec (un runner non-superuser sans
+    --    privilège ne peut pas s'auto-octroyer l'appartenance ; le bootstrap CI
+    --    s'en charge, ou le runner est déjà membre). L'important est le
+    --    transfert de propriété en 3), qui réussit si le runner est superuser
+    --    (cas CI : POSTGRES_USER=trendx_app) ou déjà membre de trendx_migration.
+    IF EXISTS (
+         SELECT 1 FROM pg_roles a
+         JOIN pg_auth_members m ON m.member = a.oid
+         JOIN pg_roles r ON r.oid = m.roleid
+         WHERE a.rolname = 'trendx_app' AND r.rolname = 'trendx_migration'
+       ) IS NOT TRUE
+       AND EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'trendx_app') THEN
+      BEGIN
+        EXECUTE 'GRANT trendx_migration TO trendx_app';
+      EXCEPTION WHEN OTHERS THEN
+        NULL;
+      END;
+    END IF;
+
+    -- 3) transfert de propriété des parents vers trendx_migration.
+    --    Les 4 tables ML (créées ci-dessus) PLUS ts_kv (créée par 009/010,
+    --    propriété trendx_app) : ensure_partitions_forward() (004) itère sur
+    --    les 5 et s'exécute comme trendx_migration, donc TOUS les parents
+    --    doivent lui appartenir pour que l'attachement de partition réussisse.
+    --    ts_kv n'existe qu'en profil natif (009/010) ; le IF EXISTS évite
+    --    l'erreur en profil TimescaleDB (où 002 l'a créée comme hypertable).
+    ALTER TABLE trendx_analytics.predictions    OWNER TO trendx_migration;
+    ALTER TABLE trendx_analytics.anomaly_scores OWNER TO trendx_migration;
+    ALTER TABLE trendx_analytics.data_quality   OWNER TO trendx_migration;
+    ALTER TABLE trendx_analytics.ml_metrics     OWNER TO trendx_migration;
+    IF EXISTS (SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+               WHERE n.nspname = 'trendx_analytics' AND c.relname = 'ts_kv' AND c.relkind = 'p') THEN
+      ALTER TABLE trendx_analytics.ts_kv OWNER TO trendx_migration;
+    END IF;
+
+    -- 4) CREATE + USAGE sur le schéma : CREATE permet de créer les partitions
+    --    enfants ; USAGE permet à la fonction SECURITY DEFINER de référencer le
+    --    parent pour l'attachement PARTITION OF.
+    GRANT CREATE, USAGE ON SCHEMA trendx_analytics TO trendx_migration;
   END IF;
 END;
 $$;

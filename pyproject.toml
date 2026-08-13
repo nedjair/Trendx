@@ -130,6 +130,7 @@ instanciation = "instanciation"
 fonctions = "fonctions"
 fonction = "fonction"
 attachement = "attachement"
+transfert = "transfert"
 # SQL table alias used in integration tests (pg_namespace AS pn)
 pn = "pn"
 
