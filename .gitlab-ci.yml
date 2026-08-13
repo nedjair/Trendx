@@ -117,7 +117,7 @@ test-integration:
       # (out of P1 scope, see above).
       for f in migrations/001_*.sql migrations/002_*.sql migrations/003_*.sql \
                migrations/004_*.sql migrations/005_*.sql migrations/006_*.sql \
-               migrations/009_*.sql; do
+               migrations/009_*.sql migrations/010_*.sql; do
         [ -e "${f}" ] || continue
         echo ">>> applying ${f}"
         PGPASSWORD="$POSTGRES_PASSWORD" psql -h postgres -U trendx_app -d trendx \
