@@ -109,8 +109,15 @@ test-integration:
       # Migration 003 (003_schema_alignment.sql) was applied OUT-OF-BAND
       # (see docs/audit-phase2-after.md) and is not part of the file-based CI
       # chain; the [ -e ] guard below simply skips it. Do NOT create a 003 file here.
+      # Migration 009 (native ts_kv / ts_kv_latest) is required by the P1 integration
+      # test test_migration_009_native_ts_kv.py: on native PostgreSQL 002 is a no-op,
+      # so ts_kv does not exist unless 009 is applied. 009 runs AFTER 004 (it creates
+      # a plain heap, not a partitioned table, so ensure_partitions_forward() is not
+      # triggered and the chain stays green). Migrations 007/008 remain skipped here
+      # (out of P1 scope, see above).
       for f in migrations/001_*.sql migrations/002_*.sql migrations/003_*.sql \
-               migrations/004_*.sql migrations/005_*.sql migrations/006_*.sql; do
+               migrations/004_*.sql migrations/005_*.sql migrations/006_*.sql \
+               migrations/009_*.sql; do
         [ -e "${f}" ] || continue
         echo ">>> applying ${f}"
         PGPASSWORD="$POSTGRES_PASSWORD" psql -h postgres -U trendx_app -d trendx \
