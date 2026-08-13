@@ -133,6 +133,12 @@ attachement = "attachement"
 transfert = "transfert"
 # SQL table alias used in integration tests (pg_namespace AS pn)
 pn = "pn"
+# French vocabulary préexistant dans src/ (HEAD a7726ca) — non lié au diff 012.
+# Ajouté pour débloquer le hook typos sur du contenu déjà committé.
+persistance = "persistance"
+explicite = "explicite"
+valide = "valide"
+invalide = "invalide"
 
 # Baseline technique préexistante (HEAD 050c0ae) : src/trendx/main.py contient 41
 # diagnostics "Untyped decorator" FastAPI en mode strict, non liés a Wave 3 et non
