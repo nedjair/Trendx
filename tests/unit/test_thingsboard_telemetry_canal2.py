@@ -143,6 +143,10 @@ def test_incremental_uses_overlap_window(monkeypatch):
         batch_size=100,
         window_hours=24,
     )
+    # Isolate the disk guard: this unit test validates the overlap recovery
+    # window, not the production disk-capacity fail-closed guard. The guard
+    # itself remains active and unchanged in src/trendx/services/ingestion.py.
+    svc.ensure_disk_available = lambda *a, **k: None  # type: ignore[method-assign]
     mock_session = MagicMock()
     mock_session.__enter__ = MagicMock(return_value=mock_session)
     mock_session.__exit__ = MagicMock(return_value=None)
