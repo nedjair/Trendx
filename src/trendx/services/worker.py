@@ -305,7 +305,7 @@ if HAS_APSCHEDULER:
     _AGG_ALERT_THRESHOLD = 2
 
     def _call_db_function(sql: str, params: dict[str, Any]) -> Any:
-        engine = get_analytics_engine()  # type: ignore[no-untyped-call]
+        engine = get_analytics_engine()
         with engine.begin() as conn:
             return conn.execute(text(sql), params).scalar_one()
 
@@ -373,6 +373,20 @@ if HAS_APSCHEDULER:
                     _agg_unchanged_cycles[agg],
                 )
 
+    def _job_ingestion() -> None:
+        """Ingestion incrémentale planifiée (heure). Réutilise le handler
+        existant JOB_DISPATCH['ingestion'] (= _run_ingestion) : aucune logique
+        d'ingestion dupliquée. Le recouvrement de 1h et l'UPSERT garantissent
+        l'idempotence à chaque exécution.
+        """
+        try:
+            result = _run_ingestion({}, "ingestion_hourly", "scheduled")
+            logger.info(
+                "[scheduler] ingestion_hourly -> {tasks} tasks", tasks=result.get("tasks", 0)
+            )
+        except Exception as exc:
+            logger.error(f"[scheduler] ingestion_hourly échec: {exc}")
+
     def _start_scheduler() -> BackgroundScheduler:
         sched = BackgroundScheduler(timezone=settings.trendx_timezone)
         sched.add_job(
@@ -421,6 +435,16 @@ if HAS_APSCHEDULER:
             coalesce=True,
             misfire_grace_time=3600,
         )
+        # Ingestion incrémentale horaire (Phase 3). Réutilise _job_ingestion ->
+        # JOB_DISPATCH['ingestion']; aucun job existant n'est modifié.
+        sched.add_job(
+            _job_ingestion,
+            IntervalTrigger(hours=1),
+            id="ingestion_hourly",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=600,
+        )
         # Vérification d'amorçage : contrôle immédiat de la couverture partitions
         sched.add_job(
             _job_partitions,
@@ -434,7 +458,7 @@ if HAS_APSCHEDULER:
         logger.info(
             "trendx-worker APScheduler démarré (jobs: partitions_monthly,"
             " partitions_retention_monthly, aggregate_hourly, aggregate_daily,"
-            " aggregate_weekly, partitions_boot_check)"
+            " aggregate_weekly, ingestion_hourly, partitions_boot_check)"
         )
         return sched
 

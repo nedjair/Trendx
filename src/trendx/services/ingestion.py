@@ -1,36 +1,35 @@
 from __future__ import annotations
 
 import os
-import shutil
 import time
 import uuid
 from collections.abc import Sequence
-from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import numpy as np
 import pandas as pd
 from loguru import logger
 from sqlalchemy import text
-
 from trendx.config import settings
-from trendx.database.connection import DatabaseManager, manager as db_manager
+from trendx.database.connection import DatabaseManager
+from trendx.database.connection import manager as db_manager
 from trendx.database.repositories import (
     BusinessEntityRepository,
     CheckpointRepository,
     MetricDefinitionRepository,
 )
-from trendx.thingsboard.telemetry import TelemetryReader, TelemetryPoint
+from trendx.thingsboard.telemetry import TelemetryReader
 
 
 class DiskCapacityError(RuntimeError):
-    """Espace disque libre sous le seuil : ingestion arrêtée automatiquement."""
+    """Free disk space below threshold: ingestion stopped automatically."""
 
 
 def _get_filesystem_type(path: str) -> str:
     """Retourne le type de système de fichiers pour un chemin donné (lit /proc/mounts)."""
     try:
-        with open("/proc/mounts", "r") as f:
+        with open("/proc/mounts") as f:
             for line in f:
                 parts = line.split()
                 if len(parts) >= 3 and parts[1] == path:
@@ -58,11 +57,11 @@ def _statvfs_available_gb(mount: str) -> tuple[float, float, float]:
 
 
 def check_disk_min_free(mount: str = "/") -> float:
-    """Retourne l'espace DISPONIBLE (f_bavail, hors réservé root) en GB, ou lève DiskCapacityError sous le seuil."""
+    """Returns the AVAILABLE SPACE (f_bavail, excluding root-reserved) in GB, or raises DiskCapacityError below threshold."""
     avail_gb, free_gb, total_gb = _statvfs_available_gb(mount)
     if avail_gb < settings.trendx_disk_min_free_gb:
         raise DiskCapacityError(
-            f"Espace disponible {mount}: {avail_gb:.1f} GB < TRENDX_DISK_MIN_FREE_GB="
+            f"Available space {mount}: {avail_gb:.1f} GB < TRENDX_DISK_MIN_FREE_GB="
             f"{settings.trendx_disk_min_free_gb} GB (free={free_gb:.1f} GB, total={total_gb:.1f} GB). "
             "Ingestion arrêtée."
         )
@@ -73,7 +72,7 @@ def probe_disk_mounts(service: str = "trendx") -> None:
     """Sonde unique de disque, partagée par api et worker (format de journal identique).
 
     Pour chaque montage surveillé (TRENDX_DISK_MONITOR_MOUNTS) :
-      - mesure via _statvfs_available_gb() (f_bavail/f_bfree/f_blocks) ;
+      - measure via _statvfs_available_gb() (f_bavail/f_bfree/f_blocks) ;
       - type de FS via _get_filesystem_type() (lutin /proc/mounts) ;
       - delta réservé = free - avail (blocs réservés root, ext4 5 %) ;
       - tmpfs => RuntimeError (fatal, fail-closed) ;
@@ -91,23 +90,31 @@ def probe_disk_mounts(service: str = "trendx") -> None:
         logger.info(
             "[disk] {}: {} = {:.1f} GB avail / {:.1f} GB free / {:.1f} GB total "
             "(dev={}, fstype={}, delta_reserved={:.1f} GB)",
-            service, mp, avail_gb, free_gb, total_gb, st.st_dev, fstype, delta_gb,
+            service,
+            mp,
+            avail_gb,
+            free_gb,
+            total_gb,
+            st.st_dev,
+            fstype,
+            delta_gb,
         )
         if fstype == "tmpfs":
             raise RuntimeError(
                 f"[disk] FAIL : montage {mp} est un tmpfs (dev={st.st_dev}, "
                 f"fstype={fstype}, total={total_gb:.1f} GB). "
-                "Utiliser un disque persistant. Vérifier df -h /dev/sdb2 sur l'hôte."
+                "Utiliser un disque persistent. Vérifier df -h /dev/sdb2 sur l'hôte."
             )
         if total_gb < 10.0:
             logger.warning(
                 "[disk] montage {} : taille totale {:.1f} GB manifestement faible "
                 "pour un disque hôte. Vérifier l'identité du FS.",
-                mp, total_gb,
+                mp,
+                total_gb,
             )
         try:
             check_disk_min_free(mp)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.error("[disk] mount {} KO : {}", mp, exc)
 
 
@@ -151,20 +158,29 @@ class IngestionService:
                 if fstype == "tmpfs":
                     raise DiskCapacityError(
                         f"Montage disque {mount} est un tmpfs (dev={dev}, fstype={fstype}, "
-                        f"total={total_gb:.1f} GB). Utiliser un disque persistant. "
+                        f"total={total_gb:.1f} GB). Utiliser un disque persistent. "
                         "Vérifier df -h /dev/sdb2 sur l'hôte."
                     )
                 if total_gb < 10.0:
                     logger.warning(
                         "[disk] montage {} : taille totale {:.1f} GB manifestement faible "
                         "pour un disque hôte (dev={}, fstype={}). Vérifier l'identité du FS.",
-                        mount, total_gb, dev, fstype,
+                        mount,
+                        total_gb,
+                        dev,
+                        fstype,
                     )
                 delta_gb = free_gb - avail_gb
                 logger.info(
                     "[disk] montage {} : avail={:.1f} GB, free={:.1f} GB, "
                     "delta(reserved root)={:.1f} GB, total={:.1f} GB (dev={}, fstype={})",
-                    mount, avail_gb, free_gb, delta_gb, total_gb, dev, fstype,
+                    mount,
+                    avail_gb,
+                    free_gb,
+                    delta_gb,
+                    total_gb,
+                    dev,
+                    fstype,
                 )
                 check_disk_min_free(mount)
                 resolved.append(mount)
@@ -201,8 +217,7 @@ class IngestionService:
             eid = str(ent.id)
             if eid in device_map:
                 device_map[eid]["metrics"] = [
-                    {"key": m.item_name, "name": m.item_name}
-                    for m in metrics
+                    {"key": m.item_name, "name": m.item_name} for m in metrics
                 ]
 
         result = [d for d in device_map.values() if d.get("metrics")]
@@ -214,16 +229,22 @@ class IngestionService:
 
     # TODO: checkpoint table does not exist in Trendz 1.15.0 schema.
     #       Watermark is currently kept in-memory only; re-ingestion may duplicate data.
-    def _get_checkpoint(
-        self, entity_id: str, metric_key: str
-    ) -> Optional[datetime]:
+    def _get_checkpoint(self, entity_id: str, metric_key: str) -> datetime | None:
         with self._db.get_session("catalog") as session:
             repo = CheckpointRepository(session)
             row = repo.get_watermark("ingestion", entity_id, metric_key)
             if row is None:
                 return None
-            ts = row.get("watermark_ts") if isinstance(row, dict) else getattr(row, "watermark_ts", None)
-            return ts if ts is None else (ts if isinstance(ts, datetime) else datetime.fromisoformat(str(ts)))
+            ts = (
+                row.get("watermark_ts")
+                if isinstance(row, dict)
+                else getattr(row, "watermark_ts", None)
+            )
+            return (
+                ts
+                if ts is None
+                else (ts if isinstance(ts, datetime) else datetime.fromisoformat(str(ts)))
+            )
 
     def _update_checkpoint(
         self,
@@ -291,14 +312,16 @@ class IngestionService:
                 ts_db = pd.Timestamp(ts_val).to_pydatetime()
 
             val_float = float(value)
-            records.append({
-                "ts": ts_db,
-                "entity_id": entity_id,
-                "metric_key": metric_key,
-                "dbl_v": val_float,
-                "source": source,
-                "ingestion_id": ingestion_id,
-            })
+            records.append(
+                {
+                    "ts": ts_db,
+                    "entity_id": entity_id,
+                    "metric_key": metric_key,
+                    "dbl_v": val_float,
+                    "source": source,
+                    "ingestion_id": ingestion_id,
+                }
+            )
 
         if not records:
             return 0
@@ -310,7 +333,7 @@ class IngestionService:
                 rows = []
                 for r in batch:
                     rows.append(
-                        f"({self._lit(r['ts'])}, {self._lit_uuid(r['entity_id'])}, "
+                        f"({self._lit(r['ts'])}, {self._lit_uuid(str(r['entity_id']))}, "
                         f"{self._lit(r['metric_key'])}, {self._lit(r['dbl_v'])}, "
                         f"{self._lit(r['source'])}, {self._lit(r['ingestion_id'])})"
                     )
@@ -366,7 +389,7 @@ class IngestionService:
             return "NULL"
         if isinstance(value, bool):
             return "TRUE" if value else "FALSE"
-        if isinstance(value, (int, float)):
+        if isinstance(value, int | float):
             if np.isnan(value) or np.isinf(value):
                 return "NULL"
             return str(value)
@@ -415,7 +438,7 @@ class IngestionService:
                     "end2": end_ts,
                 },
             )
-            removed = result.rowcount
+            removed: int = result.rowcount
             if removed:
                 logger.info(
                     "Deduplicated {n} rows for {eid}/{key}",
@@ -514,6 +537,20 @@ class IngestionService:
             current = next_ts
         return windows
 
+    def _build_recovery_window(
+        self, checkpoint_ts: datetime, now: datetime | None = None
+    ) -> tuple[datetime, datetime]:
+        """Fenêtre de reprise avec recouvrement.
+
+        Le début est reculé de ``TB_INGEST_RECOVERY_WINDOW_HOURS`` par rapport au
+        checkpoint, pour rattraper d'éventuelles données en retard. L'UPSERT/PK
+        côté ``ts_kv`` garantit l'idempotence (aucune duplication).
+        """
+        now_dt = now or datetime.now(UTC)
+        recovery = timedelta(hours=settings.tb_ingest_recovery_window_hours)
+        start = checkpoint_ts - recovery
+        return start, now_dt
+
     async def ingest_device_metric(
         self,
         entity_id: str,
@@ -545,11 +582,13 @@ class IngestionService:
                     ingestion_id=batch_id,
                 )
                 total_stored += stored
-                window_results.append({
-                    "window_start": wstart.isoformat(),
-                    "window_end": wend.isoformat(),
-                    "stored": stored,
-                })
+                window_results.append(
+                    {
+                        "window_start": wstart.isoformat(),
+                        "window_end": wend.isoformat(),
+                        "stored": stored,
+                    }
+                )
             except Exception as exc:
                 logger.error(
                     "Ingestion failed for {eid}/{key} window [{ws}, {we}): {exc}",
@@ -560,9 +599,7 @@ class IngestionService:
                     exc=exc,
                 )
                 self._total_errors += 1
-                self._write_dead_letter(
-                    entity_id, metric_key, f"window:{wstart}-{wend}", str(exc)
-                )
+                self._write_dead_letter(entity_id, metric_key, f"window:{wstart}-{wend}", str(exc))
 
         if total_stored > 0:
             self._update_checkpoint(
@@ -601,7 +638,7 @@ class IngestionService:
         start_date: datetime,
         end_date: datetime | None = None,
     ) -> dict[str, Any]:
-        end = end_date or datetime.now(timezone.utc)
+        end = end_date or datetime.now(UTC)
         logger.info(
             "Backfill {eid}/{key} from {start} to {end}",
             eid=entity_id[:12],
@@ -641,7 +678,12 @@ class IngestionService:
             logger.warning("No devices with active metrics discovered")
             return []
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
+        # Fenêtre de recouvrement (overlap) : reprise sans lacune temporelle.
+        # Quand un checkpoint existe, on recule le début de la fenêtre de
+        # `recovery_window_hours` (via _build_recovery_window) pour rattraper
+        # d'éventuelles données en retard ; l'UPSERT/PK garantit l'idempotence
+        # (aucune duplication).
         results: list[dict[str, Any]] = []
 
         for device in devices:
@@ -651,11 +693,9 @@ class IngestionService:
                 try:
                     cp = self._get_checkpoint(eid, key)
                     if cp is not None:
-                        start_ts = cp
+                        start_ts, _ = self._build_recovery_window(cp, now)
                     else:
-                        start_ts = now - timedelta(
-                            days=settings.training_lookback_days
-                        )
+                        start_ts = now - timedelta(days=settings.training_lookback_days)
 
                     if start_ts >= now:
                         logger.debug(

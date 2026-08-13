@@ -4,12 +4,10 @@ from typing import Any
 
 from loguru import logger
 from pydantic import BaseModel, Field
-
 from trendx.config import settings
 from trendx.thingsboard.client import (
     ThingsBoardClient,
     ThingsBoardError,
-    TimeseriesEntry,
 )
 
 
@@ -51,8 +49,8 @@ class TelemetryReader:
 
             conn = psycopg2.connect(
                 dsn,
-                connect_timeout=settings.tb_db_connect_timeout if hasattr(settings, 'tb_db_connect_timeout') else 5,
-                sslmode=getattr(settings, 'tb_db_sslmode', 'prefer'),
+                connect_timeout=settings.tb_db_connect_timeout,
+                sslmode=settings.tb_db_sslmode,
             )
             conn.close()
             self._sql_available = True
@@ -78,10 +76,16 @@ class TelemetryReader:
 
             conn = psycopg2.connect(
                 dsn,
-                connect_timeout=5,
-                sslmode="prefer",
+                connect_timeout=settings.tb_db_connect_timeout,
+                sslmode=settings.tb_db_sslmode,
             )
+            # Double assurance : read-only + statement_timeout. Le rôle
+            # trendx_ro porte déjà ces paramètres ; on les (ré)applique côté
+            # session pour couvrir tout changement de configuration du rôle.
             conn.set_session(readonly=True, autocommit=True)
+            cur = conn.cursor()
+            cur.execute(f"SET statement_timeout = {settings.tb_db_statement_timeout}")
+            cur.close()
             self._sql_conn = conn
             return conn
         except Exception as exc:
@@ -140,8 +144,11 @@ class TelemetryReader:
             cursor.close()
             logger.info(
                 "SQL read {etype}/{eid} {keys} ({start}->{end}): {count} points",
-                etype=entity_type, eid=entity_id[:12],
-                keys=keys, start=start_ts, end=end_ts,
+                etype=entity_type,
+                eid=entity_id[:12],
+                keys=keys,
+                start=start_ts,
+                end=end_ts,
                 count=sum(len(v) for v in result.values()),
             )
             return result
@@ -191,15 +198,23 @@ class TelemetryReader:
                 if offset_ts >= end_ts:
                     break
             except ThingsBoardError as exc:
-                logger.error("API read error for {etype}/{eid}: {exc}", etype=entity_type, eid=entity_id, exc=exc)
+                logger.error(
+                    "API read error for {etype}/{eid}: {exc}",
+                    etype=entity_type,
+                    eid=entity_id,
+                    exc=exc,
+                )
                 break
         for key in list(all_data.keys()):
             all_data[key].sort(key=lambda p: p.ts)
         logger.info(
             "API read {etype}/{eid} ({start}->{end}): {keys} keys, {batches} batches, {total} points",
-            etype=entity_type, eid=entity_id[:12],
-            start=start_ts, end=end_ts,
-            keys=len(keys), batches=batch_count,
+            etype=entity_type,
+            eid=entity_id[:12],
+            start=start_ts,
+            end=end_ts,
+            keys=len(keys),
+            batches=batch_count,
             total=sum(len(v) for v in all_data.values()),
         )
         return all_data
@@ -231,7 +246,9 @@ class TelemetryReader:
         if not keys:
             return {}
         if start_ts >= end_ts:
-            logger.warning("Invalid time range: start_ts >= end_ts ({s} >= {e})", s=start_ts, e=end_ts)
+            logger.warning(
+                "Invalid time range: start_ts >= end_ts ({s} >= {e})", s=start_ts, e=end_ts
+            )
             return {k: [] for k in keys}
 
         sql_ok = await self._check_sql_channel()
@@ -240,8 +257,11 @@ class TelemetryReader:
         if sql_ok:
             logger.debug(
                 "Reading via SQL channel: {etype}/{eid} {keys} ({start}->{end})",
-                etype=entity_type, eid=entity_id[:12],
-                keys=keys, start=start_ts, end=end_ts,
+                etype=entity_type,
+                eid=entity_id[:12],
+                keys=keys,
+                start=start_ts,
+                end=end_ts,
             )
             sql_data = await self._read_via_sql(entity_type, entity_id, keys, start_ts, end_ts)
             if sql_data is not None:
@@ -252,8 +272,12 @@ class TelemetryReader:
         windows = self._split_window(start_ts, end_ts)
         logger.info(
             "Reading via API channel: {etype}/{eid} {keys} ({wins} windows, {start}->{end})",
-            etype=entity_type, eid=entity_id[:12],
-            keys=keys, wins=len(windows), start=start_ts, end=end_ts,
+            etype=entity_type,
+            eid=entity_id[:12],
+            keys=keys,
+            wins=len(windows),
+            start=start_ts,
+            end=end_ts,
         )
         for wstart, wend in windows:
             batch = await self._read_via_api(entity_type, entity_id, keys, wstart, wend)
@@ -281,11 +305,17 @@ class TelemetryReader:
             result: dict[str, TelemetryPoint | None] = {}
             for key in keys:
                 entries = raw.get(key, [])
-                result[key] = TelemetryPoint(ts=entries[0].ts, value=entries[0].value) if entries else None
+                result[key] = (
+                    TelemetryPoint(ts=entries[0].ts, value=entries[0].value) if entries else None
+                )
             return result
         except ThingsBoardError as exc:
-            logger.error("Failed to read latest values for {etype}/{eid}: {exc}",
-                         etype=entity_type, eid=entity_id, exc=exc)
+            logger.error(
+                "Failed to read latest values for {etype}/{eid}: {exc}",
+                etype=entity_type,
+                eid=entity_id,
+                exc=exc,
+            )
             return {k: None for k in keys}
 
     async def close(self) -> None:

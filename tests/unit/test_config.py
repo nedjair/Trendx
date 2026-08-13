@@ -87,6 +87,50 @@ def test_tb_readonly_dsn():
 
 
 @pytest.mark.unit
+def test_tb_readonly_dsn_carries_session_bounds():
+    with patch.dict(os.environ, {}, clear=True):
+        s = _TestSettings(
+            TRENDX_ENV="testing",
+            TB_BASE_URL="http://test:8080",
+            TB_USERNAME="test",
+            TB_PASSWORD="test",
+            TB_DB_HOST="tb-host",
+            TB_DB_PORT=5432,
+            TB_DB_NAME="thingsboard",
+            TB_DB_READONLY_USER="reader",
+            TB_DB_READONLY_PASSWORD="reader_pass",
+            TB_DB_CONNECT_TIMEOUT=15,
+            TB_DB_STATEMENT_TIMEOUT=30000,
+            TB_DB_SSLMODE="require",
+        )
+        dsn = s.tb_db_readonly_dsn()
+        assert dsn is not None
+        # session bounds + sslmode must be embedded so they are applied at connect
+        assert "sslmode=require" in dsn
+        assert "statement_timeout=30000" in dsn
+        assert "default_transaction_read_only=on" in dsn
+        assert "tb-host" in dsn
+        assert "thingsboard" in dsn
+        # the real password must not be echoed by mask_dsn
+        assert "reader_pass" not in s.mask_dsn(dsn)
+
+
+@pytest.mark.unit
+def test_tb_readonly_defaults():
+    with patch.dict(os.environ, {}, clear=True):
+        s = _TestSettings(
+            TRENDX_ENV="testing",
+            TB_BASE_URL="http://test:8080",
+            TB_USERNAME="test",
+            TB_PASSWORD="test",
+        )
+    assert s.tb_db_connect_timeout == 10
+    assert s.tb_db_statement_timeout == 60000
+    assert s.tb_db_sslmode == "prefer"
+    assert s.tb_ingest_recovery_window_hours == 1
+
+
+@pytest.mark.unit
 def test_settings_from_env():
     with patch.dict(
         os.environ,

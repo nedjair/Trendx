@@ -179,15 +179,25 @@ def _create_partition(params: dict[str, str], parent: str, month: datetime) -> N
     # Partition name is derived from (parent, month) — never user input — so
     # plain string interpolation for the identifier is safe here; the bound
     # values use parameterized %s.
-    _execute(
-        params,
-        "CREATE TABLE IF NOT EXISTS trendx_analytics."
-        + part_name
-        + " PARTITION OF trendx_analytics."
-        + parent
-        + " FOR VALUES FROM (%s) TO (%s)",
-        (start, end),
-    )
+    #
+    # Concurrency note: the running scheduler/worker (trendx-worker) also calls
+    # ensure_partitions_forward(3) and (re)creates the CURRENT and FORWARD
+    # (+1..+3) monthly partitions concurrently with this fixture. A bare CREATE
+    # from that path can interleave with this CREATE TABLE IF NOT EXISTS and
+    # raise DuplicateTable even though the partition is the desired end-state.
+    # Tolerate it idempotently: if the partition now exists, the goal is met.
+    try:
+        _execute(
+            params,
+            "CREATE TABLE IF NOT EXISTS trendx_analytics."
+            + part_name
+            + " PARTITION OF trendx_analytics."
+            + parent
+            + " FOR VALUES FROM (%s) TO (%s)",
+            (start, end),
+        )
+    except psycopg2.errors.DuplicateTable:
+        pass
     # In production, monthly partitions are created by
     # ensure_partitions_forward() which runs SECURITY DEFINER as trendx_migration
     # (see 004), so they are owned by trendx_migration. The retention function
