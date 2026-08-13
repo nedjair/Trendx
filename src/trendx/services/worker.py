@@ -322,6 +322,26 @@ if HAS_APSCHEDULER:
         except Exception as exc:
             logger.error(f"[scheduler] ensure_partitions_forward(3) échec: {exc}")
 
+    def _job_partitions_retention() -> None:
+        """Rétention native des partitions : DROP des partitions mensuelles
+        suffisamment anciennes pour les 5 parents (ts_kv, predictions,
+        anomaly_scores, data_quality, ml_metrics).
+
+        Délègue tout le DDL à la fonction SECURITY DEFINER
+        trendx_analytics.drop_old_partitions() (migration 012) :
+        AUCUN DROP n'est exécuté directement depuis Python, le chemin
+        SECURITY DEFINER (propriétaire trendx_migration) n'est pas contourné.
+        """
+        try:
+            result = _call_db_function("SELECT trendx_analytics.drop_old_partitions(NULL)", {})
+            dropped = result.get("dropped_count", 0) if isinstance(result, dict) else 0
+            logger.info(
+                f"[scheduler] drop_old_partitions() -> partitions supprimées={dropped} "
+                f"(détail: {result})"
+            )
+        except Exception as exc:
+            logger.error(f"[scheduler] drop_old_partitions() échec: {exc}")
+
     def _job_aggregate(agg: str) -> None:
         try:
             before = get_watermark(agg)
@@ -359,6 +379,17 @@ if HAS_APSCHEDULER:
             _job_partitions,
             CronTrigger(day="1", hour=0, minute=15),
             id="partitions_monthly",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=3600,
+        )
+        # Rétention native : exécutée APRÈS partitions_monthly (jour 1 00:15).
+        # Le DROP des partitions anciennes ne doit jamais supprimer la fenêtre
+        # forward +3 mois recréée par ensure_partitions_forward().
+        sched.add_job(
+            _job_partitions_retention,
+            CronTrigger(day="2", hour=0, minute=30),
+            id="partitions_retention_monthly",
             max_instances=1,
             coalesce=True,
             misfire_grace_time=3600,
@@ -401,8 +432,9 @@ if HAS_APSCHEDULER:
         )
         sched.start()
         logger.info(
-            "trendx-worker APScheduler démarré (jobs: partitions_monthly, aggregate_hourly,"
-            " aggregate_daily, aggregate_weekly, partitions_boot_check)"
+            "trendx-worker APScheduler démarré (jobs: partitions_monthly,"
+            " partitions_retention_monthly, aggregate_hourly, aggregate_daily,"
+            " aggregate_weekly, partitions_boot_check)"
         )
         return sched
 
