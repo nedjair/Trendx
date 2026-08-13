@@ -114,10 +114,13 @@ test-integration:
       # so ts_kv does not exist unless 009 is applied. 009 runs AFTER 004 (it creates
       # a plain heap, not a partitioned table, so ensure_partitions_forward() is not
       # triggered and the chain stays green). Migrations 007/008 remain skipped here
-      # (out of P1 scope, see above).
+      # (out of P1 scope, see above). Migration 011 (B5 Lot 2) creates the
+      # native partitioned ML tables (predictions/anomaly_scores/data_quality/
+      # ml_metrics) so that ensure_partitions_forward() (004) works in native
+      # PostgreSQL; it runs AFTER 010 and only adds partitioned parents.
       for f in migrations/001_*.sql migrations/002_*.sql migrations/003_*.sql \
-               migrations/004_*.sql migrations/005_*.sql migrations/006_*.sql \
-               migrations/009_*.sql migrations/010_*.sql; do
+                migrations/004_*.sql migrations/005_*.sql migrations/006_*.sql \
+                migrations/009_*.sql migrations/010_*.sql migrations/011_*.sql; do
         [ -e "${f}" ] || continue
         echo ">>> applying ${f}"
         PGPASSWORD="$POSTGRES_PASSWORD" psql -h postgres -U trendx_app -d trendx \
