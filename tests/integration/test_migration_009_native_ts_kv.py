@@ -343,10 +343,12 @@ def test_migration_009_idempotence_characteristic():
     assert migration_009.exists(), "migrations/009_*.sql missing"
     text = migration_009.read_text(encoding="utf-8")
 
-    # Native-only guard.
+    # Native-only guard: the migration skips itself when TimescaleDB is present
+    # (002 already provides ts_kv in that profile), so it must be guarded by
+    # IF EXISTS timescaledb (RETURN inside the DO block).
     assert re.search(
-        r"NOT EXISTS \(SELECT 1 FROM pg_extension WHERE extname = 'timescaledb'\)", text
-    ), "migration 009 must be guarded by NOT EXISTS timescaledb"
+        r"IF EXISTS \(SELECT 1 FROM pg_extension WHERE extname = 'timescaledb'\)", text
+    ), "migration 009 must be guarded by IF EXISTS timescaledb (skips when present)"
 
     # Idempotent object creation.
     assert re.search(
