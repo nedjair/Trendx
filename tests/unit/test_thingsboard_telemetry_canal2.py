@@ -165,8 +165,14 @@ def test_incremental_uses_overlap_window(monkeypatch):
     captured: dict[str, datetime] = {}
 
     async def spy_read(*a, **k):
-        captured["start"] = k.get("start_ts")
-        captured["end"] = k.get("end_ts")
+        # Capture the FIRST read window only. The recovery window must start
+        # exactly at (checkpoint - TB_INGEST_RECOVERY_WINDOW_HOURS); later
+        # windows advance with `now` (24h window size), so letting a subsequent
+        # call overwrite `captured` would make the assertion depend on the real
+        # wall-clock date. Pinning the first call keeps the test deterministic
+        # and verifiable against the overlap-recovery contract.
+        captured.setdefault("start", k.get("start_ts"))
+        captured.setdefault("end", k.get("end_ts"))
         # one telemetry point so _store_telemetry path is exercised
         return {"temp": [type("P", (), {"ts": 1_700_000_000_000, "value": 22.5})()]}
 
