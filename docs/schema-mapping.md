@@ -132,8 +132,8 @@ Tables héritées de Trendz (source : docs/trendz-parity-matrix.md + docs/archit
 | `dataset_config` | Jeu de données | id, view_id, config_json |
 | `trendz_task` | Tâche planifiée interne | id, type, config_json, status |
 | `trendz_task_execution` | Exécution tâche | id, task_id, started, finished, status |
-| `checkpoint` | Checkpoint ingestion | id, device_id, metric_name, last_ts |
-| `topology_discovery` | Découverte topologie | id, ran_at, result_json |
+| `ingestion_checkpoints` | Checkpoint ingestion (propre Trendx) | pipeline, entity_id, metric_key, watermark_ts, records_processed, last_batch_id, source, updated_at (schéma `trendx_catalog`, migration 005) |
+| `topology_entities`, `topology_relations`, `sync_metadata` | Découverte topologie (propre Trendx) | id, entity_id, relation_type, ... (schéma `trendx_catalog`, migration 007) |
 | `audit_log` | Journal audit | id, actor, action, entity, ts |
 | `app_secret` | Secret application | id, name, value_hash |
 | `app_setting` | Paramètre application | id, key, value_json |
@@ -157,6 +157,16 @@ Tables héritées de Trendz (source : docs/trendz-parity-matrix.md + docs/archit
 | `anomaly_scores` | Scores anomalies | entity_id, metric_id, ts, score, score_index, detector_id |
 | `data_quality` | Qualité données | entity_id, metric_id, ts, nan_ratio, gap_ratio, outlier_ratio |
 | `ml_metrics` | Métriques ML | run_id, metric_name, metric_value, ts |
+
+> **Réconciliation schéma (2026-08-27, RÉSOLU 2026-08-27 par 001 + 003) — état réel vs migrations :**
+> - `migrations/001_trendz_native_schema.sql` crée le schéma `trendx_catalog` (idempotent) et y place les 58 tables du catalogue natif Trendz (`business_entity`, `prediction_model`, `trendz_task`, `trendz_task_execution`, …), la fonction `is_cached_telemetry_timestamps_do_not_intersect` et son CHECK.
+> - `migrations/003_relocate_catalog.sql` (forward-only, idempotent) relocalise les bases historiques déjà migrées (catalogue en `public`) vers `trendx_catalog` via `ALTER TABLE … SET SCHEMA` (données, index, PK, UNIQUE, FK et CHECK préservés) + déplacement de la fonction + réécriture du CHECK vers `trendx_catalog.*`. Aucune perte de données.
+> - `migrations/005`, `006`, `007` créent `ingestion_checkpoints`, `prediction_model_status_history`, `topology_entities`/`topology_relations`, `sync_metadata` dans `trendx_catalog` (schéma désormais créé).
+> - `migrations/009`, `011`, `012` créent le schéma `trendx_analytics` (`ts_kv`, `ts_kv_latest`, `predictions`, `anomaly_scores`, `data_quality`, `ml_metrics`).
+>
+> **État réel :** `trendx_catalog` (catalogue 001+003, + tables propres 005/006/007) + `trendx_analytics` (009/011/012) dans la base unique `trendx`. Plus aucune table catalogue en `public` (sauf extension `pgcrypto`).
+> **Écart bloquant :** RÉSOLU. Aucune fonctionnalité ne doit être revendiquée « terminée » tant que la migration 003 n'est pas exécutée sur les bases historiques (AGENTS.md §10) — à planifier en maintenance.
+> Note : `docs/proposed-schema.sql` utilise `public` (historique) ; il est désormais en retard vs `schema-mapping.md` (source de vérité) et doit être mis à jour si réutilisé.
 
 ---
 

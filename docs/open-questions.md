@@ -54,6 +54,15 @@
 
 ---
 
+### B7 — Création de la migration `trendx_catalog`
+
+**État :** ✅ **Option A validée ET IMPLÉMENTÉE** (décision opérateur 2026-08-27) — fichiers modifiés : `migrations/001` (crée `trendx_catalog` + idempotent), `migrations/003_relocate_catalog.sql` (créé, forward-only/idempotent, 58 tables + fonction + CHECK), `migrations/008` (→ `trendx_catalog.prediction_model`) ; tests `tests/integration/test_migration_001/003/008` mis à jour ; docs alignées. **Aucun SQL exécuté sur la base de production** (exécution de `003` sur les bases historiques = étape de maintenance planifiée, jamais automatique).
+**Description :** `001` crée `trendx_catalog` et y place le catalogue natif (~58 tables) + fonction `is_cached_telemetry_timestamps_do_not_intersect` + CHECK (tous qualifiés `trendx_catalog.`, idempotents IF NOT EXISTS). `003_relocate_catalog.sql` relocalise les bases historiques (catalogue en `public`) vers `trendx_catalog` via `ALTER TABLE … SET SCHEMA` (données/index/PK/UNIQUE/FK/CHECK préservés) + déplacement de la fonction + réécriture du CHECK vers `trendx_catalog.*`, sans perte. Corrige la cause racine du blocage `005/006/007` et l'incohérence `public.prediction_model`.
+**Alternative (rejetée) :** garder `00x` dans `public` et préfixer les tables `001` (`trendx_catalog_*`) — pérennise le mélange et une convention de nommage artificielle.
+**IMPACT :** organisation du schéma Trendx (Bounded Context) ; aligne `architecture.md` §3.2, `database-separation.md`, `schema-mapping.md` §3. Requis avant de revendiquer toute fonctionnalité « terminée » (AGENTS.md §10).
+
+---
+
 ## 2. Questions techniques sans blocage immédiat
 
 ### Q1 — Authentification ThingsBoard
@@ -116,3 +125,4 @@
 5. **B3** : Device test `ALG16025001` pour writeback ?
 6. **Q3** : Ingestion historique complète ou ciblée MVP ?
 7. **Q6** : Rétention 2 ans / 3 ans acceptée ?
+8. **B7** : Création de la migration `trendx_catalog` (schéma + relocalisation des tables 001) — **Option A validée ET IMPLÉMENTÉE** (001/003/008 + tests + docs) ; exécution de `003` sur les bases historiques = maintenance planifiée, jamais automatique. Plan : `docs/migration-003-trendx-catalog-relocation-plan.md`.

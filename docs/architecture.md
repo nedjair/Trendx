@@ -121,6 +121,8 @@ ThingsBoard CE   TB PostgreSQL   Trendx
 
 **Isolation stricte :** Aucune jointure inter-bases. Ingestion : lecture TB → écriture `trendx_analytics` → requêtes locales. Schéma toujours qualifié (`trendx_analytics.ts_kv`).
 
+> **Réconciliation schéma (2026-08-27, RÉSOLU 2026-08-27) :** l'affirmation « schémas `trendx_catalog` + `trendx_analytics` » est désormais vraie dans les migrations. `trendx_analytics` est créé par `009/011/012`. `trendx_catalog` est créé explicitement par `001` (qui y place le catalogue natif Trendz, idempotent) ; `003_relocate_catalog.sql` relocalise les bases historiques déjà migrées (catalogue en `public`) vers `trendx_catalog` sans perte de données. `005/006/007` référencent `trendx_catalog.*` et fonctionnent sur base vierge comme historique. Détail : `schema-mapping.md` §3.
+
 ---
 
 ## 6. Séparation des responsabilités

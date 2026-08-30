@@ -164,7 +164,7 @@ test-e2e: ## Tests end-to-end (MVP complet)
 # ————————————————————————————————————————
 migrate: ## Appliquer les migrations SQL tracées sur la base trendx (AGENTS §17)
 	@echo "[trendx-migrate] 001_trendz_native_schema.sql → trendx..."
-	@docker exec $(PG_EXTERNAL_CONTAINER) psql -v ON_ERROR_STOP=1 -U postgres -d trendx -c "SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'business_entity' LIMIT 1;" | grep -q 1 || \
+	@docker exec $(PG_EXTERNAL_CONTAINER) psql -v ON_ERROR_STOP=1 -U postgres -d trendx -c "SELECT 1 FROM information_schema.tables WHERE table_schema = 'trendx_catalog' AND table_name = 'business_entity' LIMIT 1;" | grep -q 1 || \
 		docker exec $(PG_EXTERNAL_CONTAINER) psql -v ON_ERROR_STOP=1 -U postgres -d trendx -f /migrations/001_trendz_native_schema.sql
 	@echo "[trendx-migrate] catalogue OK."
 

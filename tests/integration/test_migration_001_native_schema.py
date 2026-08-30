@@ -75,7 +75,7 @@ def _psql_run(sql_file: Path, params: dict[str, str]) -> None:
     )
 
 
-def _public_base_table_count(params: dict[str, str]) -> int:
+def _catalog_base_table_count(params: dict[str, str]) -> int:
     import psycopg2
 
     conn = psycopg2.connect(
@@ -91,7 +91,7 @@ def _public_base_table_count(params: dict[str, str]) -> int:
                 """
                 SELECT count(*)
                 FROM information_schema.tables
-                WHERE table_schema = 'public'
+                WHERE table_schema = 'trendx_catalog'
                   AND table_type = 'BASE TABLE'
                 """
             )
@@ -102,7 +102,7 @@ def _public_base_table_count(params: dict[str, str]) -> int:
 
 def _expected_table_count(migration_file: Path) -> int:
     text = migration_file.read_text(encoding="utf-8")
-    return len(re.findall(r"CREATE TABLE\s+(?:IF NOT EXISTS\s+)?public\.", text))
+    return len(re.findall(r"CREATE TABLE\s+(?:IF NOT EXISTS\s+)?trendx_catalog\.", text))
 
 
 @pytest.mark.integration
@@ -115,14 +115,34 @@ def test_migration_001_applies_completely_on_real_postgres():
     # 1. Apply 001 with ON_ERROR_STOP=1. A non-zero psql exit fails loudly.
     _psql_run(migration_001, params)
 
-    # 2. Full (not partial) application: every declared table actually exists.
+    # 2. Full (not partial) application: every declared table actually exists
+    #    in trendx_catalog (Bounded Context). 001 also creates the schema.
     expected = _expected_table_count(migration_001)
     assert expected > 0, "no CREATE TABLE found in migration 001"
-    actual = _public_base_table_count(params)
+    actual = _catalog_base_table_count(params)
     assert actual == expected, (
-        f"migration 001 created {actual} public base tables, expected "
+        f"migration 001 created {actual} trendx_catalog base tables, expected "
         f"{expected}. Application is partial or objects are missing."
     )
+
+    # 2b. The catalog schema must be created by 001 itself (no ad-hoc CI bootstrap).
+    import psycopg2
+
+    conn = psycopg2.connect(
+        host=params["host"],
+        port=params["port"],
+        dbname=params["dbname"],
+        user=params["user"],
+        password=params["password"],
+    )
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM information_schema.schemata " "WHERE schema_name = 'trendx_catalog'"
+            )
+            assert cur.fetchone() is not None, "trendx_catalog schema not created by 001"
+    finally:
+        conn.close()
 
     # 3. Regression guard: the stray restricted-mode artefact must be gone so
     #    001 is pure SQL and never enters psql restricted mode.

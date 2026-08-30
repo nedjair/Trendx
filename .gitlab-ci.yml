@@ -95,20 +95,22 @@ test-integration:
       GRANT trendx_migration TO trendx_app;
       SQL
     - |
-      # Apply 001 -> 006 (P1 scope). Migration 000 is a privileged bootstrap
-      # (separate databases/roles) and is excluded on purpose. Migration 007 is
-      # intentionally skipped: it grants to the trendx_ro role, which is not
-      # provisioned by the integration job and is outside P1 scope. Migration 008
-      # (adds model_uri to prediction_model) is part of 0.3 and is NOT applied in
-      # P1: it is out of scope and has a known schema defect (targets
-      # trendx_catalog.prediction_model while the table lives in public). The P1
-      # integration test was rewritten to validate migration 006's own artifact
+      # Apply 001 -> 006 (+ 009/010/011) (P1 scope). Migration 000 is a privileged
+      # bootstrap (separate databases/roles) and is excluded on purpose. Migration
+      # 007 is intentionally skipped here: it grants to the trendx_ro role, which
+      # is not provisioned by the integration job and is outside P1 scope.
+      # Migration 008 (adds model_uri to prediction_model) is part of 0.3 and is
+      # NOT applied in P1: it is out of P1 scope (its former schema defect — 008
+      # targeting trendx_catalog.prediction_model while the table lived in public
+      # — is now RESOLVED: 001 creates the catalogue in trendx_catalog and 008
+      # targets trendx_catalog.prediction_model; see B7 / migration 003). The P1
+      # integration test validates migration 006's own artifact
       # (trendx_catalog.prediction_model_status_history) without depending on 008.
       # Each file is applied with ON_ERROR_STOP=1 and is idempotent/reentrant.
-      # NOTE: migrations/003_*.sql is intentionally absent from this repo.
-      # Migration 003 (003_schema_alignment.sql) was applied OUT-OF-BAND
-      # (see docs/audit-phase2-after.md) and is not part of the file-based CI
-      # chain; the [ -e ] guard below simply skips it. Do NOT create a 003 file here.
+      # Migration 003 (003_relocate_catalog.sql) IS part of the chain: it creates
+      # the trendx_catalog schema (idempotent) and, on a historical base where the
+      # catalogue still lives in public, relocates it to trendx_catalog. On a
+      # blank base 003 is a no-op because 001 already targets trendx_catalog.
       # Migration 009 (native ts_kv / ts_kv_latest) is required by the P1 integration
       # test test_migration_009_native_ts_kv.py: on native PostgreSQL 002 is a no-op,
       # so ts_kv does not exist unless 009 is applied. 009 runs AFTER 004 (it creates
@@ -149,7 +151,7 @@ test-integration:
 
 # ── Migration 008 targeted DB test (issue #2) ────────────────────────
 # Applies migrations 001 -> 008 on a real PostgreSQL service and proves
-# public.prediction_model.model_uri exists and that 008 is idempotent.
+# trendx_catalog.prediction_model.model_uri exists and that 008 is idempotent.
 # Runs only on MR events with --run-integration so the integration marker
 # is actually executed (fail-closed: any psql/assertion error fails the job).
 test-migration-008:
@@ -277,9 +279,10 @@ test-migration-007:
 # migration applies completely under ON_ERROR_STOP=1 (no masked error, no
 # partial application) and that the stray \restrict/\unrestrict restricted-mode
 # artefact is absent (regression guard for this chantier). 001 creates all its
-# objects in the public schema with no OWNER TO / GRANT / CREATE ROLE, so it
-# needs neither the trendx_catalog / trendx_analytics schemas nor the
-# trendx_migration role: it runs under the single trendx_app role.
+# objects in the trendx_catalog schema (Bounded Context) with no OWNER TO /
+# GRANT / CREATE ROLE, so it needs neither the trendx_analytics schema nor the
+# trendx_migration role: it runs under the single trendx_app role. The
+# trendx_catalog schema is created by 001 itself (no ad-hoc CI bootstrap).
 # Runs on MR events (with -m integration so the integration marker is actually
 # executed, fail-closed) and on branch push (so the before/after fix can be
 # validated on a real PostgreSQL without opening an MR).
