@@ -190,10 +190,10 @@ def _fk_count_within_catalog(params: dict[str, str]) -> int:
                 JOIN pg_class src ON src.oid = c.conrelid
                 JOIN pg_namespace ns ON ns.oid = src.relnamespace
                 JOIN pg_class dst ON dst.oid = c.confrelid
-                JOIN pg_namespace nd ON nd.oid = dst.relnamespace
+                JOIN pg_namespace ndst ON ndst.oid = dst.relnamespace
                 WHERE c.contype = 'f'
                   AND ns.nspname = 'trendx_catalog'
-                  AND nd.nspname = 'trendx_catalog'
+                  AND ndst.nspname = 'trendx_catalog'
                 """
             )
             return int(cur.fetchone()[0])
@@ -232,12 +232,20 @@ def _check_references_catalog_fn(params: dict[str, str]) -> bool:
 
 
 def _original_001_file() -> Path | None:
-    """Récupère la 001 historique (catalogue en public) depuis git HEAD."""
+    """Récupère la 001 historique (catalogue en public) depuis le parent pré-B7.
+
+    Référence immuable : c5dc5dd27ab36910afba23aebad0f977b90e132d est le parent
+    direct de B7 (b441b25...). Cette 001 pré-B7 crée les 58 tables du catalogue
+    dans ``public`` (0 référence ``trendx_catalog.``), ce qui reproduit
+    exactement l'état historique avant que B7 ne place le catalogue dans
+    trendx_catalog. On n'utilise SURTOUT PAS ``HEAD`` : HEAD contient déjà la
+    001 révisée (B7) et ne reconstituerait pas l'état public cible.
+    """
     import subprocess
 
     try:
         out = subprocess.run(
-            ["git", "show", "HEAD:migrations/001_trendz_native_schema.sql"],
+            ["git", "show", "c5dc5dd:migrations/001_trendz_native_schema.sql"],
             cwd=ROOT,
             capture_output=True,
             text=True,
@@ -312,7 +320,7 @@ def test_003_relocates_historical_public_catalog_without_data_loss():
     params = _pg_conn_params()
     original_001 = _original_001_file()
     if original_001 is None:
-        pytest.skip("git HEAD 001 indisponible (pas de VCS) — scénario historique sauté")
+        pytest.skip("git c5dc5dd 001 indisponible (pas de VCS) — scénario historique sauté")
     migration_003 = MIGRATIONS / "003_relocate_catalog.sql"
     migration_008 = MIGRATIONS / "008_add_model_uri.sql"
     _reset_db(params)
