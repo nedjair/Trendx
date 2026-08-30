@@ -24,6 +24,16 @@ SET client_min_messages = warning;
 SET row_security = off;
 
 --
+-- Schéma cible du catalogue Trendx : trendx_catalog (Bounded Context).
+-- Créé explicitement par cette migration pour que toute la chaîne (notamment
+-- 005/006/007/008) puisse s'exécuter sur une base vierge SANS bootstrap CI
+-- ad hoc. Le schéma public reste réservé aux extensions/objets PostgreSQL
+-- (ex. pgcrypto) et aux dépendances partagées.
+--
+
+CREATE SCHEMA IF NOT EXISTS trendx_catalog;
+
+--
 -- Name: pgcrypto; Type: EXTENSION; Schema: -; Owner: -
 --
 
@@ -38,10 +48,10 @@ COMMENT ON EXTENSION pgcrypto IS 'cryptographic functions';
 
 
 --
--- Name: is_cached_telemetry_timestamps_do_not_intersect(uuid, uuid, character varying, bigint, bigint, character varying); Type: FUNCTION; Schema: public; Owner: -
+-- Name: is_cached_telemetry_timestamps_do_not_intersect(uuid, uuid, character varying, bigint, bigint, character varying); Type: FUNCTION; Schema: trendx_catalog; Owner: -
 --
 
-CREATE FUNCTION public.is_cached_telemetry_timestamps_do_not_intersect(_business_entity_field_id uuid, _item_id uuid, _date_aggregation_type character varying, _end_ts bigint, _start_ts bigint, _function character varying) RETURNS boolean
+CREATE OR REPLACE FUNCTION trendx_catalog.is_cached_telemetry_timestamps_do_not_intersect(_business_entity_field_id uuid, _item_id uuid, _date_aggregation_type character varying, _end_ts bigint, _start_ts bigint, _function character varying) RETURNS boolean
     LANGUAGE plpgsql
     AS $$
 declare
@@ -49,7 +59,7 @@ declare
 BEGIN
   RETURN
     NOT EXISTS(
-      SELECT 1 FROM cached_telemetry ct
+      SELECT 1 FROM trendx_catalog.cached_telemetry ct
       WHERE ct.item_id = _item_id
       and (
             --	case for everything except old calc fields. "function" field holds FieldGapSettings
@@ -70,7 +80,7 @@ SET default_table_access_method = heap;
 -- Name: agent_ai; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.agent_ai (
+CREATE TABLE IF NOT EXISTS trendx_catalog.agent_ai (
     id uuid NOT NULL,
     agent_type character varying(255) NOT NULL,
     system_message character varying(65536) NOT NULL,
@@ -82,7 +92,7 @@ CREATE TABLE public.agent_ai (
 -- Name: anomaly; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.anomaly (
+CREATE TABLE IF NOT EXISTS trendx_catalog.anomaly (
     id uuid NOT NULL,
     item_id uuid,
     item_name character varying(255),
@@ -100,7 +110,7 @@ CREATE TABLE public.anomaly (
 -- Name: anomaly_model_task_data; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.anomaly_model_task_data (
+CREATE TABLE IF NOT EXISTS trendx_catalog.anomaly_model_task_data (
     anomaly_model_id uuid NOT NULL,
     enabled_refresh boolean DEFAULT false NOT NULL,
     enabled_save_to_tb boolean DEFAULT false NOT NULL,
@@ -116,7 +126,7 @@ CREATE TABLE public.anomaly_model_task_data (
 -- Name: api_key; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.api_key (
+CREATE TABLE IF NOT EXISTS trendx_catalog.api_key (
     id uuid NOT NULL,
     tenant_id uuid NOT NULL,
     token character varying(255) NOT NULL
@@ -127,7 +137,7 @@ CREATE TABLE public.api_key (
 -- Name: business_entity; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.business_entity (
+CREATE TABLE IF NOT EXISTS trendx_catalog.business_entity (
     id uuid NOT NULL,
     description character varying(255),
     hidden boolean NOT NULL,
@@ -142,7 +152,7 @@ CREATE TABLE public.business_entity (
 -- Name: business_entity_field; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.business_entity_field (
+CREATE TABLE IF NOT EXISTS trendx_catalog.business_entity_field (
     id uuid NOT NULL,
     description character varying(255),
     hidden boolean NOT NULL,
@@ -160,7 +170,7 @@ CREATE TABLE public.business_entity_field (
 -- Name: business_entity_field_metadata; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.business_entity_field_metadata (
+CREATE TABLE IF NOT EXISTS trendx_catalog.business_entity_field_metadata (
     id uuid NOT NULL,
     business_entity_field_id uuid NOT NULL,
     tenant_id uuid NOT NULL,
@@ -175,7 +185,7 @@ CREATE TABLE public.business_entity_field_metadata (
 -- Name: business_entity_metadata; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.business_entity_metadata (
+CREATE TABLE IF NOT EXISTS trendx_catalog.business_entity_metadata (
     id uuid NOT NULL,
     business_entity_id uuid NOT NULL,
     tenant_id uuid NOT NULL,
@@ -189,7 +199,7 @@ CREATE TABLE public.business_entity_metadata (
 -- Name: cached_telemetry; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.cached_telemetry (
+CREATE TABLE IF NOT EXISTS trendx_catalog.cached_telemetry (
     id uuid NOT NULL,
     item_id uuid,
     tenant_id uuid,
@@ -205,7 +215,7 @@ CREATE TABLE public.cached_telemetry (
     business_entity_field_id uuid,
     function character varying(1000000),
     latest_telemetry_point_ts bigint,
-    CONSTRAINT is_timestamps_do_not_intersect_constraint CHECK (public.is_cached_telemetry_timestamps_do_not_intersect(business_entity_field_id, item_id, date_aggregation_type, end_ts, start_ts, 'function'::character varying))
+    CONSTRAINT is_timestamps_do_not_intersect_constraint CHECK (trendx_catalog.is_cached_telemetry_timestamps_do_not_intersect(business_entity_field_id, item_id, date_aggregation_type, end_ts, start_ts, 'function'::character varying))
 );
 
 
@@ -213,7 +223,7 @@ CREATE TABLE public.cached_telemetry (
 -- Name: cached_telemetry_point; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.cached_telemetry_point (
+CREATE TABLE IF NOT EXISTS trendx_catalog.cached_telemetry_point (
     ts bigint NOT NULL,
     cached_telemetry_id uuid NOT NULL,
     numeric_value double precision,
@@ -226,7 +236,7 @@ CREATE TABLE public.cached_telemetry_point (
 -- Name: calculation_field; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.calculation_field (
+CREATE TABLE IF NOT EXISTS trendx_catalog.calculation_field (
     id uuid NOT NULL,
     tenant_id uuid NOT NULL,
     customer_id uuid NOT NULL,
@@ -258,7 +268,7 @@ CREATE TABLE public.calculation_field (
 -- Name: calculation_field_task_data; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.calculation_field_task_data (
+CREATE TABLE IF NOT EXISTS trendx_catalog.calculation_field_task_data (
     calculation_field_id uuid NOT NULL,
     enabled boolean,
     tz_name character varying(32),
@@ -275,7 +285,7 @@ CREATE TABLE public.calculation_field_task_data (
 -- Name: cluster_example; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.cluster_example (
+CREATE TABLE IF NOT EXISTS trendx_catalog.cluster_example (
     id uuid NOT NULL,
     cluster_info_id uuid
 );
@@ -285,7 +295,7 @@ CREATE TABLE public.cluster_example (
 -- Name: cluster_info; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.cluster_info (
+CREATE TABLE IF NOT EXISTS trendx_catalog.cluster_info (
     id uuid NOT NULL,
     cluster_id bigint,
     segments_count integer,
@@ -301,7 +311,7 @@ CREATE TABLE public.cluster_info (
 -- Name: cluster_model; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.cluster_model (
+CREATE TABLE IF NOT EXISTS trendx_catalog.cluster_model (
     id uuid NOT NULL,
     tenant_id uuid,
     customer_id uuid,
@@ -329,7 +339,7 @@ CREATE TABLE public.cluster_model (
 -- Name: custom_prediction_model; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.custom_prediction_model (
+CREATE TABLE IF NOT EXISTS trendx_catalog.custom_prediction_model (
     id uuid NOT NULL,
     model_name character varying(32) NOT NULL,
     content character varying(5120) NOT NULL
@@ -340,7 +350,7 @@ CREATE TABLE public.custom_prediction_model (
 -- Name: custom_prompt; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.custom_prompt (
+CREATE TABLE IF NOT EXISTS trendx_catalog.custom_prompt (
     id uuid NOT NULL,
     name character varying(256) NOT NULL,
     prompt text,
@@ -358,7 +368,7 @@ CREATE TABLE public.custom_prompt (
 -- Name: custom_prompt_metadata; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.custom_prompt_metadata (
+CREATE TABLE IF NOT EXISTS trendx_catalog.custom_prompt_metadata (
     id uuid NOT NULL,
     prompt text,
     data text,
@@ -375,7 +385,7 @@ CREATE TABLE public.custom_prompt_metadata (
 -- Name: custom_view_settings; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.custom_view_settings (
+CREATE TABLE IF NOT EXISTS trendx_catalog.custom_view_settings (
     domain character varying(128) NOT NULL,
     palette_selection character varying(32),
     palette_trendz character varying(5120),
@@ -393,7 +403,7 @@ CREATE TABLE public.custom_view_settings (
 -- Name: dataset_config; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.dataset_config (
+CREATE TABLE IF NOT EXISTS trendx_catalog.dataset_config (
     id uuid NOT NULL,
     max_points_count integer,
     start_ts bigint,
@@ -408,7 +418,7 @@ CREATE TABLE public.dataset_config (
 -- Name: datasource; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.datasource (
+CREATE TABLE IF NOT EXISTS trendx_catalog.datasource (
     id uuid NOT NULL,
     tenant_id uuid NOT NULL,
     db_type character varying(255),
@@ -422,7 +432,7 @@ CREATE TABLE public.datasource (
 -- Name: domain_tenant_pair; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.domain_tenant_pair (
+CREATE TABLE IF NOT EXISTS trendx_catalog.domain_tenant_pair (
     domain character varying(1024) NOT NULL,
     tenant_id uuid NOT NULL
 );
@@ -432,7 +442,7 @@ CREATE TABLE public.domain_tenant_pair (
 -- Name: latest_telemetry; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.latest_telemetry (
+CREATE TABLE IF NOT EXISTS trendx_catalog.latest_telemetry (
     calculation_field_id uuid NOT NULL,
     item_id uuid NOT NULL,
     key character varying(128) NOT NULL,
@@ -444,7 +454,7 @@ CREATE TABLE public.latest_telemetry (
 -- Name: licence_data; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.licence_data (
+CREATE TABLE IF NOT EXISTS trendx_catalog.licence_data (
     tenant_id uuid NOT NULL,
     content character varying(100)
 );
@@ -454,7 +464,7 @@ CREATE TABLE public.licence_data (
 -- Name: llm_config; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.llm_config (
+CREATE TABLE IF NOT EXISTS trendx_catalog.llm_config (
     id uuid NOT NULL,
     tenant_id uuid NOT NULL,
     created_ts bigint NOT NULL,
@@ -470,7 +480,7 @@ CREATE TABLE public.llm_config (
 -- Name: llm_settings; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.llm_settings (
+CREATE TABLE IF NOT EXISTS trendx_catalog.llm_settings (
     id uuid NOT NULL,
     tenant_id uuid NOT NULL,
     active boolean NOT NULL,
@@ -483,7 +493,7 @@ CREATE TABLE public.llm_settings (
 -- Name: llm_settings_chat_type_link; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.llm_settings_chat_type_link (
+CREATE TABLE IF NOT EXISTS trendx_catalog.llm_settings_chat_type_link (
     llm_setting_id uuid NOT NULL,
     chat_type character varying(255) NOT NULL,
     llm_config_id uuid NOT NULL
@@ -494,7 +504,7 @@ CREATE TABLE public.llm_settings_chat_type_link (
 -- Name: manual_dataset; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.manual_dataset (
+CREATE TABLE IF NOT EXISTS trendx_catalog.manual_dataset (
     id uuid NOT NULL,
     data character varying(10240) NOT NULL
 );
@@ -504,7 +514,7 @@ CREATE TABLE public.manual_dataset (
 -- Name: metric_definition; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.metric_definition (
+CREATE TABLE IF NOT EXISTS trendx_catalog.metric_definition (
     id uuid NOT NULL,
     business_entity_id uuid NOT NULL,
     item_id uuid NOT NULL,
@@ -531,7 +541,7 @@ CREATE TABLE public.metric_definition (
 -- Name: metric_definition_metadata; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.metric_definition_metadata (
+CREATE TABLE IF NOT EXISTS trendx_catalog.metric_definition_metadata (
     id uuid NOT NULL,
     metric_definition_id uuid NOT NULL,
     business_entity_id uuid NOT NULL,
@@ -549,7 +559,7 @@ CREATE TABLE public.metric_definition_metadata (
 -- Name: metric_exploration; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.metric_exploration (
+CREATE TABLE IF NOT EXISTS trendx_catalog.metric_exploration (
     id uuid NOT NULL,
     tenant_id uuid NOT NULL,
     customer_id uuid NOT NULL,
@@ -566,7 +576,7 @@ CREATE TABLE public.metric_exploration (
 -- Name: ml_properties; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.ml_properties (
+CREATE TABLE IF NOT EXISTS trendx_catalog.ml_properties (
     id uuid NOT NULL,
     json_value character varying(10000000)
 );
@@ -576,7 +586,7 @@ CREATE TABLE public.ml_properties (
 -- Name: prediction_model; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.prediction_model (
+CREATE TABLE IF NOT EXISTS trendx_catalog.prediction_model (
     id uuid NOT NULL,
     tenant_id uuid NOT NULL,
     customer_id uuid NOT NULL,
@@ -604,7 +614,7 @@ CREATE TABLE public.prediction_model (
 -- Name: prediction_model_last_item_point; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.prediction_model_last_item_point (
+CREATE TABLE IF NOT EXISTS trendx_catalog.prediction_model_last_item_point (
     prediction_model_id uuid NOT NULL,
     item_id uuid NOT NULL,
     ts bigint NOT NULL
@@ -615,7 +625,7 @@ CREATE TABLE public.prediction_model_last_item_point (
 -- Name: prediction_model_task_data; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.prediction_model_task_data (
+CREATE TABLE IF NOT EXISTS trendx_catalog.prediction_model_task_data (
     prediction_model_id uuid NOT NULL,
     item_set_json text,
     enabled boolean,
@@ -630,7 +640,7 @@ CREATE TABLE public.prediction_model_task_data (
 -- Name: relation; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.relation (
+CREATE TABLE IF NOT EXISTS trendx_catalog.relation (
     business_entity_id uuid NOT NULL,
     name character varying(255) NOT NULL,
     related_entity_id uuid NOT NULL,
@@ -644,7 +654,7 @@ CREATE TABLE public.relation (
 -- Name: scored_point_anomaly; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.scored_point_anomaly (
+CREATE TABLE IF NOT EXISTS trendx_catalog.scored_point_anomaly (
     t bigint,
     s double precision,
     anomaly_id uuid
@@ -655,7 +665,7 @@ CREATE TABLE public.scored_point_anomaly (
 -- Name: scored_point_centroid; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.scored_point_centroid (
+CREATE TABLE IF NOT EXISTS trendx_catalog.scored_point_centroid (
     t bigint,
     s double precision,
     cluster_info_id uuid
@@ -666,7 +676,7 @@ CREATE TABLE public.scored_point_centroid (
 -- Name: scored_point_cluster; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.scored_point_cluster (
+CREATE TABLE IF NOT EXISTS trendx_catalog.scored_point_cluster (
     t bigint,
     s double precision,
     cluster_example_id uuid
@@ -677,7 +687,7 @@ CREATE TABLE public.scored_point_cluster (
 -- Name: scored_point_histogram; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.scored_point_histogram (
+CREATE TABLE IF NOT EXISTS trendx_catalog.scored_point_histogram (
     t bigint,
     s double precision,
     cluster_info_id uuid
@@ -688,7 +698,7 @@ CREATE TABLE public.scored_point_histogram (
 -- Name: segment_data; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.segment_data (
+CREATE TABLE IF NOT EXISTS trendx_catalog.segment_data (
     id uuid NOT NULL,
     model_id uuid,
     item_id uuid,
@@ -706,7 +716,7 @@ CREATE TABLE public.segment_data (
 -- Name: trendz_system_property; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.trendz_system_property (
+CREATE TABLE IF NOT EXISTS trendx_catalog.trendz_system_property (
     property_key character varying(1000) NOT NULL,
     property_value character varying(1000)
 );
@@ -716,7 +726,7 @@ CREATE TABLE public.trendz_system_property (
 -- Name: trendz_task; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.trendz_task (
+CREATE TABLE IF NOT EXISTS trendx_catalog.trendz_task (
     id uuid NOT NULL,
     tenant_id uuid NOT NULL,
     customer_id uuid NOT NULL,
@@ -747,7 +757,7 @@ CREATE TABLE public.trendz_task (
 -- Name: trendz_task_execution; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.trendz_task_execution (
+CREATE TABLE IF NOT EXISTS trendx_catalog.trendz_task_execution (
     id uuid NOT NULL,
     task_id uuid NOT NULL,
     tenant_id uuid NOT NULL,
@@ -769,7 +779,7 @@ CREATE TABLE public.trendz_task_execution (
 -- Name: trendz_task_execution_progress_step; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.trendz_task_execution_progress_step (
+CREATE TABLE IF NOT EXISTS trendx_catalog.trendz_task_execution_progress_step (
     id uuid NOT NULL,
     execution_id uuid NOT NULL,
     parent_step_id uuid,
@@ -783,7 +793,7 @@ CREATE TABLE public.trendz_task_execution_progress_step (
 -- Name: trendz_task_execution_request; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.trendz_task_execution_request (
+CREATE TABLE IF NOT EXISTS trendx_catalog.trendz_task_execution_request (
     task_id uuid NOT NULL,
     execution_id uuid NOT NULL,
     tenant_id uuid NOT NULL,
@@ -801,7 +811,7 @@ CREATE TABLE public.trendz_task_execution_request (
 -- Name: trendz_task_execution_state_record; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.trendz_task_execution_state_record (
+CREATE TABLE IF NOT EXISTS trendx_catalog.trendz_task_execution_state_record (
     execution_id uuid NOT NULL,
     state character varying(16) NOT NULL,
     last_update_ts bigint NOT NULL,
@@ -813,7 +823,7 @@ CREATE TABLE public.trendz_task_execution_state_record (
 -- Name: trendz_task_scheduling_state_record; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.trendz_task_scheduling_state_record (
+CREATE TABLE IF NOT EXISTS trendx_catalog.trendz_task_scheduling_state_record (
     task_id uuid NOT NULL,
     state character varying(16) NOT NULL,
     last_finish_ts bigint NOT NULL
@@ -824,7 +834,7 @@ CREATE TABLE public.trendz_task_scheduling_state_record (
 -- Name: trendz_task_sequence; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.trendz_task_sequence (
+CREATE TABLE IF NOT EXISTS trendx_catalog.trendz_task_sequence (
     id uuid NOT NULL,
     tenant_id uuid NOT NULL,
     customer_id uuid NOT NULL,
@@ -841,7 +851,7 @@ CREATE TABLE public.trendz_task_sequence (
 -- Name: trendz_task_sequence_item; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.trendz_task_sequence_item (
+CREATE TABLE IF NOT EXISTS trendx_catalog.trendz_task_sequence_item (
     id uuid NOT NULL,
     sequence_id uuid NOT NULL,
     reference_type character varying(128) NOT NULL,
@@ -855,7 +865,7 @@ CREATE TABLE public.trendz_task_sequence_item (
 -- Name: user_metadata; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.user_metadata (
+CREATE TABLE IF NOT EXISTS trendx_catalog.user_metadata (
     id uuid NOT NULL,
     tenant_id uuid NOT NULL,
     customer_id uuid NOT NULL,
@@ -870,7 +880,7 @@ CREATE TABLE public.user_metadata (
 -- Name: user_record; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.user_record (
+CREATE TABLE IF NOT EXISTS trendx_catalog.user_record (
     tenant_id uuid NOT NULL,
     customer_id uuid NOT NULL,
     user_id uuid NOT NULL,
@@ -887,7 +897,7 @@ CREATE TABLE public.user_record (
 -- Name: view_assistance_chat; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.view_assistance_chat (
+CREATE TABLE IF NOT EXISTS trendx_catalog.view_assistance_chat (
     id uuid NOT NULL,
     tenant_id uuid NOT NULL,
     customer_id uuid,
@@ -907,7 +917,7 @@ CREATE TABLE public.view_assistance_chat (
 -- Name: view_assistance_chat_message; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.view_assistance_chat_message (
+CREATE TABLE IF NOT EXISTS trendx_catalog.view_assistance_chat_message (
     id uuid NOT NULL,
     chat_id uuid NOT NULL,
     user_question character varying(65536) NOT NULL,
@@ -927,7 +937,7 @@ CREATE TABLE public.view_assistance_chat_message (
 -- Name: view_assistance_token_usage; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.view_assistance_token_usage (
+CREATE TABLE IF NOT EXISTS trendx_catalog.view_assistance_token_usage (
     id uuid NOT NULL,
     tenant_id uuid NOT NULL,
     input_token_used bigint DEFAULT 0 NOT NULL,
@@ -942,7 +952,7 @@ CREATE TABLE public.view_assistance_token_usage (
 -- Name: view_collection; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.view_collection (
+CREATE TABLE IF NOT EXISTS trendx_catalog.view_collection (
     id uuid NOT NULL,
     tenant_id uuid NOT NULL,
     customer_id uuid NOT NULL,
@@ -957,7 +967,7 @@ CREATE TABLE public.view_collection (
 -- Name: view_config; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.view_config (
+CREATE TABLE IF NOT EXISTS trendx_catalog.view_config (
     id uuid NOT NULL,
     config_definition character varying(100000),
     created_at bigint,
@@ -993,7 +1003,7 @@ CREATE TABLE public.view_config (
 -- Name: view_field; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.view_field (
+CREATE TABLE IF NOT EXISTS trendx_catalog.view_field (
     id uuid NOT NULL,
     aggregation_type character varying(255),
     use_delta boolean NOT NULL,
@@ -1061,1628 +1071,2195 @@ CREATE TABLE public.view_field (
 -- Name: agent_ai agent_ai_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.agent_ai
-    ADD CONSTRAINT agent_ai_pkey PRIMARY KEY (id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'agent_ai_pkey'
+      AND conrelid = 'trendx_catalog.agent_ai'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.agent_ai ADD CONSTRAINT agent_ai_pkey PRIMARY KEY (id);
+  END IF;
+END $$;
 
 
 --
 -- Name: anomaly_model_task_data anomaly_model_task_data_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.anomaly_model_task_data
-    ADD CONSTRAINT anomaly_model_task_data_pkey PRIMARY KEY (anomaly_model_id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'anomaly_model_task_data_pkey'
+      AND conrelid = 'trendx_catalog.anomaly_model_task_data'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.anomaly_model_task_data ADD CONSTRAINT anomaly_model_task_data_pkey PRIMARY KEY (anomaly_model_id);
+  END IF;
+END $$;
 
 
 --
 -- Name: anomaly anomaly_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.anomaly
-    ADD CONSTRAINT anomaly_pkey PRIMARY KEY (id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'anomaly_pkey'
+      AND conrelid = 'trendx_catalog.anomaly'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.anomaly ADD CONSTRAINT anomaly_pkey PRIMARY KEY (id);
+  END IF;
+END $$;
 
 
 --
 -- Name: api_key api_key_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.api_key
-    ADD CONSTRAINT api_key_pkey PRIMARY KEY (id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'api_key_pkey'
+      AND conrelid = 'trendx_catalog.api_key'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.api_key ADD CONSTRAINT api_key_pkey PRIMARY KEY (id);
+  END IF;
+END $$;
 
 
 --
 -- Name: api_key api_key_tenant_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.api_key
-    ADD CONSTRAINT api_key_tenant_id_key UNIQUE (tenant_id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'api_key_tenant_id_key'
+      AND conrelid = 'trendx_catalog.api_key'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.api_key ADD CONSTRAINT api_key_tenant_id_key UNIQUE (tenant_id);
+  END IF;
+END $$;
 
 
 --
 -- Name: api_key api_key_token_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.api_key
-    ADD CONSTRAINT api_key_token_key UNIQUE (token);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'api_key_token_key'
+      AND conrelid = 'trendx_catalog.api_key'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.api_key ADD CONSTRAINT api_key_token_key UNIQUE (token);
+  END IF;
+END $$;
 
 
 --
 -- Name: business_entity_field_metadata business_entity_field_metadata_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.business_entity_field_metadata
-    ADD CONSTRAINT business_entity_field_metadata_pkey PRIMARY KEY (id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'business_entity_field_metadata_pkey'
+      AND conrelid = 'trendx_catalog.business_entity_field_metadata'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.business_entity_field_metadata ADD CONSTRAINT business_entity_field_metadata_pkey PRIMARY KEY (id);
+  END IF;
+END $$;
 
 
 --
 -- Name: business_entity_field_metadata business_entity_field_metadata_unique; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.business_entity_field_metadata
-    ADD CONSTRAINT business_entity_field_metadata_unique UNIQUE (business_entity_field_id, tenant_id, customer_id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'business_entity_field_metadata_unique'
+      AND conrelid = 'trendx_catalog.business_entity_field_metadata'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.business_entity_field_metadata ADD CONSTRAINT business_entity_field_metadata_unique UNIQUE (business_entity_field_id, tenant_id, customer_id);
+  END IF;
+END $$;
 
 
 --
 -- Name: business_entity_field business_entity_field_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.business_entity_field
-    ADD CONSTRAINT business_entity_field_pkey PRIMARY KEY (id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'business_entity_field_pkey'
+      AND conrelid = 'trendx_catalog.business_entity_field'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.business_entity_field ADD CONSTRAINT business_entity_field_pkey PRIMARY KEY (id);
+  END IF;
+END $$;
 
 
 --
 -- Name: business_entity_metadata business_entity_metadata_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.business_entity_metadata
-    ADD CONSTRAINT business_entity_metadata_pkey PRIMARY KEY (id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'business_entity_metadata_pkey'
+      AND conrelid = 'trendx_catalog.business_entity_metadata'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.business_entity_metadata ADD CONSTRAINT business_entity_metadata_pkey PRIMARY KEY (id);
+  END IF;
+END $$;
 
 
 --
 -- Name: business_entity_metadata business_entity_metadata_unique; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.business_entity_metadata
-    ADD CONSTRAINT business_entity_metadata_unique UNIQUE (business_entity_id, tenant_id, customer_id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'business_entity_metadata_unique'
+      AND conrelid = 'trendx_catalog.business_entity_metadata'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.business_entity_metadata ADD CONSTRAINT business_entity_metadata_unique UNIQUE (business_entity_id, tenant_id, customer_id);
+  END IF;
+END $$;
 
 
 --
 -- Name: business_entity business_entity_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.business_entity
-    ADD CONSTRAINT business_entity_pkey PRIMARY KEY (id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'business_entity_pkey'
+      AND conrelid = 'trendx_catalog.business_entity'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.business_entity ADD CONSTRAINT business_entity_pkey PRIMARY KEY (id);
+  END IF;
+END $$;
 
 
 --
 -- Name: cached_telemetry cached_telemetry_item_id_start_ts_end_ts_field_aggregation__key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.cached_telemetry
-    ADD CONSTRAINT cached_telemetry_item_id_start_ts_end_ts_field_aggregation__key UNIQUE (item_id, start_ts, end_ts, field_aggregation, date_aggregation_type, business_entity_field_id, function);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'cached_telemetry_item_id_start_ts_end_ts_field_aggregation__key'
+      AND conrelid = 'trendx_catalog.cached_telemetry'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.cached_telemetry ADD CONSTRAINT cached_telemetry_item_id_start_ts_end_ts_field_aggregation__key UNIQUE (item_id, start_ts, end_ts, field_aggregation, date_aggregation_type, business_entity_field_id, function);
+  END IF;
+END $$;
 
 
 --
 -- Name: cached_telemetry cached_telemetry_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.cached_telemetry
-    ADD CONSTRAINT cached_telemetry_pkey PRIMARY KEY (id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'cached_telemetry_pkey'
+      AND conrelid = 'trendx_catalog.cached_telemetry'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.cached_telemetry ADD CONSTRAINT cached_telemetry_pkey PRIMARY KEY (id);
+  END IF;
+END $$;
 
 
 --
 -- Name: cached_telemetry_point cached_telemetry_point_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.cached_telemetry_point
-    ADD CONSTRAINT cached_telemetry_point_pkey PRIMARY KEY (ts, cached_telemetry_id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'cached_telemetry_point_pkey'
+      AND conrelid = 'trendx_catalog.cached_telemetry_point'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.cached_telemetry_point ADD CONSTRAINT cached_telemetry_point_pkey PRIMARY KEY (ts, cached_telemetry_id);
+  END IF;
+END $$;
 
 
 --
 -- Name: calculation_field calculation_field_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.calculation_field
-    ADD CONSTRAINT calculation_field_pkey PRIMARY KEY (id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'calculation_field_pkey'
+      AND conrelid = 'trendx_catalog.calculation_field'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.calculation_field ADD CONSTRAINT calculation_field_pkey PRIMARY KEY (id);
+  END IF;
+END $$;
 
 
 --
 -- Name: calculation_field_task_data calculation_field_task_data_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.calculation_field_task_data
-    ADD CONSTRAINT calculation_field_task_data_pkey PRIMARY KEY (calculation_field_id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'calculation_field_task_data_pkey'
+      AND conrelid = 'trendx_catalog.calculation_field_task_data'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.calculation_field_task_data ADD CONSTRAINT calculation_field_task_data_pkey PRIMARY KEY (calculation_field_id);
+  END IF;
+END $$;
 
 
 --
 -- Name: calculation_field calculation_field_tenant_id_name_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.calculation_field
-    ADD CONSTRAINT calculation_field_tenant_id_name_key UNIQUE (tenant_id, name);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'calculation_field_tenant_id_name_key'
+      AND conrelid = 'trendx_catalog.calculation_field'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.calculation_field ADD CONSTRAINT calculation_field_tenant_id_name_key UNIQUE (tenant_id, name);
+  END IF;
+END $$;
 
 
 --
 -- Name: cluster_example cluster_example_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.cluster_example
-    ADD CONSTRAINT cluster_example_pkey PRIMARY KEY (id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'cluster_example_pkey'
+      AND conrelid = 'trendx_catalog.cluster_example'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.cluster_example ADD CONSTRAINT cluster_example_pkey PRIMARY KEY (id);
+  END IF;
+END $$;
 
 
 --
 -- Name: cluster_info cluster_info_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.cluster_info
-    ADD CONSTRAINT cluster_info_pkey PRIMARY KEY (id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'cluster_info_pkey'
+      AND conrelid = 'trendx_catalog.cluster_info'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.cluster_info ADD CONSTRAINT cluster_info_pkey PRIMARY KEY (id);
+  END IF;
+END $$;
 
 
 --
 -- Name: cluster_model cluster_model_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.cluster_model
-    ADD CONSTRAINT cluster_model_pkey PRIMARY KEY (id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'cluster_model_pkey'
+      AND conrelid = 'trendx_catalog.cluster_model'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.cluster_model ADD CONSTRAINT cluster_model_pkey PRIMARY KEY (id);
+  END IF;
+END $$;
 
 
 --
 -- Name: custom_prediction_model custom_prediction_model_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.custom_prediction_model
-    ADD CONSTRAINT custom_prediction_model_pkey PRIMARY KEY (id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'custom_prediction_model_pkey'
+      AND conrelid = 'trendx_catalog.custom_prediction_model'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.custom_prediction_model ADD CONSTRAINT custom_prediction_model_pkey PRIMARY KEY (id);
+  END IF;
+END $$;
 
 
 --
 -- Name: custom_prompt_metadata custom_prompt_metadata_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.custom_prompt_metadata
-    ADD CONSTRAINT custom_prompt_metadata_pkey PRIMARY KEY (id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'custom_prompt_metadata_pkey'
+      AND conrelid = 'trendx_catalog.custom_prompt_metadata'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.custom_prompt_metadata ADD CONSTRAINT custom_prompt_metadata_pkey PRIMARY KEY (id);
+  END IF;
+END $$;
 
 
 --
 -- Name: custom_prompt custom_prompt_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.custom_prompt
-    ADD CONSTRAINT custom_prompt_pkey PRIMARY KEY (id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'custom_prompt_pkey'
+      AND conrelid = 'trendx_catalog.custom_prompt'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.custom_prompt ADD CONSTRAINT custom_prompt_pkey PRIMARY KEY (id);
+  END IF;
+END $$;
 
 
 --
 -- Name: custom_view_settings custom_view_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.custom_view_settings
-    ADD CONSTRAINT custom_view_settings_pkey PRIMARY KEY (domain);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'custom_view_settings_pkey'
+      AND conrelid = 'trendx_catalog.custom_view_settings'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.custom_view_settings ADD CONSTRAINT custom_view_settings_pkey PRIMARY KEY (domain);
+  END IF;
+END $$;
 
 
 --
 -- Name: dataset_config dataset_config_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.dataset_config
-    ADD CONSTRAINT dataset_config_pkey PRIMARY KEY (id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'dataset_config_pkey'
+      AND conrelid = 'trendx_catalog.dataset_config'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.dataset_config ADD CONSTRAINT dataset_config_pkey PRIMARY KEY (id);
+  END IF;
+END $$;
 
 
 --
 -- Name: datasource datasource_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.datasource
-    ADD CONSTRAINT datasource_pkey PRIMARY KEY (id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'datasource_pkey'
+      AND conrelid = 'trendx_catalog.datasource'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.datasource ADD CONSTRAINT datasource_pkey PRIMARY KEY (id);
+  END IF;
+END $$;
 
 
 --
 -- Name: domain_tenant_pair domain_tenant_pair_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.domain_tenant_pair
-    ADD CONSTRAINT domain_tenant_pair_pkey PRIMARY KEY (tenant_id, domain);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'domain_tenant_pair_pkey'
+      AND conrelid = 'trendx_catalog.domain_tenant_pair'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.domain_tenant_pair ADD CONSTRAINT domain_tenant_pair_pkey PRIMARY KEY (tenant_id, domain);
+  END IF;
+END $$;
 
 
 --
 -- Name: latest_telemetry latest_telemetry_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.latest_telemetry
-    ADD CONSTRAINT latest_telemetry_pkey PRIMARY KEY (calculation_field_id, item_id, key);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'latest_telemetry_pkey'
+      AND conrelid = 'trendx_catalog.latest_telemetry'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.latest_telemetry ADD CONSTRAINT latest_telemetry_pkey PRIMARY KEY (calculation_field_id, item_id, key);
+  END IF;
+END $$;
 
 
 --
 -- Name: licence_data licence_data_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.licence_data
-    ADD CONSTRAINT licence_data_pkey PRIMARY KEY (tenant_id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'licence_data_pkey'
+      AND conrelid = 'trendx_catalog.licence_data'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.licence_data ADD CONSTRAINT licence_data_pkey PRIMARY KEY (tenant_id);
+  END IF;
+END $$;
 
 
 --
 -- Name: llm_config llm_config_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.llm_config
-    ADD CONSTRAINT llm_config_pkey PRIMARY KEY (id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'llm_config_pkey'
+      AND conrelid = 'trendx_catalog.llm_config'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.llm_config ADD CONSTRAINT llm_config_pkey PRIMARY KEY (id);
+  END IF;
+END $$;
 
 
 --
 -- Name: llm_settings_chat_type_link llm_settings_chat_type_link_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.llm_settings_chat_type_link
-    ADD CONSTRAINT llm_settings_chat_type_link_pkey PRIMARY KEY (llm_setting_id, chat_type);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'llm_settings_chat_type_link_pkey'
+      AND conrelid = 'trendx_catalog.llm_settings_chat_type_link'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.llm_settings_chat_type_link ADD CONSTRAINT llm_settings_chat_type_link_pkey PRIMARY KEY (llm_setting_id, chat_type);
+  END IF;
+END $$;
 
 
 --
 -- Name: llm_settings llm_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.llm_settings
-    ADD CONSTRAINT llm_settings_pkey PRIMARY KEY (id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'llm_settings_pkey'
+      AND conrelid = 'trendx_catalog.llm_settings'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.llm_settings ADD CONSTRAINT llm_settings_pkey PRIMARY KEY (id);
+  END IF;
+END $$;
 
 
 --
 -- Name: llm_settings llm_settings_tenant_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.llm_settings
-    ADD CONSTRAINT llm_settings_tenant_id_key UNIQUE (tenant_id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'llm_settings_tenant_id_key'
+      AND conrelid = 'trendx_catalog.llm_settings'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.llm_settings ADD CONSTRAINT llm_settings_tenant_id_key UNIQUE (tenant_id);
+  END IF;
+END $$;
 
 
 --
 -- Name: manual_dataset manual_dataset_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.manual_dataset
-    ADD CONSTRAINT manual_dataset_pkey PRIMARY KEY (id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'manual_dataset_pkey'
+      AND conrelid = 'trendx_catalog.manual_dataset'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.manual_dataset ADD CONSTRAINT manual_dataset_pkey PRIMARY KEY (id);
+  END IF;
+END $$;
 
 
 --
 -- Name: metric_definition_metadata metric_definition_metadata_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.metric_definition_metadata
-    ADD CONSTRAINT metric_definition_metadata_pkey PRIMARY KEY (id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'metric_definition_metadata_pkey'
+      AND conrelid = 'trendx_catalog.metric_definition_metadata'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.metric_definition_metadata ADD CONSTRAINT metric_definition_metadata_pkey PRIMARY KEY (id);
+  END IF;
+END $$;
 
 
 --
 -- Name: metric_definition metric_definition_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.metric_definition
-    ADD CONSTRAINT metric_definition_pkey PRIMARY KEY (id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'metric_definition_pkey'
+      AND conrelid = 'trendx_catalog.metric_definition'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.metric_definition ADD CONSTRAINT metric_definition_pkey PRIMARY KEY (id);
+  END IF;
+END $$;
 
 
 --
 -- Name: metric_exploration metric_exploration_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.metric_exploration
-    ADD CONSTRAINT metric_exploration_pkey PRIMARY KEY (id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'metric_exploration_pkey'
+      AND conrelid = 'trendx_catalog.metric_exploration'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.metric_exploration ADD CONSTRAINT metric_exploration_pkey PRIMARY KEY (id);
+  END IF;
+END $$;
 
 
 --
 -- Name: metric_exploration metric_exploration_raw_unique; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.metric_exploration
-    ADD CONSTRAINT metric_exploration_raw_unique UNIQUE (tenant_id, customer_id, item_id, business_entity_id, business_entity_field_id, metric_definition_id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'metric_exploration_raw_unique'
+      AND conrelid = 'trendx_catalog.metric_exploration'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.metric_exploration ADD CONSTRAINT metric_exploration_raw_unique UNIQUE (tenant_id, customer_id, item_id, business_entity_id, business_entity_field_id, metric_definition_id);
+  END IF;
+END $$;
 
 
 --
 -- Name: ml_properties ml_properties_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.ml_properties
-    ADD CONSTRAINT ml_properties_pkey PRIMARY KEY (id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'ml_properties_pkey'
+      AND conrelid = 'trendx_catalog.ml_properties'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.ml_properties ADD CONSTRAINT ml_properties_pkey PRIMARY KEY (id);
+  END IF;
+END $$;
 
 
 --
 -- Name: prediction_model_last_item_point prediction_model_last_item_point_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.prediction_model_last_item_point
-    ADD CONSTRAINT prediction_model_last_item_point_pkey PRIMARY KEY (prediction_model_id, item_id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'prediction_model_last_item_point_pkey'
+      AND conrelid = 'trendx_catalog.prediction_model_last_item_point'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.prediction_model_last_item_point ADD CONSTRAINT prediction_model_last_item_point_pkey PRIMARY KEY (prediction_model_id, item_id);
+  END IF;
+END $$;
 
 
 --
 -- Name: prediction_model prediction_model_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.prediction_model
-    ADD CONSTRAINT prediction_model_pkey PRIMARY KEY (id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'prediction_model_pkey'
+      AND conrelid = 'trendx_catalog.prediction_model'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.prediction_model ADD CONSTRAINT prediction_model_pkey PRIMARY KEY (id);
+  END IF;
+END $$;
 
 
 --
 -- Name: prediction_model_task_data prediction_model_task_data_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.prediction_model_task_data
-    ADD CONSTRAINT prediction_model_task_data_pkey PRIMARY KEY (prediction_model_id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'prediction_model_task_data_pkey'
+      AND conrelid = 'trendx_catalog.prediction_model_task_data'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.prediction_model_task_data ADD CONSTRAINT prediction_model_task_data_pkey PRIMARY KEY (prediction_model_id);
+  END IF;
+END $$;
 
 
 --
 -- Name: relation relation_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.relation
-    ADD CONSTRAINT relation_pkey PRIMARY KEY (business_entity_id, name, related_entity_id, direction);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'relation_pkey'
+      AND conrelid = 'trendx_catalog.relation'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.relation ADD CONSTRAINT relation_pkey PRIMARY KEY (business_entity_id, name, related_entity_id, direction);
+  END IF;
+END $$;
 
 
 --
 -- Name: segment_data segment_data_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.segment_data
-    ADD CONSTRAINT segment_data_pkey PRIMARY KEY (id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'segment_data_pkey'
+      AND conrelid = 'trendx_catalog.segment_data'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.segment_data ADD CONSTRAINT segment_data_pkey PRIMARY KEY (id);
+  END IF;
+END $$;
 
 
 --
 -- Name: trendz_system_property trendz_system_properties_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.trendz_system_property
-    ADD CONSTRAINT trendz_system_properties_pkey PRIMARY KEY (property_key);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'trendz_system_properties_pkey'
+      AND conrelid = 'trendx_catalog.trendz_system_property'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.trendz_system_property ADD CONSTRAINT trendz_system_properties_pkey PRIMARY KEY (property_key);
+  END IF;
+END $$;
 
 
 --
 -- Name: trendz_task_execution trendz_task_execution_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.trendz_task_execution
-    ADD CONSTRAINT trendz_task_execution_pkey PRIMARY KEY (id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'trendz_task_execution_pkey'
+      AND conrelid = 'trendx_catalog.trendz_task_execution'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.trendz_task_execution ADD CONSTRAINT trendz_task_execution_pkey PRIMARY KEY (id);
+  END IF;
+END $$;
 
 
 --
 -- Name: trendz_task_execution_progress_step trendz_task_execution_progress_step_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.trendz_task_execution_progress_step
-    ADD CONSTRAINT trendz_task_execution_progress_step_pkey PRIMARY KEY (id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'trendz_task_execution_progress_step_pkey'
+      AND conrelid = 'trendx_catalog.trendz_task_execution_progress_step'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.trendz_task_execution_progress_step ADD CONSTRAINT trendz_task_execution_progress_step_pkey PRIMARY KEY (id);
+  END IF;
+END $$;
 
 
 --
 -- Name: trendz_task_execution_request trendz_task_execution_request_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.trendz_task_execution_request
-    ADD CONSTRAINT trendz_task_execution_request_pkey PRIMARY KEY (task_id, execution_id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'trendz_task_execution_request_pkey'
+      AND conrelid = 'trendx_catalog.trendz_task_execution_request'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.trendz_task_execution_request ADD CONSTRAINT trendz_task_execution_request_pkey PRIMARY KEY (task_id, execution_id);
+  END IF;
+END $$;
 
 
 --
 -- Name: trendz_task_execution_state_record trendz_task_execution_state_record_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.trendz_task_execution_state_record
-    ADD CONSTRAINT trendz_task_execution_state_record_pkey PRIMARY KEY (execution_id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'trendz_task_execution_state_record_pkey'
+      AND conrelid = 'trendx_catalog.trendz_task_execution_state_record'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.trendz_task_execution_state_record ADD CONSTRAINT trendz_task_execution_state_record_pkey PRIMARY KEY (execution_id);
+  END IF;
+END $$;
 
 
 --
 -- Name: trendz_task trendz_task_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.trendz_task
-    ADD CONSTRAINT trendz_task_pkey PRIMARY KEY (id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'trendz_task_pkey'
+      AND conrelid = 'trendx_catalog.trendz_task'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.trendz_task ADD CONSTRAINT trendz_task_pkey PRIMARY KEY (id);
+  END IF;
+END $$;
 
 
 --
 -- Name: trendz_task trendz_task_reference_type_reference_key_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.trendz_task
-    ADD CONSTRAINT trendz_task_reference_type_reference_key_key UNIQUE (reference_type, reference_key);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'trendz_task_reference_type_reference_key_key'
+      AND conrelid = 'trendx_catalog.trendz_task'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.trendz_task ADD CONSTRAINT trendz_task_reference_type_reference_key_key UNIQUE (reference_type, reference_key);
+  END IF;
+END $$;
 
 
 --
 -- Name: trendz_task_sequence_item trendz_task_sequence_item_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.trendz_task_sequence_item
-    ADD CONSTRAINT trendz_task_sequence_item_pkey PRIMARY KEY (id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'trendz_task_sequence_item_pkey'
+      AND conrelid = 'trendx_catalog.trendz_task_sequence_item'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.trendz_task_sequence_item ADD CONSTRAINT trendz_task_sequence_item_pkey PRIMARY KEY (id);
+  END IF;
+END $$;
 
 
 --
 -- Name: trendz_task_sequence trendz_task_sequence_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.trendz_task_sequence
-    ADD CONSTRAINT trendz_task_sequence_pkey PRIMARY KEY (id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'trendz_task_sequence_pkey'
+      AND conrelid = 'trendx_catalog.trendz_task_sequence'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.trendz_task_sequence ADD CONSTRAINT trendz_task_sequence_pkey PRIMARY KEY (id);
+  END IF;
+END $$;
 
 
 --
 -- Name: trendz_task_scheduling_state_record trendz_task_state_record_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.trendz_task_scheduling_state_record
-    ADD CONSTRAINT trendz_task_state_record_pkey PRIMARY KEY (task_id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'trendz_task_state_record_pkey'
+      AND conrelid = 'trendx_catalog.trendz_task_scheduling_state_record'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.trendz_task_scheduling_state_record ADD CONSTRAINT trendz_task_state_record_pkey PRIMARY KEY (task_id);
+  END IF;
+END $$;
 
 
 --
 -- Name: user_metadata user_metadata_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.user_metadata
-    ADD CONSTRAINT user_metadata_pkey PRIMARY KEY (id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'user_metadata_pkey'
+      AND conrelid = 'trendx_catalog.user_metadata'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.user_metadata ADD CONSTRAINT user_metadata_pkey PRIMARY KEY (id);
+  END IF;
+END $$;
 
 
 --
 -- Name: user_metadata user_metadata_unique; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.user_metadata
-    ADD CONSTRAINT user_metadata_unique UNIQUE (tenant_id, customer_id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'user_metadata_unique'
+      AND conrelid = 'trendx_catalog.user_metadata'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.user_metadata ADD CONSTRAINT user_metadata_unique UNIQUE (tenant_id, customer_id);
+  END IF;
+END $$;
 
 
 --
 -- Name: user_record user_record_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.user_record
-    ADD CONSTRAINT user_record_pkey PRIMARY KEY (tenant_id, customer_id, user_id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'user_record_pkey'
+      AND conrelid = 'trendx_catalog.user_record'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.user_record ADD CONSTRAINT user_record_pkey PRIMARY KEY (tenant_id, customer_id, user_id);
+  END IF;
+END $$;
 
 
 --
 -- Name: view_assistance_chat_message view_assistance_chat_message_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.view_assistance_chat_message
-    ADD CONSTRAINT view_assistance_chat_message_pkey PRIMARY KEY (id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'view_assistance_chat_message_pkey'
+      AND conrelid = 'trendx_catalog.view_assistance_chat_message'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.view_assistance_chat_message ADD CONSTRAINT view_assistance_chat_message_pkey PRIMARY KEY (id);
+  END IF;
+END $$;
 
 
 --
 -- Name: view_assistance_chat view_assistance_chat_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.view_assistance_chat
-    ADD CONSTRAINT view_assistance_chat_pkey PRIMARY KEY (id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'view_assistance_chat_pkey'
+      AND conrelid = 'trendx_catalog.view_assistance_chat'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.view_assistance_chat ADD CONSTRAINT view_assistance_chat_pkey PRIMARY KEY (id);
+  END IF;
+END $$;
 
 
 --
 -- Name: view_assistance_token_usage view_assistance_token_usage_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.view_assistance_token_usage
-    ADD CONSTRAINT view_assistance_token_usage_pkey PRIMARY KEY (id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'view_assistance_token_usage_pkey'
+      AND conrelid = 'trendx_catalog.view_assistance_token_usage'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.view_assistance_token_usage ADD CONSTRAINT view_assistance_token_usage_pkey PRIMARY KEY (id);
+  END IF;
+END $$;
 
 
 --
 -- Name: view_collection view_collection_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.view_collection
-    ADD CONSTRAINT view_collection_pkey PRIMARY KEY (id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'view_collection_pkey'
+      AND conrelid = 'trendx_catalog.view_collection'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.view_collection ADD CONSTRAINT view_collection_pkey PRIMARY KEY (id);
+  END IF;
+END $$;
 
 
 --
 -- Name: view_config view_config_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.view_config
-    ADD CONSTRAINT view_config_pkey PRIMARY KEY (id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'view_config_pkey'
+      AND conrelid = 'trendx_catalog.view_config'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.view_config ADD CONSTRAINT view_config_pkey PRIMARY KEY (id);
+  END IF;
+END $$;
 
 
 --
 -- Name: view_field view_field_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.view_field
-    ADD CONSTRAINT view_field_pkey PRIMARY KEY (id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'view_field_pkey'
+      AND conrelid = 'trendx_catalog.view_field'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.view_field ADD CONSTRAINT view_field_pkey PRIMARY KEY (id);
+  END IF;
+END $$;
 
 
 --
 -- Name: anomaly_cluster_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX anomaly_cluster_id_idx ON public.anomaly USING btree (cluster_id);
+CREATE INDEX IF NOT EXISTS anomaly_cluster_id_idx ON trendx_catalog.anomaly USING btree (cluster_id);
 
 
 --
 -- Name: anomaly_end_ts_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX anomaly_end_ts_idx ON public.anomaly USING btree (end_ts);
+CREATE INDEX IF NOT EXISTS anomaly_end_ts_idx ON trendx_catalog.anomaly USING btree (end_ts);
 
 
 --
 -- Name: anomaly_item_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX anomaly_item_id_idx ON public.anomaly USING btree (item_id);
+CREATE INDEX IF NOT EXISTS anomaly_item_id_idx ON trendx_catalog.anomaly USING btree (item_id);
 
 
 --
 -- Name: anomaly_model_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX anomaly_model_id_idx ON public.anomaly USING btree (model_id);
+CREATE INDEX IF NOT EXISTS anomaly_model_id_idx ON trendx_catalog.anomaly USING btree (model_id);
 
 
 --
 -- Name: anomaly_score_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX anomaly_score_idx ON public.anomaly USING btree (score);
+CREATE INDEX IF NOT EXISTS anomaly_score_idx ON trendx_catalog.anomaly USING btree (score);
 
 
 --
 -- Name: anomaly_start_ts_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX anomaly_start_ts_idx ON public.anomaly USING btree (start_ts);
+CREATE INDEX IF NOT EXISTS anomaly_start_ts_idx ON trendx_catalog.anomaly USING btree (start_ts);
 
 
 --
 -- Name: api_key_tenant_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX api_key_tenant_id_idx ON public.api_key USING btree (tenant_id);
+CREATE INDEX IF NOT EXISTS api_key_tenant_id_idx ON trendx_catalog.api_key USING btree (tenant_id);
 
 
 --
 -- Name: api_key_token_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX api_key_token_idx ON public.api_key USING btree (token);
+CREATE INDEX IF NOT EXISTS api_key_token_idx ON trendx_catalog.api_key USING btree (token);
 
 
 --
 -- Name: business_entity_field_business_entity_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX business_entity_field_business_entity_id_idx ON public.business_entity_field USING btree (business_entity_id);
+CREATE INDEX IF NOT EXISTS business_entity_field_business_entity_id_idx ON trendx_catalog.business_entity_field USING btree (business_entity_id);
 
 
 --
 -- Name: business_entity_tenant_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX business_entity_tenant_id_idx ON public.business_entity USING btree (tenant_id);
+CREATE INDEX IF NOT EXISTS business_entity_tenant_id_idx ON trendx_catalog.business_entity USING btree (tenant_id);
 
 
 --
 -- Name: cached_telemetry_business_entity_field_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX cached_telemetry_business_entity_field_id_idx ON public.cached_telemetry USING btree (business_entity_field_id);
+CREATE INDEX IF NOT EXISTS cached_telemetry_business_entity_field_id_idx ON trendx_catalog.cached_telemetry USING btree (business_entity_field_id);
 
 
 --
 -- Name: cached_telemetry_business_entity_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX cached_telemetry_business_entity_id_idx ON public.cached_telemetry USING btree (business_entity_id);
+CREATE INDEX IF NOT EXISTS cached_telemetry_business_entity_id_idx ON trendx_catalog.cached_telemetry USING btree (business_entity_id);
 
 
 --
 -- Name: cached_telemetry_date_aggregation_type_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX cached_telemetry_date_aggregation_type_idx ON public.cached_telemetry USING btree (date_aggregation_type);
+CREATE INDEX IF NOT EXISTS cached_telemetry_date_aggregation_type_idx ON trendx_catalog.cached_telemetry USING btree (date_aggregation_type);
 
 
 --
 -- Name: cached_telemetry_end_ts_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX cached_telemetry_end_ts_idx ON public.cached_telemetry USING btree (end_ts);
+CREATE INDEX IF NOT EXISTS cached_telemetry_end_ts_idx ON trendx_catalog.cached_telemetry USING btree (end_ts);
 
 
 --
 -- Name: cached_telemetry_field_aggregation_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX cached_telemetry_field_aggregation_idx ON public.cached_telemetry USING btree (field_aggregation);
+CREATE INDEX IF NOT EXISTS cached_telemetry_field_aggregation_idx ON trendx_catalog.cached_telemetry USING btree (field_aggregation);
 
 
 --
 -- Name: cached_telemetry_function_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX cached_telemetry_function_idx ON public.cached_telemetry USING btree (function);
+CREATE INDEX IF NOT EXISTS cached_telemetry_function_idx ON trendx_catalog.cached_telemetry USING btree (function);
 
 
 --
 -- Name: cached_telemetry_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX cached_telemetry_id_idx ON public.cached_telemetry USING btree (id);
+CREATE INDEX IF NOT EXISTS cached_telemetry_id_idx ON trendx_catalog.cached_telemetry USING btree (id);
 
 
 --
 -- Name: cached_telemetry_item_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX cached_telemetry_item_id_idx ON public.cached_telemetry USING btree (item_id);
+CREATE INDEX IF NOT EXISTS cached_telemetry_item_id_idx ON trendx_catalog.cached_telemetry USING btree (item_id);
 
 
 --
 -- Name: cached_telemetry_point_cached_telemetry_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX cached_telemetry_point_cached_telemetry_id_idx ON public.cached_telemetry_point USING btree (cached_telemetry_id);
+CREATE INDEX IF NOT EXISTS cached_telemetry_point_cached_telemetry_id_idx ON trendx_catalog.cached_telemetry_point USING btree (cached_telemetry_id);
 
 
 --
 -- Name: cached_telemetry_point_ts_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX cached_telemetry_point_ts_idx ON public.cached_telemetry_point USING btree (ts);
+CREATE INDEX IF NOT EXISTS cached_telemetry_point_ts_idx ON trendx_catalog.cached_telemetry_point USING btree (ts);
 
 
 --
 -- Name: cached_telemetry_start_ts_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX cached_telemetry_start_ts_idx ON public.cached_telemetry USING btree (start_ts);
+CREATE INDEX IF NOT EXISTS cached_telemetry_start_ts_idx ON trendx_catalog.cached_telemetry USING btree (start_ts);
 
 
 --
 -- Name: cached_telemetry_tenant_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX cached_telemetry_tenant_id_idx ON public.cached_telemetry USING btree (tenant_id);
+CREATE INDEX IF NOT EXISTS cached_telemetry_tenant_id_idx ON trendx_catalog.cached_telemetry USING btree (tenant_id);
 
 
 --
 -- Name: calculation_field_associated_entity_field_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX calculation_field_associated_entity_field_id_idx ON public.calculation_field USING btree (associated_entity_field_id);
+CREATE INDEX IF NOT EXISTS calculation_field_associated_entity_field_id_idx ON trendx_catalog.calculation_field USING btree (associated_entity_field_id);
 
 
 --
 -- Name: calculation_field_business_entity_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX calculation_field_business_entity_id_idx ON public.calculation_field USING btree (business_entity_id);
+CREATE INDEX IF NOT EXISTS calculation_field_business_entity_id_idx ON trendx_catalog.calculation_field USING btree (business_entity_id);
 
 
 --
 -- Name: calculation_field_calculation_field_type_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX calculation_field_calculation_field_type_idx ON public.calculation_field USING btree (calculation_field_type);
+CREATE INDEX IF NOT EXISTS calculation_field_calculation_field_type_idx ON trendx_catalog.calculation_field USING btree (calculation_field_type);
 
 
 --
 -- Name: calculation_field_customer_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX calculation_field_customer_id_idx ON public.calculation_field USING btree (customer_id);
+CREATE INDEX IF NOT EXISTS calculation_field_customer_id_idx ON trendx_catalog.calculation_field USING btree (customer_id);
 
 
 --
 -- Name: calculation_field_enabled_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX calculation_field_enabled_idx ON public.calculation_field USING btree (enabled);
+CREATE INDEX IF NOT EXISTS calculation_field_enabled_idx ON trendx_catalog.calculation_field USING btree (enabled);
 
 
 --
 -- Name: calculation_field_language_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX calculation_field_language_idx ON public.calculation_field USING btree (language);
+CREATE INDEX IF NOT EXISTS calculation_field_language_idx ON trendx_catalog.calculation_field USING btree (language);
 
 
 --
 -- Name: calculation_field_name_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX calculation_field_name_idx ON public.calculation_field USING btree (name);
+CREATE INDEX IF NOT EXISTS calculation_field_name_idx ON trendx_catalog.calculation_field USING btree (name);
 
 
 --
 -- Name: calculation_field_tenant_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX calculation_field_tenant_id_idx ON public.calculation_field USING btree (tenant_id);
+CREATE INDEX IF NOT EXISTS calculation_field_tenant_id_idx ON trendx_catalog.calculation_field USING btree (tenant_id);
 
 
 --
 -- Name: cluster_example_cluster_info_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX cluster_example_cluster_info_id_idx ON public.cluster_example USING btree (cluster_info_id);
+CREATE INDEX IF NOT EXISTS cluster_example_cluster_info_id_idx ON trendx_catalog.cluster_example USING btree (cluster_info_id);
 
 
 --
 -- Name: cluster_info_cluster_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX cluster_info_cluster_id_idx ON public.cluster_info USING btree (cluster_id);
+CREATE INDEX IF NOT EXISTS cluster_info_cluster_id_idx ON trendx_catalog.cluster_info USING btree (cluster_id);
 
 
 --
 -- Name: cluster_info_cluster_model_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX cluster_info_cluster_model_id_idx ON public.cluster_info USING btree (cluster_model_id);
+CREATE INDEX IF NOT EXISTS cluster_info_cluster_model_id_idx ON trendx_catalog.cluster_info USING btree (cluster_model_id);
 
 
 --
 -- Name: cluster_model_customer_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX cluster_model_customer_id_idx ON public.cluster_model USING btree (customer_id);
+CREATE INDEX IF NOT EXISTS cluster_model_customer_id_idx ON trendx_catalog.cluster_model USING btree (customer_id);
 
 
 --
 -- Name: cluster_model_dataset_config_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX cluster_model_dataset_config_id_idx ON public.cluster_model USING btree (dataset_config_id);
+CREATE INDEX IF NOT EXISTS cluster_model_dataset_config_id_idx ON trendx_catalog.cluster_model USING btree (dataset_config_id);
 
 
 --
 -- Name: cluster_model_properties_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX cluster_model_properties_id_idx ON public.cluster_model USING btree (properties_id);
+CREATE INDEX IF NOT EXISTS cluster_model_properties_id_idx ON trendx_catalog.cluster_model USING btree (properties_id);
 
 
 --
 -- Name: cluster_model_tenant_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX cluster_model_tenant_id_idx ON public.cluster_model USING btree (tenant_id);
+CREATE INDEX IF NOT EXISTS cluster_model_tenant_id_idx ON trendx_catalog.cluster_model USING btree (tenant_id);
 
 
 --
 -- Name: custom_prediction_model_model_name_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX custom_prediction_model_model_name_idx ON public.custom_prediction_model USING btree (model_name);
+CREATE INDEX IF NOT EXISTS custom_prediction_model_model_name_idx ON trendx_catalog.custom_prediction_model USING btree (model_name);
 
 
 --
 -- Name: dataset_config_business_entity_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX dataset_config_business_entity_id_idx ON public.dataset_config USING btree (business_entity_id);
+CREATE INDEX IF NOT EXISTS dataset_config_business_entity_id_idx ON trendx_catalog.dataset_config USING btree (business_entity_id);
 
 
 --
 -- Name: datasource_tenant_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX datasource_tenant_id_idx ON public.datasource USING btree (tenant_id);
+CREATE INDEX IF NOT EXISTS datasource_tenant_id_idx ON trendx_catalog.datasource USING btree (tenant_id);
 
 
 --
 -- Name: domain_tenant_pair_domain_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX domain_tenant_pair_domain_idx ON public.domain_tenant_pair USING btree (domain);
+CREATE INDEX IF NOT EXISTS domain_tenant_pair_domain_idx ON trendx_catalog.domain_tenant_pair USING btree (domain);
 
 
 --
 -- Name: domain_tenant_pair_tenant_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX domain_tenant_pair_tenant_id_idx ON public.domain_tenant_pair USING btree (tenant_id);
+CREATE INDEX IF NOT EXISTS domain_tenant_pair_tenant_id_idx ON trendx_catalog.domain_tenant_pair USING btree (tenant_id);
 
 
 --
 -- Name: latest_telemetry_calculation_field_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX latest_telemetry_calculation_field_id_idx ON public.latest_telemetry USING btree (calculation_field_id);
+CREATE INDEX IF NOT EXISTS latest_telemetry_calculation_field_id_idx ON trendx_catalog.latest_telemetry USING btree (calculation_field_id);
 
 
 --
 -- Name: latest_telemetry_item_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX latest_telemetry_item_id_idx ON public.latest_telemetry USING btree (item_id);
+CREATE INDEX IF NOT EXISTS latest_telemetry_item_id_idx ON trendx_catalog.latest_telemetry USING btree (item_id);
 
 
 --
 -- Name: latest_telemetry_key_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX latest_telemetry_key_idx ON public.latest_telemetry USING btree (key);
+CREATE INDEX IF NOT EXISTS latest_telemetry_key_idx ON trendx_catalog.latest_telemetry USING btree (key);
 
 
 --
 -- Name: llm_config_created_ts_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX llm_config_created_ts_idx ON public.llm_config USING btree (created_ts);
+CREATE INDEX IF NOT EXISTS llm_config_created_ts_idx ON trendx_catalog.llm_config USING btree (created_ts);
 
 
 --
 -- Name: llm_config_tenant_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX llm_config_tenant_id_idx ON public.llm_config USING btree (tenant_id);
+CREATE INDEX IF NOT EXISTS llm_config_tenant_id_idx ON trendx_catalog.llm_config USING btree (tenant_id);
 
 
 --
 -- Name: llm_config_updated_ts_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX llm_config_updated_ts_idx ON public.llm_config USING btree (updated_ts);
+CREATE INDEX IF NOT EXISTS llm_config_updated_ts_idx ON trendx_catalog.llm_config USING btree (updated_ts);
 
 
 --
 -- Name: llm_settings_chat_type_link_llm_config_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX llm_settings_chat_type_link_llm_config_id_idx ON public.llm_settings_chat_type_link USING btree (llm_config_id);
+CREATE INDEX IF NOT EXISTS llm_settings_chat_type_link_llm_config_id_idx ON trendx_catalog.llm_settings_chat_type_link USING btree (llm_config_id);
 
 
 --
 -- Name: llm_settings_chat_type_link_llm_setting_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX llm_settings_chat_type_link_llm_setting_id_idx ON public.llm_settings_chat_type_link USING btree (llm_setting_id);
+CREATE INDEX IF NOT EXISTS llm_settings_chat_type_link_llm_setting_id_idx ON trendx_catalog.llm_settings_chat_type_link USING btree (llm_setting_id);
 
 
 --
 -- Name: prediction_model_business_entity_field_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX prediction_model_business_entity_field_idx ON public.prediction_model USING btree (business_entity_field_id);
+CREATE INDEX IF NOT EXISTS prediction_model_business_entity_field_idx ON trendx_catalog.prediction_model USING btree (business_entity_field_id);
 
 
 --
 -- Name: prediction_model_business_entity_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX prediction_model_business_entity_idx ON public.prediction_model USING btree (business_entity_id);
+CREATE INDEX IF NOT EXISTS prediction_model_business_entity_idx ON trendx_catalog.prediction_model USING btree (business_entity_id);
 
 
 --
 -- Name: prediction_model_created_ts_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX prediction_model_created_ts_idx ON public.prediction_model USING btree (created_ts);
+CREATE INDEX IF NOT EXISTS prediction_model_created_ts_idx ON trendx_catalog.prediction_model USING btree (created_ts);
 
 
 --
 -- Name: prediction_model_datasource_parameters_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX prediction_model_datasource_parameters_idx ON public.prediction_model USING btree (datasource_parameters);
+CREATE INDEX IF NOT EXISTS prediction_model_datasource_parameters_idx ON trendx_catalog.prediction_model USING btree (datasource_parameters);
 
 
 --
 -- Name: prediction_model_last_item_point_prediction_model_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX prediction_model_last_item_point_prediction_model_id_idx ON public.prediction_model_last_item_point USING btree (prediction_model_id);
+CREATE INDEX IF NOT EXISTS prediction_model_last_item_point_prediction_model_id_idx ON trendx_catalog.prediction_model_last_item_point USING btree (prediction_model_id);
 
 
 --
 -- Name: prediction_model_name_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX prediction_model_name_idx ON public.prediction_model USING btree (name);
+CREATE INDEX IF NOT EXISTS prediction_model_name_idx ON trendx_catalog.prediction_model USING btree (name);
 
 
 --
 -- Name: prediction_model_tenant_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX prediction_model_tenant_id_idx ON public.prediction_model USING btree (tenant_id);
+CREATE INDEX IF NOT EXISTS prediction_model_tenant_id_idx ON trendx_catalog.prediction_model USING btree (tenant_id);
 
 
 --
 -- Name: prediction_model_type_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX prediction_model_type_idx ON public.prediction_model USING btree (type);
+CREATE INDEX IF NOT EXISTS prediction_model_type_idx ON trendx_catalog.prediction_model USING btree (type);
 
 
 --
 -- Name: prediction_model_updated_ts_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX prediction_model_updated_ts_idx ON public.prediction_model USING btree (updated_ts);
+CREATE INDEX IF NOT EXISTS prediction_model_updated_ts_idx ON trendx_catalog.prediction_model USING btree (updated_ts);
 
 
 --
 -- Name: prediction_model_user_combined_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX prediction_model_user_combined_idx ON public.prediction_model USING btree (tenant_id, customer_id);
+CREATE INDEX IF NOT EXISTS prediction_model_user_combined_idx ON trendx_catalog.prediction_model USING btree (tenant_id, customer_id);
 
 
 --
 -- Name: relation_business_entity_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX relation_business_entity_id_idx ON public.relation USING btree (business_entity_id);
+CREATE INDEX IF NOT EXISTS relation_business_entity_id_idx ON trendx_catalog.relation USING btree (business_entity_id);
 
 
 --
 -- Name: relation_related_entity_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX relation_related_entity_id_idx ON public.relation USING btree (related_entity_id);
+CREATE INDEX IF NOT EXISTS relation_related_entity_id_idx ON trendx_catalog.relation USING btree (related_entity_id);
 
 
 --
 -- Name: scored_point_anomaly_anomaly_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX scored_point_anomaly_anomaly_id_idx ON public.scored_point_anomaly USING btree (anomaly_id);
+CREATE INDEX IF NOT EXISTS scored_point_anomaly_anomaly_id_idx ON trendx_catalog.scored_point_anomaly USING btree (anomaly_id);
 
 
 --
 -- Name: scored_point_centroid_cluster_info_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX scored_point_centroid_cluster_info_id_idx ON public.scored_point_centroid USING btree (cluster_info_id);
+CREATE INDEX IF NOT EXISTS scored_point_centroid_cluster_info_id_idx ON trendx_catalog.scored_point_centroid USING btree (cluster_info_id);
 
 
 --
 -- Name: scored_point_cluster_cluster_example_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX scored_point_cluster_cluster_example_id_idx ON public.scored_point_cluster USING btree (cluster_example_id);
+CREATE INDEX IF NOT EXISTS scored_point_cluster_cluster_example_id_idx ON trendx_catalog.scored_point_cluster USING btree (cluster_example_id);
 
 
 --
 -- Name: scored_point_histogram_cluster_info_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX scored_point_histogram_cluster_info_id_idx ON public.scored_point_histogram USING btree (cluster_info_id);
+CREATE INDEX IF NOT EXISTS scored_point_histogram_cluster_info_id_idx ON trendx_catalog.scored_point_histogram USING btree (cluster_info_id);
 
 
 --
 -- Name: segment_data_item_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX segment_data_item_id_idx ON public.segment_data USING btree (item_id);
+CREATE INDEX IF NOT EXISTS segment_data_item_id_idx ON trendx_catalog.segment_data USING btree (item_id);
 
 
 --
 -- Name: segment_data_model_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX segment_data_model_id_idx ON public.segment_data USING btree (model_id);
+CREATE INDEX IF NOT EXISTS segment_data_model_id_idx ON trendx_catalog.segment_data USING btree (model_id);
 
 
 --
 -- Name: segment_data_range_end_ts_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX segment_data_range_end_ts_idx ON public.segment_data USING btree (range_end_ts);
+CREATE INDEX IF NOT EXISTS segment_data_range_end_ts_idx ON trendx_catalog.segment_data USING btree (range_end_ts);
 
 
 --
 -- Name: segment_data_range_start_ts_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX segment_data_range_start_ts_idx ON public.segment_data USING btree (range_start_ts);
+CREATE INDEX IF NOT EXISTS segment_data_range_start_ts_idx ON trendx_catalog.segment_data USING btree (range_start_ts);
 
 
 --
 -- Name: trendz_task_created_ts_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_created_ts_idx ON public.trendz_task USING btree (created_ts);
+CREATE INDEX IF NOT EXISTS trendz_task_created_ts_idx ON trendx_catalog.trendz_task USING btree (created_ts);
 
 
 --
 -- Name: trendz_task_customer_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_customer_id_idx ON public.trendz_task USING btree (customer_id);
+CREATE INDEX IF NOT EXISTS trendz_task_customer_id_idx ON trendx_catalog.trendz_task USING btree (customer_id);
 
 
 --
 -- Name: trendz_task_enabled_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_enabled_idx ON public.trendz_task USING btree (enabled);
+CREATE INDEX IF NOT EXISTS trendz_task_enabled_idx ON trendx_catalog.trendz_task USING btree (enabled);
 
 
 --
 -- Name: trendz_task_execution_created_ts_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_execution_created_ts_idx ON public.trendz_task_execution USING btree (created_ts);
+CREATE INDEX IF NOT EXISTS trendz_task_execution_created_ts_idx ON trendx_catalog.trendz_task_execution USING btree (created_ts);
 
 
 --
 -- Name: trendz_task_execution_customer_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_execution_customer_id_idx ON public.trendz_task_execution USING btree (customer_id);
+CREATE INDEX IF NOT EXISTS trendz_task_execution_customer_id_idx ON trendx_catalog.trendz_task_execution USING btree (customer_id);
 
 
 --
 -- Name: trendz_task_execution_duration_ts_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_execution_duration_ts_idx ON public.trendz_task_execution USING btree (duration);
+CREATE INDEX IF NOT EXISTS trendz_task_execution_duration_ts_idx ON trendx_catalog.trendz_task_execution USING btree (duration);
 
 
 --
 -- Name: trendz_task_execution_finish_ts_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_execution_finish_ts_idx ON public.trendz_task_execution USING btree (finish_ts);
+CREATE INDEX IF NOT EXISTS trendz_task_execution_finish_ts_idx ON trendx_catalog.trendz_task_execution USING btree (finish_ts);
 
 
 --
 -- Name: trendz_task_execution_job_type_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_execution_job_type_idx ON public.trendz_task_execution USING btree (job_type);
+CREATE INDEX IF NOT EXISTS trendz_task_execution_job_type_idx ON trendx_catalog.trendz_task_execution USING btree (job_type);
 
 
 --
 -- Name: trendz_task_execution_parent_step_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_execution_parent_step_id_idx ON public.trendz_task_execution_progress_step USING btree (parent_step_id);
+CREATE INDEX IF NOT EXISTS trendz_task_execution_parent_step_id_idx ON trendx_catalog.trendz_task_execution_progress_step USING btree (parent_step_id);
 
 
 --
 -- Name: trendz_task_execution_progress_step_execution_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_execution_progress_step_execution_id_idx ON public.trendz_task_execution_progress_step USING btree (execution_id);
+CREATE INDEX IF NOT EXISTS trendz_task_execution_progress_step_execution_id_idx ON trendx_catalog.trendz_task_execution_progress_step USING btree (execution_id);
 
 
 --
 -- Name: trendz_task_execution_request_created_ts_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_execution_request_created_ts_idx ON public.trendz_task_execution_request USING btree (created_ts);
+CREATE INDEX IF NOT EXISTS trendz_task_execution_request_created_ts_idx ON trendx_catalog.trendz_task_execution_request USING btree (created_ts);
 
 
 --
 -- Name: trendz_task_execution_request_customer_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_execution_request_customer_id_idx ON public.trendz_task_execution_request USING btree (customer_id);
+CREATE INDEX IF NOT EXISTS trendz_task_execution_request_customer_id_idx ON trendx_catalog.trendz_task_execution_request USING btree (customer_id);
 
 
 --
 -- Name: trendz_task_execution_request_job_type_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_execution_request_job_type_idx ON public.trendz_task_execution_request USING btree (job_type);
+CREATE INDEX IF NOT EXISTS trendz_task_execution_request_job_type_idx ON trendx_catalog.trendz_task_execution_request USING btree (job_type);
 
 
 --
 -- Name: trendz_task_execution_request_scheduled_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_execution_request_scheduled_idx ON public.trendz_task_execution_request USING btree (scheduled);
+CREATE INDEX IF NOT EXISTS trendz_task_execution_request_scheduled_idx ON trendx_catalog.trendz_task_execution_request USING btree (scheduled);
 
 
 --
 -- Name: trendz_task_execution_request_state_ts_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_execution_request_state_ts_idx ON public.trendz_task_execution_request USING btree (state);
+CREATE INDEX IF NOT EXISTS trendz_task_execution_request_state_ts_idx ON trendx_catalog.trendz_task_execution_request USING btree (state);
 
 
 --
 -- Name: trendz_task_execution_request_task_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_execution_request_task_id_idx ON public.trendz_task_execution_request USING btree (task_id);
+CREATE INDEX IF NOT EXISTS trendz_task_execution_request_task_id_idx ON trendx_catalog.trendz_task_execution_request USING btree (task_id);
 
 
 --
 -- Name: trendz_task_execution_request_tenant_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_execution_request_tenant_id_idx ON public.trendz_task_execution_request USING btree (tenant_id);
+CREATE INDEX IF NOT EXISTS trendz_task_execution_request_tenant_id_idx ON trendx_catalog.trendz_task_execution_request USING btree (tenant_id);
 
 
 --
 -- Name: trendz_task_execution_request_user_combined_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_execution_request_user_combined_idx ON public.trendz_task_execution_request USING btree (tenant_id, customer_id, user_id);
+CREATE INDEX IF NOT EXISTS trendz_task_execution_request_user_combined_idx ON trendx_catalog.trendz_task_execution_request USING btree (tenant_id, customer_id, user_id);
 
 
 --
 -- Name: trendz_task_execution_request_user_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_execution_request_user_id_idx ON public.trendz_task_execution_request USING btree (user_id);
+CREATE INDEX IF NOT EXISTS trendz_task_execution_request_user_id_idx ON trendx_catalog.trendz_task_execution_request USING btree (user_id);
 
 
 --
 -- Name: trendz_task_execution_start_ts_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_execution_start_ts_idx ON public.trendz_task_execution USING btree (start_ts);
+CREATE INDEX IF NOT EXISTS trendz_task_execution_start_ts_idx ON trendx_catalog.trendz_task_execution USING btree (start_ts);
 
 
 --
 -- Name: trendz_task_execution_state_record_last_update_ts_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_execution_state_record_last_update_ts_idx ON public.trendz_task_execution_state_record USING btree (last_update_ts);
+CREATE INDEX IF NOT EXISTS trendz_task_execution_state_record_last_update_ts_idx ON trendx_catalog.trendz_task_execution_state_record USING btree (last_update_ts);
 
 
 --
 -- Name: trendz_task_execution_state_record_state_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_execution_state_record_state_idx ON public.trendz_task_execution_state_record USING btree (state);
+CREATE INDEX IF NOT EXISTS trendz_task_execution_state_record_state_idx ON trendx_catalog.trendz_task_execution_state_record USING btree (state);
 
 
 --
 -- Name: trendz_task_execution_status_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_execution_status_idx ON public.trendz_task_execution USING btree (status);
+CREATE INDEX IF NOT EXISTS trendz_task_execution_status_idx ON trendx_catalog.trendz_task_execution USING btree (status);
 
 
 --
 -- Name: trendz_task_execution_task_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_execution_task_id_idx ON public.trendz_task_execution USING btree (task_id);
+CREATE INDEX IF NOT EXISTS trendz_task_execution_task_id_idx ON trendx_catalog.trendz_task_execution USING btree (task_id);
 
 
 --
 -- Name: trendz_task_execution_tenant_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_execution_tenant_id_idx ON public.trendz_task_execution USING btree (tenant_id);
+CREATE INDEX IF NOT EXISTS trendz_task_execution_tenant_id_idx ON trendx_catalog.trendz_task_execution USING btree (tenant_id);
 
 
 --
 -- Name: trendz_task_execution_user_combined_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_execution_user_combined_idx ON public.trendz_task_execution USING btree (tenant_id, customer_id, user_id);
+CREATE INDEX IF NOT EXISTS trendz_task_execution_user_combined_idx ON trendx_catalog.trendz_task_execution USING btree (tenant_id, customer_id, user_id);
 
 
 --
 -- Name: trendz_task_execution_user_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_execution_user_id_idx ON public.trendz_task_execution USING btree (user_id);
+CREATE INDEX IF NOT EXISTS trendz_task_execution_user_id_idx ON trendx_catalog.trendz_task_execution USING btree (user_id);
 
 
 --
 -- Name: trendz_task_job_type_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_job_type_idx ON public.trendz_task USING btree (job_type);
+CREATE INDEX IF NOT EXISTS trendz_task_job_type_idx ON trendx_catalog.trendz_task USING btree (job_type);
 
 
 --
 -- Name: trendz_task_name_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_name_idx ON public.trendz_task USING btree (name);
+CREATE INDEX IF NOT EXISTS trendz_task_name_idx ON trendx_catalog.trendz_task USING btree (name);
 
 
 --
 -- Name: trendz_task_reference_key_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_reference_key_idx ON public.trendz_task USING btree (reference_key);
+CREATE INDEX IF NOT EXISTS trendz_task_reference_key_idx ON trendx_catalog.trendz_task USING btree (reference_key);
 
 
 --
 -- Name: trendz_task_reference_type_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_reference_type_idx ON public.trendz_task USING btree (reference_type);
+CREATE INDEX IF NOT EXISTS trendz_task_reference_type_idx ON trendx_catalog.trendz_task USING btree (reference_type);
 
 
 --
 -- Name: trendz_task_schedule_period_ts_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_schedule_period_ts_idx ON public.trendz_task USING btree (schedule_period_ts);
+CREATE INDEX IF NOT EXISTS trendz_task_schedule_period_ts_idx ON trendx_catalog.trendz_task USING btree (schedule_period_ts);
 
 
 --
 -- Name: trendz_task_schedule_planned_ts_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_schedule_planned_ts_idx ON public.trendz_task USING btree (schedule_planned_ts);
+CREATE INDEX IF NOT EXISTS trendz_task_schedule_planned_ts_idx ON trendx_catalog.trendz_task USING btree (schedule_planned_ts);
 
 
 --
 -- Name: trendz_task_schedule_type_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_schedule_type_idx ON public.trendz_task USING btree (schedule_type);
+CREATE INDEX IF NOT EXISTS trendz_task_schedule_type_idx ON trendx_catalog.trendz_task USING btree (schedule_type);
 
 
 --
 -- Name: trendz_task_scheduling_state_record_last_finish_ts_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_scheduling_state_record_last_finish_ts_idx ON public.trendz_task_scheduling_state_record USING btree (last_finish_ts);
+CREATE INDEX IF NOT EXISTS trendz_task_scheduling_state_record_last_finish_ts_idx ON trendx_catalog.trendz_task_scheduling_state_record USING btree (last_finish_ts);
 
 
 --
 -- Name: trendz_task_scheduling_state_record_state_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_scheduling_state_record_state_idx ON public.trendz_task_scheduling_state_record USING btree (state);
+CREATE INDEX IF NOT EXISTS trendz_task_scheduling_state_record_state_idx ON trendx_catalog.trendz_task_scheduling_state_record USING btree (state);
 
 
 --
 -- Name: trendz_task_sequence_created_ts_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_sequence_created_ts_idx ON public.trendz_task_sequence USING btree (created_ts);
+CREATE INDEX IF NOT EXISTS trendz_task_sequence_created_ts_idx ON trendx_catalog.trendz_task_sequence USING btree (created_ts);
 
 
 --
 -- Name: trendz_task_sequence_customer_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_sequence_customer_id_idx ON public.trendz_task_sequence USING btree (customer_id);
+CREATE INDEX IF NOT EXISTS trendz_task_sequence_customer_id_idx ON trendx_catalog.trendz_task_sequence USING btree (customer_id);
 
 
 --
 -- Name: trendz_task_sequence_item_reference_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_sequence_item_reference_idx ON public.trendz_task_sequence_item USING btree (reference_type, reference_key);
+CREATE INDEX IF NOT EXISTS trendz_task_sequence_item_reference_idx ON trendx_catalog.trendz_task_sequence_item USING btree (reference_type, reference_key);
 
 
 --
 -- Name: trendz_task_sequence_item_sequence_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_sequence_item_sequence_id_idx ON public.trendz_task_sequence_item USING btree (sequence_id);
+CREATE INDEX IF NOT EXISTS trendz_task_sequence_item_sequence_id_idx ON trendx_catalog.trendz_task_sequence_item USING btree (sequence_id);
 
 
 --
 -- Name: trendz_task_sequence_name_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_sequence_name_idx ON public.trendz_task_sequence USING btree (name);
+CREATE INDEX IF NOT EXISTS trendz_task_sequence_name_idx ON trendx_catalog.trendz_task_sequence USING btree (name);
 
 
 --
 -- Name: trendz_task_sequence_tenant_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_sequence_tenant_id_idx ON public.trendz_task_sequence USING btree (tenant_id);
+CREATE INDEX IF NOT EXISTS trendz_task_sequence_tenant_id_idx ON trendx_catalog.trendz_task_sequence USING btree (tenant_id);
 
 
 --
 -- Name: trendz_task_sequence_updated_ts_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_sequence_updated_ts_idx ON public.trendz_task_sequence USING btree (updated_ts);
+CREATE INDEX IF NOT EXISTS trendz_task_sequence_updated_ts_idx ON trendx_catalog.trendz_task_sequence USING btree (updated_ts);
 
 
 --
 -- Name: trendz_task_sequence_user_combined_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_sequence_user_combined_idx ON public.trendz_task_sequence USING btree (tenant_id, customer_id, user_id);
+CREATE INDEX IF NOT EXISTS trendz_task_sequence_user_combined_idx ON trendx_catalog.trendz_task_sequence USING btree (tenant_id, customer_id, user_id);
 
 
 --
 -- Name: trendz_task_sequence_user_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_sequence_user_id_idx ON public.trendz_task_sequence USING btree (user_id);
+CREATE INDEX IF NOT EXISTS trendz_task_sequence_user_id_idx ON trendx_catalog.trendz_task_sequence USING btree (user_id);
 
 
 --
 -- Name: trendz_task_store_execution_count_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_store_execution_count_idx ON public.trendz_task USING btree (store_execution_count);
+CREATE INDEX IF NOT EXISTS trendz_task_store_execution_count_idx ON trendx_catalog.trendz_task USING btree (store_execution_count);
 
 
 --
 -- Name: trendz_task_store_execution_enabled_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_store_execution_enabled_idx ON public.trendz_task USING btree (store_execution_enabled);
+CREATE INDEX IF NOT EXISTS trendz_task_store_execution_enabled_idx ON trendx_catalog.trendz_task USING btree (store_execution_enabled);
 
 
 --
 -- Name: trendz_task_tenant_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_tenant_id_idx ON public.trendz_task USING btree (tenant_id);
+CREATE INDEX IF NOT EXISTS trendz_task_tenant_id_idx ON trendx_catalog.trendz_task USING btree (tenant_id);
 
 
 --
 -- Name: trendz_task_ttl_duration_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_ttl_duration_idx ON public.trendz_task USING btree (ttl_duration);
+CREATE INDEX IF NOT EXISTS trendz_task_ttl_duration_idx ON trendx_catalog.trendz_task USING btree (ttl_duration);
 
 
 --
 -- Name: trendz_task_ttl_enabled_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_ttl_enabled_idx ON public.trendz_task USING btree (ttl_enabled);
+CREATE INDEX IF NOT EXISTS trendz_task_ttl_enabled_idx ON trendx_catalog.trendz_task USING btree (ttl_enabled);
 
 
 --
 -- Name: trendz_task_updated_ts_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_updated_ts_idx ON public.trendz_task USING btree (updated_ts);
+CREATE INDEX IF NOT EXISTS trendz_task_updated_ts_idx ON trendx_catalog.trendz_task USING btree (updated_ts);
 
 
 --
 -- Name: trendz_task_user_combined_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_user_combined_idx ON public.trendz_task USING btree (tenant_id, customer_id, user_id);
+CREATE INDEX IF NOT EXISTS trendz_task_user_combined_idx ON trendx_catalog.trendz_task USING btree (tenant_id, customer_id, user_id);
 
 
 --
 -- Name: trendz_task_user_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX trendz_task_user_id_idx ON public.trendz_task USING btree (user_id);
+CREATE INDEX IF NOT EXISTS trendz_task_user_id_idx ON trendx_catalog.trendz_task USING btree (user_id);
 
 
 --
 -- Name: user_record_customer_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX user_record_customer_id_idx ON public.user_record USING btree (customer_id);
+CREATE INDEX IF NOT EXISTS user_record_customer_id_idx ON trendx_catalog.user_record USING btree (customer_id);
 
 
 --
 -- Name: user_record_tenant_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX user_record_tenant_id_idx ON public.user_record USING btree (tenant_id);
+CREATE INDEX IF NOT EXISTS user_record_tenant_id_idx ON trendx_catalog.user_record USING btree (tenant_id);
 
 
 --
 -- Name: user_record_user_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX user_record_user_id_idx ON public.user_record USING btree (user_id);
+CREATE INDEX IF NOT EXISTS user_record_user_id_idx ON trendx_catalog.user_record USING btree (user_id);
 
 
 --
 -- Name: user_record_username_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX user_record_username_idx ON public.user_record USING btree (username);
+CREATE INDEX IF NOT EXISTS user_record_username_idx ON trendx_catalog.user_record USING btree (username);
 
 
 --
 -- Name: view_collection_collection_name_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX view_collection_collection_name_idx ON public.view_collection USING btree (collection_name);
+CREATE INDEX IF NOT EXISTS view_collection_collection_name_idx ON trendx_catalog.view_collection USING btree (collection_name);
 
 
 --
 -- Name: view_collection_customer_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX view_collection_customer_id_idx ON public.view_collection USING btree (customer_id);
+CREATE INDEX IF NOT EXISTS view_collection_customer_id_idx ON trendx_catalog.view_collection USING btree (customer_id);
 
 
 --
 -- Name: view_collection_parent_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX view_collection_parent_id_idx ON public.view_collection USING btree (parent_id);
+CREATE INDEX IF NOT EXISTS view_collection_parent_id_idx ON trendx_catalog.view_collection USING btree (parent_id);
 
 
 --
 -- Name: view_collection_tenant_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX view_collection_tenant_id_idx ON public.view_collection USING btree (tenant_id);
+CREATE INDEX IF NOT EXISTS view_collection_tenant_id_idx ON trendx_catalog.view_collection USING btree (tenant_id);
 
 
 --
 -- Name: view_config_collection_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX view_config_collection_id_idx ON public.view_config USING btree (collection_id);
+CREATE INDEX IF NOT EXISTS view_config_collection_id_idx ON trendx_catalog.view_config USING btree (collection_id);
 
 
 --
 -- Name: view_config_customer_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX view_config_customer_id_idx ON public.view_config USING btree (customer_id);
+CREATE INDEX IF NOT EXISTS view_config_customer_id_idx ON trendx_catalog.view_config USING btree (customer_id);
 
 
 --
 -- Name: view_config_is_favorite_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX view_config_is_favorite_idx ON public.view_config USING btree (is_favorite);
+CREATE INDEX IF NOT EXISTS view_config_is_favorite_idx ON trendx_catalog.view_config USING btree (is_favorite);
 
 
 --
 -- Name: view_config_name_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX view_config_name_idx ON public.view_config USING btree (name);
+CREATE INDEX IF NOT EXISTS view_config_name_idx ON trendx_catalog.view_config USING btree (name);
 
 
 --
 -- Name: view_config_tenant_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX view_config_tenant_id_idx ON public.view_config USING btree (tenant_id);
+CREATE INDEX IF NOT EXISTS view_config_tenant_id_idx ON trendx_catalog.view_config USING btree (tenant_id);
 
 
 --
 -- Name: view_field_business_entity_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX view_field_business_entity_id_idx ON public.view_field USING btree (business_entity_id);
+CREATE INDEX IF NOT EXISTS view_field_business_entity_id_idx ON trendx_catalog.view_field USING btree (business_entity_id);
 
 
 --
 -- Name: view_field_dataset_config_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX view_field_dataset_config_idx ON public.view_field USING btree (dataset_config_id);
+CREATE INDEX IF NOT EXISTS view_field_dataset_config_idx ON trendx_catalog.view_field USING btree (dataset_config_id);
 
 
 --
 -- Name: view_field_entity_field_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX view_field_entity_field_id_idx ON public.view_field USING btree (entity_field_id);
+CREATE INDEX IF NOT EXISTS view_field_entity_field_id_idx ON trendx_catalog.view_field USING btree (entity_field_id);
 
 
 --
 -- Name: view_field_view_config_idx; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX view_field_view_config_idx ON public.view_field USING btree (view_config_id);
+CREATE INDEX IF NOT EXISTS view_field_view_config_idx ON trendx_catalog.view_field USING btree (view_config_id);
 
 
 --
 -- Name: business_entity_field business_entity_field_business_entity_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.business_entity_field
-    ADD CONSTRAINT business_entity_field_business_entity_id_fkey FOREIGN KEY (business_entity_id) REFERENCES public.business_entity(id) ON DELETE CASCADE;
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'business_entity_field_business_entity_id_fkey'
+      AND conrelid = 'trendx_catalog.business_entity_field'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.business_entity_field ADD CONSTRAINT business_entity_field_business_entity_id_fkey FOREIGN KEY (business_entity_id) REFERENCES trendx_catalog.business_entity(id) ON DELETE CASCADE;
+  END IF;
+END $$;
 
 
 --
 -- Name: cluster_example cluster_example_cluster_info_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.cluster_example
-    ADD CONSTRAINT cluster_example_cluster_info_id_fkey FOREIGN KEY (cluster_info_id) REFERENCES public.cluster_info(id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'cluster_example_cluster_info_id_fkey'
+      AND conrelid = 'trendx_catalog.cluster_example'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.cluster_example ADD CONSTRAINT cluster_example_cluster_info_id_fkey FOREIGN KEY (cluster_info_id) REFERENCES trendx_catalog.cluster_info(id);
+  END IF;
+END $$;
 
 
 --
 -- Name: cluster_info cluster_info_cluster_model_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.cluster_info
-    ADD CONSTRAINT cluster_info_cluster_model_id_fkey FOREIGN KEY (cluster_model_id) REFERENCES public.cluster_model(id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'cluster_info_cluster_model_id_fkey'
+      AND conrelid = 'trendx_catalog.cluster_info'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.cluster_info ADD CONSTRAINT cluster_info_cluster_model_id_fkey FOREIGN KEY (cluster_model_id) REFERENCES trendx_catalog.cluster_model(id);
+  END IF;
+END $$;
 
 
 --
 -- Name: cluster_model cluster_model_dataset_config_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.cluster_model
-    ADD CONSTRAINT cluster_model_dataset_config_id_fkey FOREIGN KEY (dataset_config_id) REFERENCES public.dataset_config(id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'cluster_model_dataset_config_id_fkey'
+      AND conrelid = 'trendx_catalog.cluster_model'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.cluster_model ADD CONSTRAINT cluster_model_dataset_config_id_fkey FOREIGN KEY (dataset_config_id) REFERENCES trendx_catalog.dataset_config(id);
+  END IF;
+END $$;
 
 
 --
 -- Name: cluster_model cluster_model_properties_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.cluster_model
-    ADD CONSTRAINT cluster_model_properties_id_fkey FOREIGN KEY (properties_id) REFERENCES public.ml_properties(id);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'cluster_model_properties_id_fkey'
+      AND conrelid = 'trendx_catalog.cluster_model'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.cluster_model ADD CONSTRAINT cluster_model_properties_id_fkey FOREIGN KEY (properties_id) REFERENCES trendx_catalog.ml_properties(id);
+  END IF;
+END $$;
 
 
 --
 -- Name: trendz_task_sequence_item fk_sequence; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.trendz_task_sequence_item
-    ADD CONSTRAINT fk_sequence FOREIGN KEY (sequence_id) REFERENCES public.trendz_task_sequence(id) ON DELETE CASCADE;
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'fk_sequence'
+      AND conrelid = 'trendx_catalog.trendz_task_sequence_item'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.trendz_task_sequence_item ADD CONSTRAINT fk_sequence FOREIGN KEY (sequence_id) REFERENCES trendx_catalog.trendz_task_sequence(id) ON DELETE CASCADE;
+  END IF;
+END $$;
 
 
 --
 -- Name: trendz_task_sequence_item fk_task_reference; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.trendz_task_sequence_item
-    ADD CONSTRAINT fk_task_reference FOREIGN KEY (reference_type, reference_key) REFERENCES public.trendz_task(reference_type, reference_key) ON DELETE CASCADE;
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'fk_task_reference'
+      AND conrelid = 'trendx_catalog.trendz_task_sequence_item'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.trendz_task_sequence_item ADD CONSTRAINT fk_task_reference FOREIGN KEY (reference_type, reference_key) REFERENCES trendx_catalog.trendz_task(reference_type, reference_key) ON DELETE CASCADE;
+  END IF;
+END $$;
 
 
 --
 -- Name: llm_settings_chat_type_link llm_settings_chat_type_link_llm_config_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.llm_settings_chat_type_link
-    ADD CONSTRAINT llm_settings_chat_type_link_llm_config_id_fkey FOREIGN KEY (llm_config_id) REFERENCES public.llm_config(id) ON DELETE CASCADE;
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'llm_settings_chat_type_link_llm_config_id_fkey'
+      AND conrelid = 'trendx_catalog.llm_settings_chat_type_link'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.llm_settings_chat_type_link ADD CONSTRAINT llm_settings_chat_type_link_llm_config_id_fkey FOREIGN KEY (llm_config_id) REFERENCES trendx_catalog.llm_config(id) ON DELETE CASCADE;
+  END IF;
+END $$;
 
 
 --
 -- Name: llm_settings_chat_type_link llm_settings_chat_type_link_llm_setting_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.llm_settings_chat_type_link
-    ADD CONSTRAINT llm_settings_chat_type_link_llm_setting_id_fkey FOREIGN KEY (llm_setting_id) REFERENCES public.llm_settings(id) ON DELETE CASCADE;
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'llm_settings_chat_type_link_llm_setting_id_fkey'
+      AND conrelid = 'trendx_catalog.llm_settings_chat_type_link'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.llm_settings_chat_type_link ADD CONSTRAINT llm_settings_chat_type_link_llm_setting_id_fkey FOREIGN KEY (llm_setting_id) REFERENCES trendx_catalog.llm_settings(id) ON DELETE CASCADE;
+  END IF;
+END $$;
 
 
 --
 -- Name: llm_settings llm_settings_default_llm_config_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.llm_settings
-    ADD CONSTRAINT llm_settings_default_llm_config_id_fkey FOREIGN KEY (default_llm_config_id) REFERENCES public.llm_config(id) ON DELETE SET NULL;
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'llm_settings_default_llm_config_id_fkey'
+      AND conrelid = 'trendx_catalog.llm_settings'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.llm_settings ADD CONSTRAINT llm_settings_default_llm_config_id_fkey FOREIGN KEY (default_llm_config_id) REFERENCES trendx_catalog.llm_config(id) ON DELETE SET NULL;
+  END IF;
+END $$;
 
 
 --
 -- Name: relation relation_business_entity_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.relation
-    ADD CONSTRAINT relation_business_entity_id_fkey FOREIGN KEY (business_entity_id) REFERENCES public.business_entity(id) ON DELETE CASCADE;
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'relation_business_entity_id_fkey'
+      AND conrelid = 'trendx_catalog.relation'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.relation ADD CONSTRAINT relation_business_entity_id_fkey FOREIGN KEY (business_entity_id) REFERENCES trendx_catalog.business_entity(id) ON DELETE CASCADE;
+  END IF;
+END $$;
 
 
 --
 -- Name: relation relation_related_entity_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.relation
-    ADD CONSTRAINT relation_related_entity_id_fkey FOREIGN KEY (related_entity_id) REFERENCES public.business_entity(id) ON DELETE CASCADE;
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'relation_related_entity_id_fkey'
+      AND conrelid = 'trendx_catalog.relation'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.relation ADD CONSTRAINT relation_related_entity_id_fkey FOREIGN KEY (related_entity_id) REFERENCES trendx_catalog.business_entity(id) ON DELETE CASCADE;
+  END IF;
+END $$;
 
 
 --
 -- Name: trendz_task_execution_progress_step trendz_task_execution_progress_step_execution_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.trendz_task_execution_progress_step
-    ADD CONSTRAINT trendz_task_execution_progress_step_execution_id_fkey FOREIGN KEY (execution_id) REFERENCES public.trendz_task_execution(id) ON DELETE CASCADE;
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'trendz_task_execution_progress_step_execution_id_fkey'
+      AND conrelid = 'trendx_catalog.trendz_task_execution_progress_step'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.trendz_task_execution_progress_step ADD CONSTRAINT trendz_task_execution_progress_step_execution_id_fkey FOREIGN KEY (execution_id) REFERENCES trendx_catalog.trendz_task_execution(id) ON DELETE CASCADE;
+  END IF;
+END $$;
 
 
 --
 -- Name: trendz_task_execution_progress_step trendz_task_execution_progress_step_parent_step_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.trendz_task_execution_progress_step
-    ADD CONSTRAINT trendz_task_execution_progress_step_parent_step_id_fkey FOREIGN KEY (parent_step_id) REFERENCES public.trendz_task_execution_progress_step(id) ON DELETE CASCADE;
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'trendz_task_execution_progress_step_parent_step_id_fkey'
+      AND conrelid = 'trendx_catalog.trendz_task_execution_progress_step'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.trendz_task_execution_progress_step ADD CONSTRAINT trendz_task_execution_progress_step_parent_step_id_fkey FOREIGN KEY (parent_step_id) REFERENCES trendx_catalog.trendz_task_execution_progress_step(id) ON DELETE CASCADE;
+  END IF;
+END $$;
 
 
 --
 -- Name: trendz_task_execution_request trendz_task_execution_request_task_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.trendz_task_execution_request
-    ADD CONSTRAINT trendz_task_execution_request_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.trendz_task(id) ON DELETE CASCADE;
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'trendz_task_execution_request_task_id_fkey'
+      AND conrelid = 'trendx_catalog.trendz_task_execution_request'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.trendz_task_execution_request ADD CONSTRAINT trendz_task_execution_request_task_id_fkey FOREIGN KEY (task_id) REFERENCES trendx_catalog.trendz_task(id) ON DELETE CASCADE;
+  END IF;
+END $$;
 
 
 --
 -- Name: trendz_task_execution trendz_task_execution_task_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.trendz_task_execution
-    ADD CONSTRAINT trendz_task_execution_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.trendz_task(id) ON DELETE CASCADE;
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'trendz_task_execution_task_id_fkey'
+      AND conrelid = 'trendx_catalog.trendz_task_execution'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.trendz_task_execution ADD CONSTRAINT trendz_task_execution_task_id_fkey FOREIGN KEY (task_id) REFERENCES trendx_catalog.trendz_task(id) ON DELETE CASCADE;
+  END IF;
+END $$;
 
 
 --
 -- Name: view_assistance_chat_message view_assistance_chat_message_chat_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
-ALTER TABLE ONLY public.view_assistance_chat_message
-    ADD CONSTRAINT view_assistance_chat_message_chat_id_fkey FOREIGN KEY (chat_id) REFERENCES public.view_assistance_chat(id) ON DELETE CASCADE;
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'view_assistance_chat_message_chat_id_fkey'
+      AND conrelid = 'trendx_catalog.view_assistance_chat_message'::regclass
+  ) THEN
+    ALTER TABLE ONLY trendx_catalog.view_assistance_chat_message ADD CONSTRAINT view_assistance_chat_message_chat_id_fkey FOREIGN KEY (chat_id) REFERENCES trendx_catalog.view_assistance_chat(id) ON DELETE CASCADE;
+  END IF;
+END $$;
 
 
 --

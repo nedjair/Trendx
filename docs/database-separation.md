@@ -19,6 +19,8 @@ La base ThingsBoard et la base Trendx sont deux bases PostgreSQL **distinctes** 
 
 **Correction A :** `trendx_catalog` et `trendx_analytics` sont des schémas dans la base unique `trendx`. Pas de base séparée `trendx_analytics`.
 
+> **Réconciliation schéma (2026-08-27, RÉSOLU 2026-08-27) :** `trendx_catalog` est désormais créé par `migrations/001` (catalogue natif Trendz, idempotent) et `migrations/003_relocate_catalog.sql` relocalise les bases historiques (catalogue en `public`) vers `trendx_catalog` sans perte. `005/006/007` référencent `trendx_catalog.*` et `trendx_analytics` est créé par `009/011/012`. Voir `schema-mapping.md` §3.
+
 ---
 
 ## 2. Interdictions formelles

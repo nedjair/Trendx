@@ -26,6 +26,7 @@ MIGRATIONS = ROOT / "migrations"
 
 pytestmark = [pytest.mark.integration, pytest.mark.migration_apply]
 
+
 def _env(key: str, default: str) -> str:
     return os.environ.get(key, default)
 
@@ -94,7 +95,7 @@ def _column_exists(params: dict[str, str], table: str, column: str) -> bool:
                 """
                 SELECT 1
                 FROM information_schema.columns
-                WHERE table_schema = 'public'
+                WHERE table_schema = 'trendx_catalog'
                   AND table_name = %s
                   AND column_name = %s
                 """,
@@ -121,7 +122,7 @@ def _table_exists(params: dict[str, str], table: str) -> bool:
                 """
                 SELECT 1
                 FROM information_schema.tables
-                WHERE table_schema = 'public'
+                WHERE table_schema = 'trendx_catalog'
                   AND table_name = %s
                 """,
                 (table,),
@@ -131,35 +132,38 @@ def _table_exists(params: dict[str, str], table: str) -> bool:
         conn.close()
 
 
-def test_migration_008_creates_model_uri_on_public_prediction_model():
+def test_migration_008_creates_model_uri_on_trendx_catalog_prediction_model():
     params = _pg_conn_params()
 
     migration_001 = next(MIGRATIONS.glob("001_*.sql"))
+    migration_003 = MIGRATIONS / "003_relocate_catalog.sql"
     migration_008 = MIGRATIONS / "008_add_model_uri.sql"
     assert migration_008.exists(), "migrations/008_add_model_uri.sql missing"
+    assert migration_003.exists(), "migrations/003_relocate_catalog.sql missing"
 
     # 1. Schemas required by the chain (mirrors CI before_script).
     _ensure_schemas(params)
 
-    # 2. Apply 001 then 008. ON_ERROR_STOP makes psql fail on any error.
+    # 2. Apply 001 -> 003 -> 008 (real chain). ON_ERROR_STOP fails on any error.
     _psql_run(migration_001, params)
+    _psql_run(migration_003, params)
     _psql_run(migration_008, params)
 
-    # 3. public.prediction_model must exist (created by 001).
+    # 3. trendx_catalog.prediction_model must exist (created by 001, relocated by 003).
     assert _table_exists(
         params, "prediction_model"
-    ), "public.prediction_model missing after applying migration 001"
+    ), "trendx_catalog.prediction_model missing after applying migration 001/003"
 
-    # 4. public.prediction_model.model_uri must exist (added by 008).
+    # 4. trendx_catalog.prediction_model.model_uri must exist (added by 008).
     assert _column_exists(
         params, "prediction_model", "model_uri"
-    ), "public.prediction_model.model_uri missing after applying migration 008"
+    ), "trendx_catalog.prediction_model.model_uri missing after applying migration 008"
 
     # 5. Idempotence: re-applying 008 must succeed (IF NOT EXISTS).
     _psql_run(migration_008, params)
     assert _column_exists(
         params, "prediction_model", "model_uri"
-    ), "public.prediction_model.model_uri missing after re-applying migration 008"
+    ), "trendx_catalog.prediction_model.model_uri missing after re-applying migration 008"
 
 
 if __name__ == "__main__":

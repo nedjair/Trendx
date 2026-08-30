@@ -1,14 +1,14 @@
 # Plan d'implémentation — Phases 2 à 10
 
-**Version :** 1.1 — Phase 2 (corrections post-validation)  
-**Date :** 2026-08-02  
+**Version :** 1.1 — Phase 2 (corrections post-validation)
+**Date :** 2026-08-02
 **Dépendances :** approbation des 6 points d'arrêt Phase 1 + validations Phase 2 conditionnelles (Q1–Q5, A–C)
 
 ---
 
 ## Phase 2 — Socle Docker Compose + base trendx + schémas
 
-**Dépendances :** approbation points d'arrêt #1, #2, #3 + validations Q1–Q5, A–C  
+**Dépendances :** approbation points d'arrêt #1, #2, #3 + validations Q1–Q5, A–C
 **Durée estimée :** 8 jours-homme
 
 **Correction A — UNE SEULE BASE :** `trendx` avec schémas `trendx_catalog` et `trendx_analytics`. Pas de `trendx_airflow` ni `trendx_mlflow` en Phase 2.
@@ -37,7 +37,7 @@
 
 ## Phase 3 — Connecteur ThingsBoard + ingestion
 
-**Dépendances :** Phase 2 terminée, Canal 2 SQL accessible  
+**Dépendances :** Phase 2 terminée, Canal 2 SQL accessible
 **Durée estimée :** 8 jours-homme
 
 - [ ] Client TB Canal 1 (auth JWT auto-renew, pagination, retry/backoff)
@@ -55,7 +55,7 @@
 
 ## Phase 4 — Qualité données + preprocessing
 
-**Dépendances :** Phase 3  
+**Dépendances :** Phase 3
 **Durée estimée :** 5 jours-homme
 
 - [ ] Détection NaN / nulls / doublons
@@ -65,7 +65,7 @@
 - [ ] Rééchantillonnage 1h (moy/min/max/count)
 - [ ] RobustScaler / MinMax / Standard auto
 - [ ] Features temporelles (heure, jour, semaine, mois)
-- [ ] Table `data_quality_report` + `data_quality_issue`
+  - [ ] Table `data_quality` (hypertable `002` + partitionnée `011`) — **seule table réelle** ; `data_quality_report` / `data_quality_issue` du plan initial ne sont PAS créées (le code skip ces écritures, cf. `src/trendx/preprocessing/quality.py`, `src/trendx/database/models.py`). Aucune migration ne doit les introduire.
 
 **Livrables :** module preprocessing, tests qualité, rapport qualité par device/metric
 
@@ -73,7 +73,7 @@
 
 ## Phase 5 — MVP Prévision Prophet
 
-**Dépendances :** Phase 4  
+**Dépendances :** Phase 4
 **Durée estimée :** 8 jours-homme
 
 - [ ] Entraînement Prophet (tendance + saisonnalité quotidienne + hebdomadaire)
@@ -91,7 +91,7 @@
 
 ## Phase 6 — Modèles alternatifs + compétition
 
-**Dépendances :** Phase 5  
+**Dépendances :** Phase 5
 **Durée estimée :** 10 jours-homme
 
 - [ ] Régression linéaire (OLS scikit-learn)
@@ -108,7 +108,7 @@
 
 ## Phase 7 — MLflow + registre
 
-**Dépendances :** Phase 6  
+**Dépendances :** Phase 6
 **Durée estimée :** 4 jours-homme
 
 - [ ] Tracking par tenant/profil/device/strategy/metric
@@ -123,7 +123,7 @@
 
 ## Phase 8 — Business Entities + champs calculés
 
-**Dépendances :** Phase 4  
+**Dépendances :** Phase 4
 **Durée estimée :** 10 jours-homme
 
 - [ ] CRUD Business Entities
@@ -142,7 +142,7 @@
 
 ## Phase 9 — Détection d'anomalies
 
-**Dépendances :** Phase 4  
+**Dépendances :** Phase 4
 **Durée estimée :** 8 jours-homme
 
 - [ ] PyOD : Isolation Forest, LOF, KNN, HBOS
@@ -160,7 +160,7 @@
 
 ## Phase 10 — États, transitions, visualisations
 
-**Dépendances :** Phase 8  
+**Dépendances :** Phase 8
 **Durée estimée :** 5 jours-homme
 
 - [ ] Définition états nommés (seuils → nom/couleur/priorité)
@@ -211,3 +211,29 @@
 - [ ] Schéma toujours qualifié (`trendx_analytics.ts_kv`) dans toutes les requêtes
 - [ ] APScheduler configuré (Correction C)
 - [ ] cpus/mem_limit/pids_limit + logging sur chaque service
+
+---
+
+## Addendum de réconciliation — 2026-08-13
+
+> Document DOC-FIRST. Aucune modification fonctionnelle, migration, test ou CI n'accompagne cet addendum. Il réconcilie les sources de vérité avec l'état réel de `gitlab/master` (`a29e564`).
+
+### État réel constaté
+
+- **Phase 2 (socle infra, schémas, migrations 001→012)** : réalisée (commit `7214502` « phase2 » + corrections). Le découpage historique ci-dessus reste inchangé.
+- **Modules qualité / preprocessing** (`quality`, `normalizer`, `resampling`, `segmentation`) : codés et couverts par des tests unitaires ; `quality.py` écrit dans la **seule** table `data_quality` (hypertable `002` + partitionnée `011` ; rétention `012`). `data_quality_report` / `data_quality_issue` ne sont PAS créés (le code skip ces écritures).
+- **Modules ML** (`forecasting/*`, `anomalies/*`, `mlops`, `services/training.py`, `services/inference.py`, `services/alerting.py`) : codés et couverts par des tests unitaires, mais **non orchestrés** par le worker/scheduler (`services/tasks.py` ne contient aucune tâche ML) et sans test E2E/d'intégration pipeline.
+- **Phase 3 (ingestion Canal 2 + recovery + scheduler)** : fusionnée (`ce0c42e` + `86caaa6`, MR !15). Fix migration 012 : `5ed244f` (MR !16).
+- **B1 / B2 (Canal 2 read-only)** : résolus en Phase 3.
+
+### Distinction préservée
+
+```
+Modules ML présents  ≠  Pipeline ML orchestré  ≠  E2E validé  ≠  Parité Trendz démontrée
+```
+
+Aucune fonctionnalité n'est revendiquée « terminée / parité Trendz » sans tests automatisés verts (AGENTS.md §10).
+
+### Prochaine vague (non démarrée)
+
+Orchestration du pipeline ML (Qualité → Preprocessing → Entraînement → Prévision → Anomalie) dans le worker/scheduler + validation bout-en-bout + couverture CI. Nécessite une validation séparée.

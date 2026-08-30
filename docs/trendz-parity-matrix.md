@@ -13,11 +13,16 @@
 
 ## Légende des statuts
 
-| non commencé | Non commencé |
-| partiel | Partiel / en cours |
-| terminé | Terminé (tests de parité OK) |
-| bloqué | Bloqué |
+| non commencé | Fonctionnalité non implémentée |
+| partiel | Composant implémenté et/ou testé (unitaires), mais intégration, orchestration worker/scheduler ou preuve de parité Trendz incomplète |
+| terminé | Critères de parité Trendz requis par §10 satisfaits (tests de parité automatisés verts, ≥ 2 devices) |
+| bloqué | Dépendance bloquante réelle (décision ou approbation explicite requise) |
 | hors parité | Fonctionnalité non documentée dans Trendz, hors périmètre parité |
+
+> **Distinction à ne pas confondre :**
+> `Modules ML présents` ≠ `Pipeline ML orchestré` ≠ `E2E validé` ≠ `Parité Trendz démontrée`
+>
+> Les lignes marquées `partiel` signalent des composants codés et couverts par des tests unitaires, **pas** une équivalence officielle avec Trendz. Aucune fonctionnalité n'est marquée `terminé` tant que sa parité Trendz n'est pas démontrée par des tests automatisés verts.
 
 ---
 
@@ -149,15 +154,17 @@
 
 ## 8. Prédiction / Forecasting
 
+> **Note de section :** modules codés et couverts par des tests unitaires (`forecasting/*`, `preprocessing.normalizer`, `mlops`). Statut `partiel` : l'orchestration worker/scheduler et les tests de parité Trendz (≥ 2 devices) sont manquants. Voir §20.
+
 | # | Fonctionnalité Trendz | Doc officielle | Comportement documenté | Équivalent Trendx | Composants | Statut | Tests d'acceptation | Différences connues | Dép. TB PE | Limites |
 |---|------------------------|----------------|------------------------|-------------------|------------|--------|---------------------|---------------------|------------|---------|
-| 8.1 | Régression linéaire (LINEAR_REGRESSION) | [ithingsboard.com/docs/trendz/prediction/](http://www.ithingsboard.com/docs/trendz/prediction/) | Méthode LinReg | Linear Forecasting.linear | forecasting/linear.py | non commencé | MAE vs référence | Trendz utilise OLS, scikit-learn standard | Non | — |
-| 8.2 | OLS Linear Regression | id. | OLS variant | OLS via statsmodels | forecasting.linear_ols | non commencé | — | — | Non | — |
-| 8.3 | ARIMA / SARIMA | id. | ARIMA | pmdarima auto_arima | forecasting.arima.py | non commencé | — | Trendz ne mentionne pas SARIMA explicitement, Trendx SARIMAX | Non | — |
-| 8.4 | Transformation de Fourier FOURIER_TRANSFORMATION | id. | Méthode FFour series | forecasting.fourier.py | non commencé | — | — | Non | — |
-| 8.5 | Prophet | Prompt §6.7 | Prophet Meta Prophet FB | forecasting.prophet.py | non commencé | — | — | Non | — |
+| 8.1 | Régression linéaire (LINEAR_REGRESSION) | [ithingsboard.com/docs/trendz/prediction/](http://www.ithingsboard.com/docs/trendz/prediction/) | Méthode LinReg | Linear Forecasting.linear | forecasting/linear.py | partiel | MAE vs référence | Trendz utilise OLS, scikit-learn standard | Non | — |
+| 8.2 | OLS Linear Regression | id. | OLS variant | OLS via statsmodels | forecasting.linear_ols | partiel | — | — | Non | — |
+| 8.3 | ARIMA / SARIMA | id. | ARIMA | pmdarima auto_arima | forecasting.arima.py | partiel | — | Trendz ne mentionne pas SARIMA explicitement, Trendx SARIMAX | Non | — |
+| 8.4 | Transformation de Fourier FOURIER_TRANSFORMATION | id. | Méthode FFour series | forecasting.fourier.py | partiel | — | — | Non | — |
+| 8.5 | Prophet | Prompt §6.7 | Prophet Meta Prophet FB | forecasting.prophet.py | partiel | — | — | Non | — |
 | 8.6 | Modèles Python personnalisés | id. | Custom upload/fichier | Perso Py registry | non commencé | — | — | Non | sandbox |
-| 8.7 | Filtrage + normalisation auto | [thingsboard.io/docs/trendz/preprocessing/](https://thingsboard.io/docs/trendz/preprocessing/) | RobustScaler si kurtosis > 3 ou outliers > 5% ; MinMaxScaler si skewness > 1.5 ; sinon StandardScaler (doc : RobustScaler avant MinMaxScaler) | preprocessing.normalizer | non commencé | `test_auto_select_robust_scaler`, `test_auto_select_minmax_scaler`, `test_auto_select_standard_scaler` | Ordre sélecteur : kurtosis/outliers → skewness → standard, conformément doc Trendz §SKILL10 | Non | — |
+| 8.7 | Filtrage + normalisation auto | [thingsboard.io/docs/trendz/preprocessing/](https://thingsboard.io/docs/trendz/preprocessing/) | RobustScaler si kurtosis > 3 ou outliers > 5% ; MinMaxScaler si skewness > 1.5 ; sinon StandardScaler (doc : RobustScaler avant MinMaxScaler) | preprocessing.normalizer | partiel | `test_auto_select_robust_scaler`, `test_auto_select_minmax_scaler`, `test_auto_select_standard_scaler` | Ordre sélecteur : kurtosis/outliers → skewness → standard, conformément doc Trendz §SKILL10 | Non | — |
 | 8.8 | Segmentation périodes/segmente | id. | Segments modèle par device/profil/global | selector strategy PER_DEVICE | PER_PROFILE/GLOBAL | AUTO | non commencé | — | — | Non | — |
 | 8.9 | Limites métier min/max | id. | Cap forecasting | forecast clipping cap | non commencé | — | — | Non | — |
 | 8.10 | Saisonnalités multiples | id. | yearly/weekly/yearly | Prophet yearly_seasonality config | non commencé | — | — | Non | — |
@@ -167,15 +174,17 @@
 | 8.14 | Confidence Level + Band | id. | Intervalle confiance | Conf interval percentiles | UI bandes | non commencé | — | — | Non | — |
 | 8.15 | Tâches d'entraînement périodiques | id. + Background Jobs | Daily retrain | Airflow DAG training | non commencé | — | — | Non | — |
 | 8.16 | Tâches de prédiction périodiques | id. | Hourly forecast | Airflow DAG generation | non commencé | — | — | Non | — |
-| 8.17 | Versionnement + rollback modèle | id. + MLflow | versions + champion/challenger | MLflow registry | non commencé | — | — | Non | — |
+| 8.17 | Versionnement + rollback modèle | id. + MLflow | versions + champion/challenger | MLflow registry | partiel | — | — | Non | — |
 | 8.18 | Writeback prévisions dans TB `_EPD_<metric>` | §6.7 + prompt | Save TB as telemetry | TB API writeback + prefix `_EPD_` | non commencé | Désactivé par défaut | — | Non | — |
-| 8.19 | Stratégie PER_DEVICE/PER_PROFILE/GLOBAL/AUTO | §6.7 prompt | Comparaison auto stratégies | Forecasting selector | non commencé | — | — | Non | — |
-| 8.20 | Sélection meilleur modèle + compétition | Prompt requis | Sélection meilleur | Model selector | non commencé | — | — | Non | — |
-| 8.21 | Métriques MAE/RMSE/sMAPE/MAPE (conditions)/coverage/largeur/biais | Prompt §10.3 +§11.12 | Store in MLflow metrics | ML tracking metrics mlops | non commencé | Toutes calc. vs TB PE | Non | — |
+| 8.19 | Stratégie PER_DEVICE/PER_PROFILE/GLOBAL/AUTO | §6.7 prompt | Comparaison auto stratégies | Forecasting selector | partiel | — | — | Non | — |
+| 8.20 | Sélection meilleur modèle + compétition | Prompt requis | Sélection meilleur | Model selector | partiel | — | — | Non | — |
+| 8.21 | Métriques MAE/RMSE/sMAPE/MAPE (conditions)/coverage/largeur/biais | Prompt §10.3 +§11.12 | Store in MLflow metrics | ML tracking metrics mlops | partiel | Toutes calc. vs TB PE | Non | — |
 
 ---
 
 ## 9. Détection d'anomalies
+
+> **Note de section :** modules codés et couverts par des tests unitaires (`anomalies/*`, `preprocessing.quality`, `alerting.py`). Statut `partiel` : l'orchestration worker/scheduler et les tests de parité Trendz (≥ 2 devices) sont manquants. Voir §20.
 
 | # | Fonctionnalité Trendz | Doc officielle | Comportement documenté | Équivalent Trendx | Composants | Statut | Tests d'acceptation | Différences connues | Dép. TB PE | Limites |
 |---|------------------------|----------------|------------------------|-------------------|------------|--------|---------------------|---------------------|------------|---------|
@@ -183,22 +192,22 @@
 | 9.2 | Sélection entités + métriques | id. | 1→N devices / 1→N metrics | Model definition table | non commencé | — | — | Non | — |
 | 9.3 | Période d'apprentissage config | id. | Plage référence | training_period | non commencé | — | — | Non | — |
 | 9.4 | Segmentation fenêtres | id. | Fenêtres taille configurable | Segmentation features | features | non commencé | — | — | Non | — |
-| 9.5 | Extraction features (moy, écart, min/max, pente, amplitude, énergie spectrale, diff fenêtre précédente, taux NaN) | §11 Prompt features minimales | 9 features+ minimales | anomalies.features.py | non commencé | Toutes features exactes | — | Non | — |
+| 9.5 | Extraction features (moy, écart, min/max, pente, amplitude, énergie spectrale, diff fenêtre précédente, taux NaN) | §11 Prompt features minimales | 9 features+ minimales | anomalies.features.py | partiel | Toutes features exactes | — | Non | — |
 | 9.6 | Entraînement périodique | id. + jobs | Retrain régulier | Airflow anomaly_training DAG | non commencé | — | — | Non | — |
-| 9.7 | Scoring + Anomaly Score (intensité déviation) | id. + §6.8 prompt | Score normalisé | anomalies.scoring.score() | non commencé | — | — | Non | — |
-| 9.8 | Anomaly Score Index = intensité × durée | §6.8 Prompt spec | Score cumul | anomalies.scoring.asi() | non commencé | — | — | Non | — |
+| 9.7 | Scoring + Anomaly Score (intensité déviation) | id. + §6.8 prompt | Score normalisé | anomalies.scoring.score() | partiel | — | — | Non | — |
+| 9.8 | Anomaly Score Index = intensité × durée | §6.8 Prompt spec | Score cumul | anomalies.scoring.asi() | partiel | — | — | Non | — |
 | 9.9 | Revue des résultats | Trendz Anomaly viz | UI visual | UI anomaly review | non commencé | — | — | Non | — |
 | 9.10 | Scan historique rétroactif | id. + jobs | Rétroscan | DAG anomaly_scan backfill | non commencé | — | — | Non | — |
 | 9.11 | Scan périodique horaire | id. | Scan continu | Airflow anomaly_scan_hourly DAG | non commencé | — | — | Non | — |
 | 9.12 | Mise à jour modèle | id. + Versioning | Nouvelles versions | anomaly_model_definitions + versions | non commencé | — | — | Non | — |
 | 9.13 | Sauvegarde scores dans TB télémetrie | [pke-iot.expert/docs/trendz/anomaly/anomaly-score-save-to-thingsboard/](https://www.pke-iot.expert/docs/trendz/anomaly/anomaly-score-save-to-thingsboard/) | save anom score telemetry | writeback scores TB | non commencé | Désactivé défaut | — | Non | — |
 | 9.14 | Création alarmes ThingsBoard | id. + §6.8 Prompt alarms | Alarme TB | Alarm API TB CUSTOM_USER | Désactivé défaut | non commencé | — | — | Non | — |
-| 9.15 | Isolation Forest | Prompt §6.8 modèles minimaux | Modèle 1 | detectors.isolation_forest | anomalies.detectors.py | non commencé | — | — | Non | — |
-| 9.16 | PyOD modèles (LOF, kNN, etc.) | id. | Modèles famille PyOD | detectors.pyod() | non commencé | — | — | Non | — |
-| 9.17 | KMeans / DBSCAN clustering | id. | Modèle 3 | detectors.cluster_based | non commencé | — | — | Non | — |
+| 9.15 | Isolation Forest | Prompt §6.8 modèles minimaux | Modèle 1 | detectors.isolation_forest | anomalies.detectors.py | partiel | — | — | Non | — |
+| 9.16 | PyOD modèles (LOF, kNN, etc.) | id. | Modèles famille PyOD | detectors.pyod() | partiel | — | — | Non | — |
+| 9.17 | KMeans / DBSCAN clustering | id. | Modèle 3 | detectors.cluster_based | partiel | — | — | Non | — |
 | 9.18 | Sensibilité + contamination + window size | id. + §6.8 | Configurable | Config UI + DB | non commencé | — | — | Non | — |
-| 9.19 | Hystérésis + seuil ouverture/fermeture | §6.8 prompt spec | Anti-flapping | scoring hysteresis module | non commencé | — | — | Non | — |
-| 9.20 | Cooldown + durée minimale + anti-duplication alarms | id. + §9.3 | Alarms cool | alerting.py | non commencé | — | — | Non | — |
+| 9.19 | Hystérésis + seuil ouverture/fermeture | §6.8 prompt spec | Anti-flapping | scoring hysteresis module | partiel | — | — | Non | — |
+| 9.20 | Cooldown + durée minimale + anti-duplication alarms | id. + §9.3 | Alarms cool | alerting.py | partiel | — | — | Non | — |
 
 ---
 
@@ -302,12 +311,12 @@
 | 16.2 | Ingestion idempotente (upsert) | §9.1 Prompt AGENTS.md | Pas dedup | Unique constraint + upsert | sensor_data hypertable | non commencé | — | — | Non | — |
 | 16.3 | Checkpoints indépendants device×métrique | §4 +§9 | Reprise | ingestion_checkpoints table | non commencé | — | Non | — |
 | 16.4 | Traitement lots tenant/profil/device/métrique/fenêtre | §9 Prompt lots | Lots pas mémoire constante | Batch processing | non commencé | — | Non | — |
-| 16.5 | Contrôle qualité NaN/doublons/fréquence/domaines métier | §10 AGENTS quality rules | QC avant ML | preprocessing.quality + dead-letter | non commencé | — | Non | — |
+| 16.5 | Contrôle qualité NaN/doublons/fréquence/domaines métier | §10 AGENTS quality rules | QC avant ML | preprocessing.quality + dead-letter | partiel | — | Non | — |
 | 16.6 | Dead-letter / table d'erreurs | id. | Isolation erreurs | Table errors | non commencé | — | Non | — |
 | 16.7 | Reprise après échec | id. | Rejouer | non commencé | — | Non | — |
 | 16.8 | UTC normalisation de tous ts | §9.2 AGENTS UTC | Sans timezone mix | non commencé | — | Non | — |
 | 16.9 | Canal 1: API ThingsBoard pour topologie + métadonnées writeback | §5 Prompt | API | client thingsboard | non commencé | — | Non | — |
-| 16.10 | Canal 2 : PostgreSQL TB lecture-seulement pour haute volumétrie télémétrie haute performance | §5 Prompt SQL read | Haute perf TB PG read-only | PG read-only | connector | bloqué | Port 5432 refusé → nécessite action infra 10.0.0.1 pare-feu ou tunnel SSH/réplica | — | OUI Blocage | — |
+| 16.10 | Canal 2 : PostgreSQL TB lecture-seulement pour haute volumétrie télémétrie haute performance | §5 Prompt SQL read | Haute perf TB PG read-only | PG read-only | connector | partiel | Port 5432 refusé → nécessite action infra 10.0.0.1 pare-feu ou tunnel SSH/réplica | — | OUI Blocage | — |
 | 16.11 | Fallback API ThingsBoard télémétrie si SQL indisponible | §5.3 Prompt priorité | Fallback automatique | Fallback si SQL off | partiel | API utilisée par défaut | — | Non | Moins performant |
 | 16.12 | Tolérance périmétrique par device (1 casse pas les autres | §4.4 Prompt isolation | Isolation erreur | non commencé | — | Non | — |
 
@@ -318,7 +327,7 @@
 | # | Fonctionnalité Trendz | Doc officielle | Comportement documenté | Équivalent Trendx | Composants | Statut | Tests d'acceptation | Différences connues | Dép. TB PE | Limites |
 |---|------------------------|----------------|------------------------|-------------------|------------|--------|---------------------|---------------------|------------|---------|
 | 17.1 | API ThingsBoard complète (auth JWT, refresh, pagination, time windows | AGENTS §9 | timeout + retry + error handling | thingsboard.client | non commencé | — | — | Non | — |
-| 17.2 | PostgreSQL TB lecture seule (vraiment REVOKE write grants) | §5.2 Prompt | USER truly read-only (REVOKE INSERT/UPDATE/DELETE/...) | TB_DB_READONLY_USER | bloqué | Port fermé, USER créé | — | Approbation ouverture pare-feu OU tunnel SSH OU réplica read-only |
+| 17.2 | PostgreSQL TB lecture seule (vraiment REVOKE write grants) | §5.2 Prompt | USER truly read-only (REVOKE INSERT/UPDATE/DELETE/...) | TB_DB_READONLY_USER | partiel | Port fermé, USER créé | — | Approbation ouverture pare-feu OU tunnel SSH OU réplica read-only |
 | 17.3 | Recherche paginée devices/assets/relations/profils/attributs | §4.1 Prompt discovery | API paginé par lots | discovery.service pagination | non commencé | — | Non | — |
 | 17.4 | Écriture via API TB EXCLUSIVEMENT | §5.3 Prompt | Aucun écriture directe SQL | writeback API only | non commencé | — | — | Non | — |
 
@@ -332,7 +341,7 @@
 | 18.2 | Trendx API FastAPI | §7 architecture | API REST | `trendx-api` FastAPI | non commencé | — | — | Non | — |
 | 18.3 | Bases séparées trendx / analytics / airflow / mlflow | §8 Prompt 4 bases | 4 bases PostgreSQL | non commencé | — | — | Non | — |
 | 18.4 | Rôles distincts api/worker/airflow/mlflow/grafana/migration | §8 Prompt + AGENTS.md 6 rôles | 6 rôles PG | non commencé | — | — | Non | — |
-| 18.5 | Hypertables + Continous aggregates + policies retention/compression | §3 Étape 3 AGENTS.md | TimescaleDB | migrations/*.sql timescaledb | non commencé | — | — | Non | — |
+| 18.5 | Hypertables + Continuous aggregates + policies retention/compression | §3 Étape 3 AGENTS.md | TimescaleDB | migrations/*.sql timescaledb | non commencé | — | — | Non | — |
 | 18.6 | MLflow tracking per tenant/profil/device/strategy/metric | §11 Prompt | MLflow enrichi | mlops module | non commencé | — | Non | — |
 | 18.7 | Airflow DAGs 13 DAGs minimaux | §10 Prompt | 13 DAGs | dags/*.py | non commencé | — | — | Non | — |
 | 18.8 | Grafana pour dashboards techniques/opérationnels SEULEMENT | §6.4 Prompt | Grafana ne remplace pas Trendx UI | grafana/ + provisioning | non commencé | — | — | Non | — |
@@ -370,22 +379,28 @@
 | 5. Filtres / Agrégations | 8 | 8 | 0 | 0 | 0 | 0 |
 | 6. Champs calculés | 15 | 15 | 0 | 0 | 0 | 0 |
 | 7. États | 8 | 8 | 0 | 0 | 0 | 0 |
-| 8. Prédiction | 21 | 21 | 0 | 0 | 0 | 0 |
-| 9. Anomalies | 20 | 20 | 0 | 0 | 0 | 0 |
+| 8. Prédiction | 21 | 11 | 10 | 0 | 0 | 0 |
+| 9. Anomalies | 20 | 12 | 8 | 0 | 0 | 0 |
 | 10. Tâches & Jobs | 8 | 8 | 0 | 0 | 0 | 0 |
 | 11. Cache | 8 | 8 | 0 | 0 | 0 | 0 |
 | 12. Partage TB | 10 | 10 | 0 | 0 | 0 | 0 |
 | 13. Rapports | 9 | 9 | 0 | 0 | 0 | 0 |
 | 14. Assistant IA | 9 | 9 | 0 | 0 | 0 | 0 |
 | 15. Sécurité & paramètres | 6 | 6 | 0 | 0 | 0 | 0 |
-| 16. Ingestion & Qualité | 12 | 10 | 1 | 0 | 1 | 0 |
-| 17. Canaux ThingsBoard | 4 | 2 | 0 | 0 | 2 | 0 |
+| 16. Ingestion & Qualité | 12 | 9 | 3 | 0 | 0 | 0 |
+| 17. Canaux ThingsBoard | 4 | 3 | 1 | 0 | 0 | 0 |
 | 18. Architecture Trendx | 12 | 12 | 0 | 0 | 0 | 0 |
 | 19. Tests | 9 | 8 | 0 | 0 | 1 | 0 |
-| **TOTAL** | **205** | **200** | **1** | **0** | **4** | **0** |
+| **TOTAL** | **205** | **182** | **22** | **0** | **1** | **0** |
+
+> **Réconciliation des totaux (2026-08-13) :**
+>
+> - **TOTAL AVANT** (lignes réelles, avant modification) : 201 non commencé / 1 partiel / 0 terminé / 3 bloqué (sur 205 lignes). *Note : la synthèse d'origine affichait 200/1/0/4 ; elle était déjà inconsistante avec les lignes (§17 comptait 2 bloqués alors que seule 17.2 l'était, 17.4 étant `non commencé`).*
+> - **Modifications par section** : §8 (−10 non commencé, +10 partiel), §9 (−8 non commencé, +8 partiel), §16 (16.5 : non commencé→partiel ; 16.10 : bloqué→partiel), §17 (17.2 : bloqué→partiel).
+> - **TOTAL APRÈS** (recalculé depuis les lignes) : 182 non commencé / 22 partiel / 0 terminé / 1 bloqué.
+> - Vérification : 182 + 22 + 0 + 1 = **205** ✅ (cohérent avec le nombre total de lignes). *Écart vs proposition 181/22/0/2 : +1 non commencé, −1 bloqué (cause : §17 d'origine inconsistante, corrigée ici).*
 
 > **Bloquages nécessitant une approbation :**
 >
-> 1. **§16.10 & §17.2** : Accès PostgreSQL ThingsBoard en lecture seule — port 5432 TCP refusé par 10.0.0.1. Options : ouverture pare-feu limitée IP 10.0.0.1, tunnel SSH, ou création réplica read-only.
-> 2. **§19.3** : Tests contrat schéma SQL TB — dépend du blocage 1.
-> 3. **§17.2** : Création USER PostgreSQL read-only sur 10.0.0.1 — nécessite une action sur le serveur TB.
+> 1. ~~**§16.10 & §17.2**~~ : *résolus en Phase 3 (`ce0c42e`) — Canal 2 SQL read-only et rôle `trendx_ro` opérationnels.*
+> 2. **§19.3** : Tests contrat schéma SQL TB — bloqué (accès PostgreSQL TB en lecture seule non encore validé par des tests contrat exécutés).
