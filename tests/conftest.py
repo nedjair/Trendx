@@ -52,7 +52,6 @@ def _in_ci() -> bool:
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    run_integration = config.getoption("--run-integration")
     markexpr = (getattr(config.option, "markexpr", "") or "").lower()
     # The fail-closed enforcement only applies when this pytest run actually selects
     # the integration suite (pytest -m integration). Other invocations (pytest -m unit,
@@ -71,6 +70,15 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
                 pytest.mark.skip(reason="integration test: not selected by -m in this run.")
             )
             continue
+        # Tests that provision their own disposable PostgreSQL (ephemeral /
+        # provisioned fixtures) do NOT depend on the external catalog DB, so the
+        # catalog-reachability guard below must not block them. They self-skip via
+        # the fixture if Docker / a test DB is unavailable.
+        uses_disposable_db = bool(
+            {"ephemeral_postgres", "provisioned_postgres"} & set(item.fixturenames)
+        )
+        if uses_disposable_db:
+            continue
         # Integration suite selected: the DB must be reachable.
         if db_available:
             continue
@@ -81,15 +89,51 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
                 "PostgreSQL service did not come up or migrations failed. "
                 "This is a CI setup error, not a test failure."
             )
-        if run_integration:
-            raise pytest.UsageError(
-                "integration tests: database unreachable locally despite "
-                "--run-integration. Point TRENDX_DB_* at a reachable "
-                "PostgreSQL, or unset --run-integration."
-            )
+        # Locally (--run-integration or not) a DB-dependent integration test with
+        # no reachable catalog DB is skipped — it cannot be exercised here. The
+        # fail-open guarantee is preserved for CI above.
         item.add_marker(
-            pytest.mark.skip(
-                reason="integration test: DB unavailable locally. "
-                "Run with --run-integration against a reachable DB, or in CI."
-            )
+            pytest.mark.skip(reason="integration test: external catalog DB unreachable locally.")
         )
+
+
+# ————————————————————————————————————————
+# Disposable PostgreSQL fixtures for migration tests
+# ————————————————————————————————————————
+@pytest.fixture
+def ephemeral_postgres():
+    """Yield connection params for a fresh, empty PostgreSQL database (trendx).
+
+    Uses the CI ``postgres`` service when TRENDX_TEST_PGPORT is set, otherwise
+    starts a disposable Docker container. Skips if neither is available.
+    """
+    from .integration.test_fixtures import start_params, stop_params
+
+    try:
+        params = start_params()
+    except RuntimeError as exc:
+        pytest.skip(str(exc))
+    try:
+        yield params
+    finally:
+        stop_params(params)
+
+
+@pytest.fixture
+def provisioned_postgres(ephemeral_postgres):
+    """Disposable PostgreSQL with the real infra roles created (NOLOGIN, no secret).
+
+    Mirrors what the infrastructure bootstrap provisions: trendx_app,
+    trendx_migration, trendx_grafana, trendx_ro. The migration chain (notably 000
+    grants, 007 OWNER/GRANT) requires them to exist.
+    """
+    from .integration.test_fixtures import run_sql
+
+    params = ephemeral_postgres
+    for role in ("trendx_app", "trendx_migration", "trendx_grafana", "trendx_ro"):
+        run_sql(
+            params,
+            f"DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{role}') "
+            f"THEN CREATE ROLE {role} NOLOGIN; END IF; END; $$;",
+        )
+    yield params
