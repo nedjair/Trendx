@@ -7,6 +7,7 @@ job can never report green while executing zero integration tests (fail-open bug
 from __future__ import annotations
 
 import os
+import secrets
 
 import pytest
 
@@ -106,16 +107,60 @@ def ephemeral_postgres():
 
     Uses the CI ``postgres`` service when TRENDX_TEST_PGPORT is set, otherwise
     starts a disposable Docker container. Skips if neither is available.
+
+    When a shared service database is provided via env vars, a dedicated
+    database is created (and dropped on teardown) so the "fresh, empty" contract
+    holds even though the underlying PostgreSQL instance is shared across jobs
+    and fixtures. Without this isolation, an earlier ``provisioned_postgres``
+    test would pre-populate the shared ledger and a later ``ephemeral_postgres``
+    test would find every migration already recorded OK and skip them all --
+    which makes tests that must observe a failing migration report green
+    spuriously (see test_runner_stops_on_error_and_rolls_back).
     """
-    from .integration.test_fixtures import start_params, stop_params
+    from .integration.test_fixtures import run_sql, start_params, stop_params
 
     try:
         params = start_params()
     except RuntimeError as exc:
         pytest.skip(str(exc))
+
+    # A disposable Docker container is already fresh per invocation; only the
+    # shared service database needs an isolated database created for it.
+    service_db = params.get("dbname")
+    dedicated_db = None
+    if "_container" not in params:
+        dedicated_db = f"trendx_eph_{secrets.token_hex(6)}"
+        run_sql({**params, "dbname": service_db}, f'CREATE DATABASE "{dedicated_db}"')
+        params = {**params, "dbname": dedicated_db}
+        # On a shared service instance the infra roles created by earlier
+        # ``provisioned_postgres`` fixtures persist cluster-wide (roles are not
+        # per-database). Drop them so this fresh database observes a genuine
+        # migration failure, as the "fresh, empty" contract requires. By the
+        # time this fixture runs, prior dedicated databases have been dropped on
+        # teardown, so the roles own no objects here and DROP ROLE is safe.
+        for role in ("trendx_app", "trendx_migration", "trendx_grafana", "trendx_ro"):
+            try:
+                run_sql({**params, "dbname": service_db}, f'DROP OWNED BY "{role}"')
+            except Exception:
+                pass
+            try:
+                run_sql({**params, "dbname": service_db}, f'DROP ROLE IF EXISTS "{role}"')
+            except Exception:
+                pass
+
     try:
         yield params
     finally:
+        if dedicated_db is not None:
+            # Connect to the service database (not the target) and force any
+            # lingering sessions closed before dropping.
+            try:
+                run_sql(
+                    {**params, "dbname": service_db},
+                    f'DROP DATABASE IF EXISTS "{dedicated_db}" WITH (FORCE)',
+                )
+            except Exception:
+                pass
         stop_params(params)
 
 
