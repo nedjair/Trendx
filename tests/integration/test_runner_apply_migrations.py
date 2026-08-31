@@ -118,7 +118,7 @@ def test_runner_apply_full_chain_000_to_012(provisioned_postgres):
     assert set(names) == set(EXPECTED_CHAIN), f"chain mismatch:\n{names}"
     # Strict order: first and last.
     assert names[0] == "000_service_accounts.sql"
-    assert names[-1] == "012_native_partition_retention.sql"
+    assert names[-1] == "013_forecast_alerting_and_model_enrichment.sql"
 
     # 000 created both schemas.
     assert pg_query(params, "SELECT 1 FROM pg_namespace WHERE nspname='trendx_catalog'")

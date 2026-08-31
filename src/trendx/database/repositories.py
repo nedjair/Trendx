@@ -1,16 +1,22 @@
 from __future__ import annotations
 
+import uuid
 from collections.abc import Sequence
+from datetime import UTC, datetime
 from typing import Any, Generic, TypeVar, cast
 
 from loguru import logger
-from sqlalchemy import Integer, func, select, text
+from sqlalchemy import Integer, Table, func, select, text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session
 from trendx.database.models import (
+    AlertIncident,
+    AlertRule,
     BusinessEntity,
     EntityRelation,
     MetricDefinition,
+    Prediction,
     PredictionModel,
     PredictionModelStatusHistory,
     TrendzTask,
@@ -509,33 +515,52 @@ class TrendzTaskRepository(BaseRepository[TrendzTask]):
 
 
 # TODO: AlertRule table does not exist in Trendz 1.15.0 schema.
-class AlertRuleRepository(BaseRepository[Any]):
+# TrendX-owned (Étape 013). entity_id est TEXT (device TB id), sans FK.
+class AlertRuleRepository(BaseRepository[AlertRule]):
     def __init__(self, session: Session) -> None:
-        super().__init__(session, cast(type[Any], None))
+        super().__init__(session, AlertRule)
 
-    def find_active(self) -> Sequence[Any]:
-        return []
+    def find_active(self) -> Sequence[AlertRule]:
+        return self.list(AlertRule.is_active.is_(True))
 
-    def find_by_entity(self, entity_id: Any) -> Sequence[Any]:
-        return []
+    def find_by_entity(self, entity_id: Any) -> Sequence[AlertRule]:
+        if entity_id is None:
+            return []
+        return self.list(AlertRule.entity_id == str(entity_id))
 
-    def find_by_metric(self, metric_key: str) -> Sequence[Any]:
-        return []
+    def find_by_metric(self, metric_key: str) -> Sequence[AlertRule]:
+        return self.list(AlertRule.metric_key == metric_key)
 
-    def find_by_rule_type(self, rule_type: str) -> Sequence[Any]:
-        return []
+    def find_by_rule_type(self, rule_type: str) -> Sequence[AlertRule]:
+        return self.list(AlertRule.rule_type == rule_type)
 
 
 # TODO: AlertIncident table does not exist in Trendz 1.15.0 schema.
-class AlertIncidentRepository(BaseRepository[Any]):
+# TrendX-owned (Étape 013). Idempotent via logical_key unique.
+class AlertIncidentRepository(BaseRepository[AlertIncident]):
     def __init__(self, session: Session) -> None:
-        super().__init__(session, cast(type[Any], None))
+        super().__init__(session, AlertIncident)
 
-    def find_active(self, entity_id: Any | None = None) -> Sequence[Any]:
-        return []
+    def find_active(self, entity_id: Any | None = None) -> Sequence[AlertIncident]:
+        stmt = select(AlertIncident).where(AlertIncident.status.in_(("ACTIVE", "ACK")))
+        if entity_id is not None:
+            stmt = stmt.where(AlertIncident.entity_id == str(entity_id))
+        return cast(Sequence[AlertIncident], self._session.scalars(stmt).all())
 
-    def find_by_logical_key(self, logical_key: str) -> Any | None:
-        return None
+    def find_by_logical_key(self, logical_key: str) -> AlertIncident | None:
+        stmt = select(AlertIncident).where(AlertIncident.logical_key == logical_key).limit(1)
+        return cast(AlertIncident | None, self._session.scalars(stmt).first())
+
+    @staticmethod
+    def _to_uuid(value: Any) -> uuid.UUID | None:
+        if value is None:
+            return None
+        if isinstance(value, uuid.UUID):
+            return value
+        try:
+            return uuid.UUID(str(value))
+        except (ValueError, AttributeError):
+            return None
 
     def open_or_update(
         self,
@@ -546,17 +571,112 @@ class AlertIncidentRepository(BaseRepository[Any]):
         metric_key: str | None = None,
         open_reason: str | None = None,
         last_value: float | None = None,
-    ) -> Any:
-        return None
+    ) -> AlertIncident:
+        existing = self.find_by_logical_key(logical_key)
+        rid = self._to_uuid(rule_id)
+        now = datetime.now(UTC)
+        if existing is None:
+            incident = AlertIncident(
+                logical_key=logical_key,
+                rule_id=rid,
+                entity_id=str(entity_id),
+                metric_key=metric_key,
+                severity=severity,
+                status="ACTIVE",
+                open_reason=open_reason,
+                last_value=last_value,
+                opened_count=1,
+                opened_at=now,
+            )
+            self._session.add(incident)
+            self._session.flush()
+            return incident
+        # Re-open depuis CLEARED/CLOSED : on incrémente opened_count et on
+        # réinitialise les champs de cycle de vie. Refresh d'un incident
+        # ACTIVE/ACK : on conserve opened_at/ouverture, on met à jour le reste.
+        if existing.status in ("CLEARED", "CLOSED"):
+            existing.opened_count = (existing.opened_count or 0) + 1
+            existing.opened_at = now
+            existing.cleared_at = None
+            existing.closed_at = None
+            existing.acknowledged_at = None
+            existing.acknowledged_by = None
+        existing.status = "ACTIVE"
+        existing.rule_id = rid
+        existing.entity_id = str(entity_id)
+        existing.metric_key = metric_key
+        existing.severity = severity
+        existing.open_reason = open_reason
+        existing.last_value = last_value
+        self._session.flush()
+        return existing
 
-    def acknowledge(self, logical_key: str, acknowledged_by: str) -> Any | None:
-        return None
+    def acknowledge(self, logical_key: str, acknowledged_by: str) -> AlertIncident | None:
+        existing = self.find_by_logical_key(logical_key)
+        if existing is None:
+            return None
+        existing.status = "ACK"
+        existing.acknowledged_at = datetime.now(UTC)
+        existing.acknowledged_by = acknowledged_by
+        self._session.flush()
+        return existing
 
-    def clear(self, logical_key: str, close_reason: str | None = None) -> Any | None:
-        return None
+    def clear(self, logical_key: str, close_reason: str | None = None) -> AlertIncident | None:
+        existing = self.find_by_logical_key(logical_key)
+        if existing is None:
+            return None
+        existing.status = "CLEARED"
+        existing.cleared_at = datetime.now(UTC)
+        existing.close_reason = close_reason
+        self._session.flush()
+        return existing
 
-    def close(self, logical_key: str, close_reason: str | None = None) -> Any | None:
-        return None
+    def close(self, logical_key: str, close_reason: str | None = None) -> AlertIncident | None:
+        existing = self.find_by_logical_key(logical_key)
+        if existing is None:
+            return None
+        existing.status = "CLOSED"
+        existing.closed_at = datetime.now(UTC)
+        existing.close_reason = close_reason
+        self._session.flush()
+        return existing
+
+
+# TrendX-owned (Étape 013). Mappe trendx_analytics.predictions (migration 011).
+# Upsert basé sur la PK composite (ts, entity_id, metric_key,
+# forecast_generated_at, model_id). Aucune table supplémentaire.
+class PredictionRepository(BaseRepository[Prediction]):
+    def __init__(self, session: Session) -> None:
+        super().__init__(session, Prediction)
+
+    def bulk_upsert(self, rows: list[dict[str, Any]]) -> int:
+        if not rows:
+            return 0
+        stmt = pg_insert(cast(Table, Prediction.__table__)).values(rows)
+        update_cols = {
+            "model_used": stmt.excluded.model_used,
+            "value": stmt.excluded.value,
+            "lower_bound": stmt.excluded.lower_bound,
+            "upper_bound": stmt.excluded.upper_bound,
+            "horizon_step": stmt.excluded.horizon_step,
+            "frequency": stmt.excluded.frequency,
+            "written_back": stmt.excluded.written_back,
+            "writeback_key": stmt.excluded.writeback_key,
+            "created_at": stmt.excluded.created_at,
+        }
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[
+                "ts",
+                "entity_id",
+                "metric_key",
+                "forecast_generated_at",
+                "model_id",
+            ],
+            set_=update_cols,
+        )
+        self._session.execute(stmt)
+        self._session.flush()
+        return len(rows)
 
 
 # TODO: WritebackBatch table does not exist in Trendz 1.15.0 schema.
