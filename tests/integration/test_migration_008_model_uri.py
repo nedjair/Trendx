@@ -75,6 +75,35 @@ def _ensure_schemas(params: dict[str, str]) -> None:
         with conn.cursor() as cur:
             cur.execute("CREATE SCHEMA IF NOT EXISTS trendx_catalog")
             cur.execute("CREATE SCHEMA IF NOT EXISTS trendx_analytics")
+            cur.execute(
+                """
+                DO $$
+                BEGIN
+                  IF NOT EXISTS (
+                    SELECT 1 FROM pg_roles
+                    WHERE rolname = 'trendx_migration'
+                  ) THEN
+                    CREATE ROLE trendx_migration NOLOGIN;
+                  END IF;
+                END
+                $$;
+                """
+            )
+            cur.execute(
+                """
+                DO $$
+                BEGIN
+                  IF NOT EXISTS (
+                    SELECT 1 FROM pg_roles
+                    WHERE rolname = 'trendx_ro'
+                  ) THEN
+                    CREATE ROLE trendx_ro NOLOGIN;
+                  END IF;
+                END
+                $$;
+                """
+            )
+            cur.execute("GRANT trendx_migration TO trendx_app")
     finally:
         conn.close()
 
