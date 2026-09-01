@@ -75,11 +75,11 @@ jobs:
           CREATE SCHEMA IF NOT EXISTS trendx_catalog;
           CREATE SCHEMA IF NOT EXISTS trendx_analytics;
           SQL
-          PGPASSWORD="$POSTGRES_PASSWORD" psql -h postgres -U trendx_app -d trendx -v ON_ERROR_STOP=1 -v rp="$TRENDX_TEST_DB_PASSWORD" <<'SQL'
+          PGPASSWORD="$POSTGRES_PASSWORD" psql -h postgres -U trendx_app -d trendx -v ON_ERROR_STOP=1 <<'SQL'
           DO $$
           BEGIN
             IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'trendx_migration') THEN
-              CREATE ROLE trendx_migration LOGIN PASSWORD :'rp';
+              CREATE ROLE trendx_migration NOLOGIN;
             END IF;
           END; $$;
           GRANT trendx_migration TO trendx_app;
@@ -152,14 +152,14 @@ jobs:
           CREATE SCHEMA IF NOT EXISTS trendx_catalog;
           CREATE SCHEMA IF NOT EXISTS trendx_analytics;
           SQL
-          PGPASSWORD="$POSTGRES_PASSWORD" psql -h postgres -U trendx_app -d trendx -v ON_ERROR_STOP=1 -v rp="$TRENDX_TEST_DB_PASSWORD" <<'SQL'
+          PGPASSWORD="$POSTGRES_PASSWORD" psql -h postgres -U trendx_app -d trendx -v ON_ERROR_STOP=1 <<'SQL'
           DO $$
           BEGIN
             IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'trendx_migration') THEN
-              CREATE ROLE trendx_migration LOGIN PASSWORD :'rp';
+              CREATE ROLE trendx_migration NOLOGIN;
             END IF;
             IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'trendx_ro') THEN
-              CREATE ROLE trendx_ro LOGIN PASSWORD :'rp';
+              CREATE ROLE trendx_ro NOLOGIN;
             END IF;
           END; $$;
           GRANT trendx_migration TO trendx_app;
