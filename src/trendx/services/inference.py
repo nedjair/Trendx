@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import math
+import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
@@ -14,9 +16,13 @@ from trendx.database.repositories import (
     BusinessEntityRepository,
     MetricDefinitionRepository,
     PredictionModelRepository,
+    PredictionRepository,
 )
 from trendx.forecasting import create_model
 from trendx.forecasting.base import ForecastResult
+
+if TYPE_CHECKING:
+    from trendx.mlops.registry import ModelRegistry
 
 try:
     from trendx.mlops.registry import ModelRegistry
@@ -24,9 +30,22 @@ try:
     HAS_MODEL_REGISTRY = True
 except RuntimeError:
     HAS_MODEL_REGISTRY = False
-    ModelRegistry = None
+    ModelRegistry = None  # type: ignore[misc, assignment]
 from trendx.preprocessing.normalizer import Normalizer
 from trendx.preprocessing.resampling import Resampler
+
+
+def _coerce_float(value: Any) -> float | None:
+    """Coerce a numeric forecast value to a finite float, or None for NaN/Inf/None."""
+    if value is None:
+        return None
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    if math.isnan(f) or math.isinf(f):
+        return None
+    return f
 
 
 class InferenceService:
@@ -56,6 +75,8 @@ class InferenceService:
         logger.info("InferenceService dry_run set to {}", value)
 
     def _fetch_model(self, entity_id: str, metric_key: str) -> PredictionModel | None:
+        if self._registry is None:
+            return None
         return self._registry.get_champion(entity_id, metric_key)
 
     def _fetch_recent_data(
@@ -250,10 +271,87 @@ class InferenceService:
         metric_key: str,
         forecast_result: ForecastResult,
     ) -> int:
-        # TODO: forecast_series table does not exist in Trendz 1.15.0 schema.
-        # Forecast results are stored via MLflow tracking or segment_data.
-        logger.info("Skipping forecast_series insert (table does not exist in Trendz 1.15.0)")
-        return 0
+        """Persist forecast points into ``trendx_analytics.predictions`` (migration 011).
+
+        Idempotent upsert keyed by the composite PK
+        ``(ts, entity_id, metric_key, forecast_generated_at, model_id)``.
+        No ThingsBoard writeback happens here; writeback (disabled by default)
+        is handled separately by :meth:`writeback_forecast`.
+
+        Fail-closed: returns 0 if ``entity_id`` is not a valid UUID, there are
+        no forecast values, or no champion model id can be resolved.
+        """
+        try:
+            entity_uuid = uuid.UUID(entity_id)
+        except (ValueError, AttributeError):
+            logger.error("Invalid entity_id UUID for forecast persistence: {}", entity_id)
+            return 0
+
+        values = getattr(forecast_result, "values", None)
+        if values is None or len(values) == 0:
+            logger.warning("No forecast values to persist for {}/{}", entity_id[:12], metric_key)
+            return 0
+
+        # Resolve the champion model id (provenance of the forecast).
+        model_id: uuid.UUID | None = None
+        if self._registry is not None:
+            try:
+                champion = self._registry.get_champion(entity_id, metric_key)
+                if champion is not None:
+                    model_id = champion.id
+            except Exception as exc:
+                logger.warning("Could not resolve champion for forecast persistence: {}", exc)
+        if model_id is None:
+            logger.warning(
+                "No champion model id available; skipping forecast persistence for {}/{}",
+                entity_id[:12],
+                metric_key,
+            )
+            return 0
+
+        lower = getattr(forecast_result, "lower_bound", None)
+        upper = getattr(forecast_result, "upper_bound", None)
+        timestamps = getattr(forecast_result, "timestamps", None)
+        frequency = settings.forecast_frequency
+        model_name = forecast_result.model_name or "unknown"
+
+        if timestamps is None:
+            timestamps = pd.date_range(start=datetime.now(UTC), periods=len(values), freq=frequency)
+
+        generated_at = datetime.now(UTC)
+        rows: list[dict[str, Any]] = []
+        for i in range(len(values)):
+            ts_src = timestamps[i] if timestamps[i] is not None else generated_at
+            dt = pd.Timestamp(ts_src)
+            if dt.tzinfo is None:
+                dt = dt.tz_localize("UTC")
+            rows.append(
+                {
+                    "ts": dt.to_pydatetime(),
+                    "entity_id": entity_uuid,
+                    "metric_key": metric_key,
+                    "forecast_generated_at": generated_at,
+                    "model_id": model_id,
+                    "model_used": model_name,
+                    "value": _coerce_float(values[i]),
+                    "lower_bound": _coerce_float(lower[i])
+                    if lower is not None and i < len(lower)
+                    else None,
+                    "upper_bound": _coerce_float(upper[i])
+                    if upper is not None and i < len(upper)
+                    else None,
+                    "horizon_step": i,
+                    "frequency": frequency,
+                    "written_back": False,
+                }
+            )
+
+        with db_manager.get_session("analytics") as session:
+            repo = PredictionRepository(session)
+            count = repo.bulk_upsert(rows)
+
+        logger.info("Persisted {} forecast points for {}/{}", count, entity_id[:12], metric_key)
+        return count
 
     def writeback_forecast(
         self,
@@ -341,7 +439,7 @@ class InferenceService:
         }
         with db_manager.get_session("catalog") as session:
             entity_repo = BusinessEntityRepository(session)
-            entities = entity_repo.find_by_type("DEVICE")
+            entities = entity_repo.list()
             checks["entities_count"] = len(entities)
             models_count = len(PredictionModelRepository(session).find_by_status("champion"))
         checks["champion_models"] = models_count

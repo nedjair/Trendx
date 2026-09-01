@@ -2,33 +2,32 @@ from __future__ import annotations
 
 import hmac
 import os
-import platform
 import sys
 import time
 import uuid
-from datetime import datetime, timezone
-from enum import Enum
-from pathlib import Path
-from typing import Any, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from loguru import logger
 from pydantic import BaseModel, Field
-from sqlalchemy import text
-
+from sqlalchemy import select, text
 from trendx.config import settings
 from trendx.database.connection import manager as db_manager
 from trendx.database.models import (
+    AlertRule,
     BusinessEntity,
     EntityRelation,
     MetricDefinition,
-    PredictionModel,
+    Prediction,
     TrendzTask,
     TrendzTaskExecutionRequest,
 )
 from trendx.database.repositories import (
+    AlertIncidentRepository,
+    AlertRuleRepository,
     BusinessEntityRepository,
     EntityRelationRepository,
     MetricDefinitionRepository,
@@ -86,7 +85,7 @@ async def require_auth_middleware(request: Request, call_next):
     if path in PUBLIC_PATHS:
         return await call_next(request)
     if path.startswith("/api/v1"):
-        provided: Optional[str] = None
+        provided: str | None = None
         authorization = request.headers.get("authorization")
         x_api_key = request.headers.get("x-api-key")
         if x_api_key:
@@ -115,12 +114,13 @@ async def _log_startup_disk_check() -> None:
     # _statvfs_available_gb + fstype + delta réservé, format de journal identique.
     # tmpfs => fatal (fail-closed), cohérent avec le worker.
     from trendx.services.ingestion import probe_disk_mounts
+
     try:
         probe_disk_mounts("api")
     except RuntimeError as exc:
         logger.error("[disk] {} : sonde disque fatale", exc)
         raise
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.warning("API startup disk check failed: {}", exc)
 
 
@@ -138,11 +138,11 @@ class PaginatedResponse(BaseModel):
 class DeviceOut(BaseModel):
     id: str
     name: str
-    description: Optional[str] = None
+    description: str | None = None
     hidden: bool = False
     shared_with_customers: bool = False
-    tenant_id: Optional[str] = None
-    query: Optional[str] = None
+    tenant_id: str | None = None
+    query: str | None = None
 
 
 class MetricOut(BaseModel):
@@ -156,17 +156,17 @@ class MetricOut(BaseModel):
     description: str
     how_to_calculate: str
     is_advanced_mode: bool = False
-    created_ts: Optional[int] = None
-    updated_ts: Optional[int] = None
+    created_ts: int | None = None
+    updated_ts: int | None = None
 
 
 class ProfileOut(BaseModel):
     id: str
     name: str
     type: str
-    description: Optional[str] = None
+    description: str | None = None
     is_default: bool
-    transport_type: Optional[str] = None
+    transport_type: str | None = None
 
 
 class RelationOut(BaseModel):
@@ -175,11 +175,11 @@ class RelationOut(BaseModel):
     related_entity_id: str
     direction: str
     enabled: bool = True
-    query: Optional[str] = None
+    query: str | None = None
 
 
 class SyncStatusOut(BaseModel):
-    last_sync_ts: Optional[str] = None
+    last_sync_ts: str | None = None
     sync_count: int = 0
     entity_count: int = 0
     relation_count: int = 0
@@ -189,19 +189,19 @@ class SyncStatusOut(BaseModel):
 class DiscoveryTriggerOut(BaseModel):
     status: str
     message: str
-    task_id: Optional[str] = None
+    task_id: str | None = None
 
 
 class TelemetryPointOut(BaseModel):
     ts: str
-    value: Optional[float] = None
+    value: float | None = None
 
 
 class TelemetryStatsOut(BaseModel):
-    min: Optional[float] = None
-    max: Optional[float] = None
-    avg: Optional[float] = None
-    std: Optional[float] = None
+    min: float | None = None
+    max: float | None = None
+    avg: float | None = None
+    std: float | None = None
     count: int = 0
     null_count: int = 0
 
@@ -210,10 +210,10 @@ class TrainRequest(BaseModel):
     entity_id: str
     metric_key: str
     algorithm: str = "Prophet"
-    params: Optional[dict[str, Any]] = None
-    lookback_days: Optional[int] = None
+    params: dict[str, Any] | None = None
+    lookback_days: int | None = None
     frequency: str = "1h"
-    horizon: Optional[int] = None
+    horizon: int | None = None
 
 
 class TrainResponse(BaseModel):
@@ -222,13 +222,13 @@ class TrainResponse(BaseModel):
     metric_key: str
     algorithm: str
     status: str
-    message: Optional[str] = None
+    message: str | None = None
 
 
 class PredictRequest(BaseModel):
     entity_id: str
     metric_key: str
-    horizon: Optional[int] = None
+    horizon: int | None = None
 
 
 class ForecastResultOut(BaseModel):
@@ -248,14 +248,14 @@ class ForecastModelOut(BaseModel):
     tb_telemetry_key: str
     business_entity_id: str
     enabled: bool
-    created_ts: Optional[int] = None
-    updated_ts: Optional[int] = None
+    created_ts: int | None = None
+    updated_ts: int | None = None
 
 
 class CompetitionRequest(BaseModel):
     entity_id: str
     metric_key: str
-    candidates: Optional[list[dict[str, Any]]] = None
+    candidates: list[dict[str, Any]] | None = None
 
 
 class ChampionOut(BaseModel):
@@ -266,7 +266,7 @@ class ChampionOut(BaseModel):
     business_entity_id: str
     tb_telemetry_key: str
     enabled: bool
-    created_ts: Optional[int] = None
+    created_ts: int | None = None
 
 
 class AnomalyTrainRequest(BaseModel):
@@ -275,32 +275,32 @@ class AnomalyTrainRequest(BaseModel):
     algorithm: str = "IForest"
     contamination: float = 0.01
     window_size: int = 24
-    params: Optional[dict[str, Any]] = None
+    params: dict[str, Any] | None = None
 
 
 class AnomalyScanRequest(BaseModel):
     entity_id: str
     metric_key: str
-    detector_id: Optional[str] = None
+    detector_id: str | None = None
 
 
 class AnomalyScoreOut(BaseModel):
     t: int
     s: float
-    anomaly_id: Optional[str] = None
+    anomaly_id: str | None = None
 
 
 class AnomalyEpisodeOut(BaseModel):
     id: str
-    item_id: Optional[str] = None
-    item_name: Optional[str] = None
-    start_ts: Optional[int] = None
-    end_ts: Optional[int] = None
-    cluster_id: Optional[int] = None
-    score: Optional[float] = None
-    score_index: Optional[int] = None
-    model_id: Optional[str] = None
-    alarm_id: Optional[str] = None
+    item_id: str | None = None
+    item_name: str | None = None
+    start_ts: int | None = None
+    end_ts: int | None = None
+    cluster_id: int | None = None
+    score: float | None = None
+    score_index: int | None = None
+    model_id: str | None = None
+    alarm_id: str | None = None
 
 
 class TaskCreateRequest(BaseModel):
@@ -309,7 +309,7 @@ class TaskCreateRequest(BaseModel):
     json_job: dict[str, Any] = Field(default_factory=dict, alias="payload")
     schedule_type: str = "NOT_SCHEDULED"
     reference_type: str = "MANUAL"
-    reference_key: Optional[str] = None
+    reference_key: str | None = None
 
     model_config = {"populate_by_name": True}
 
@@ -322,34 +322,34 @@ class TaskOut(BaseModel):
     reference_type: str
     reference_key: str
     schedule_type: str
-    schedule_planned_ts: Optional[int] = None
-    tenant_id: Optional[str] = None
-    customer_id: Optional[str] = None
-    user_id: Optional[str] = None
-    created_ts: Optional[int] = None
-    updated_ts: Optional[int] = None
+    schedule_planned_ts: int | None = None
+    tenant_id: str | None = None
+    customer_id: str | None = None
+    user_id: str | None = None
+    created_ts: int | None = None
+    updated_ts: int | None = None
 
 
 class AlertIncidentOut(BaseModel):
     id: int
     logical_key: str
     entity_id: str
-    metric_key: Optional[str] = None
+    metric_key: str | None = None
     severity: str
     status: str
     opened_at: str
-    acknowledged_at: Optional[str] = None
-    cleared_at: Optional[str] = None
-    closed_at: Optional[str] = None
-    last_value: Optional[float] = None
-    open_reason: Optional[str] = None
+    acknowledged_at: str | None = None
+    cleared_at: str | None = None
+    closed_at: str | None = None
+    last_value: float | None = None
+    open_reason: str | None = None
     opened_count: int
 
 
 class AlertRuleCreate(BaseModel):
     name: str
-    entity_id: Optional[str] = None
-    metric_key: Optional[str] = None
+    entity_id: str | None = None
+    metric_key: str | None = None
     rule_type: str
     condition_json: dict[str, Any] = Field(default_factory=dict)
     cooldown_seconds: int = 7200
@@ -359,19 +359,19 @@ class AlertRuleCreate(BaseModel):
 
 
 class AlertRuleUpdate(BaseModel):
-    name: Optional[str] = None
-    condition_json: Optional[dict[str, Any]] = None
-    cooldown_seconds: Optional[int] = None
-    min_duration_seconds: Optional[int] = None
-    severity: Optional[str] = None
-    is_active: Optional[bool] = None
+    name: str | None = None
+    condition_json: dict[str, Any] | None = None
+    cooldown_seconds: int | None = None
+    min_duration_seconds: int | None = None
+    severity: str | None = None
+    is_active: bool | None = None
 
 
 class AlertRuleOut(BaseModel):
     id: str
     name: str
-    entity_id: Optional[str] = None
-    metric_key: Optional[str] = None
+    entity_id: str | None = None
+    metric_key: str | None = None
     rule_type: str
     condition_json: dict[str, Any]
     cooldown_seconds: int
@@ -473,10 +473,11 @@ async def health() -> JSONResponse:
     detail = None
     try:
         from trendx.services.ingestion import _default_monitor_mounts, check_disk_min_free
+
         for mp in _default_monitor_mounts():
             if os.path.isdir(mp):
                 check_disk_min_free(mp)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         status = "degraded"
         detail = str(exc)
         logger.warning("Health dégradé : {}", exc)
@@ -541,8 +542,8 @@ async def root() -> JSONResponse:
 async def list_devices(
     page: int = Query(0, ge=0),
     page_size: int = Query(50, ge=1, le=200),
-    search: Optional[str] = Query(None),
-    hidden: Optional[bool] = Query(None),
+    search: str | None = Query(None),
+    hidden: bool | None = Query(None),
 ) -> JSONResponse:
     try:
         with db_manager.get_session("catalog") as session:
@@ -553,15 +554,23 @@ async def list_devices(
             if search is not None:
                 filters.append(BusinessEntity.name.ilike(f"%{search}%"))
             total = repo.count(*filters)
-            entities = repo.list(*filters, order_by=BusinessEntity.name, limit=page_size, offset=page * page_size)
+            entities = repo.list(
+                *filters, order_by=BusinessEntity.name, limit=page_size, offset=page * page_size
+            )
             data = [_to_entity_out(e) for e in entities]
             return JSONResponse(
-                content=PaginatedResponse(data=data, total=total, page=page, page_size=page_size, has_next=(page + 1) * page_size < total).model_dump(),
+                content=PaginatedResponse(
+                    data=data,
+                    total=total,
+                    page=page,
+                    page_size=page_size,
+                    has_next=(page + 1) * page_size < total,
+                ).model_dump(),
                 status_code=200,
             )
     except Exception as exc:
         logger.error("Failed to list devices: {}", exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.get("/api/v1/catalog/devices/{entity_id}", tags=["catalog"], response_model=DeviceOut)
@@ -577,14 +586,14 @@ async def get_device(entity_id: str) -> JSONResponse:
         raise
     except Exception as exc:
         logger.error("Failed to get device {}: {}", entity_id, exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.get("/api/v1/catalog/metrics", tags=["catalog"], response_model=PaginatedResponse)
 async def list_metrics(
     page: int = Query(0, ge=0),
     page_size: int = Query(50, ge=1, le=200),
-    business_entity_id: Optional[str] = Query(None),
+    business_entity_id: str | None = Query(None),
 ) -> JSONResponse:
     try:
         with db_manager.get_session("catalog") as session:
@@ -593,17 +602,25 @@ async def list_metrics(
             if business_entity_id is not None:
                 filters.append(MetricDefinition.business_entity_id == _uuid(business_entity_id))
             total = repo.count(*filters)
-            metrics = repo.list(*filters, order_by=MetricDefinition.name, limit=page_size, offset=page * page_size)
+            metrics = repo.list(
+                *filters, order_by=MetricDefinition.name, limit=page_size, offset=page * page_size
+            )
             data = [_to_metric_out(m) for m in metrics]
             return JSONResponse(
-                content=PaginatedResponse(data=data, total=total, page=page, page_size=page_size, has_next=(page + 1) * page_size < total).model_dump(),
+                content=PaginatedResponse(
+                    data=data,
+                    total=total,
+                    page=page,
+                    page_size=page_size,
+                    has_next=(page + 1) * page_size < total,
+                ).model_dump(),
                 status_code=200,
             )
     except HTTPException:
         raise
     except Exception as exc:
         logger.error("Failed to list metrics: {}", exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.get("/api/v1/catalog/metrics/{metric_id}", tags=["catalog"], response_model=MetricOut)
@@ -619,7 +636,7 @@ async def get_metric(metric_id: str) -> JSONResponse:
         raise
     except Exception as exc:
         logger.error("Failed to get metric {}: {}", metric_id, exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.get("/api/v1/catalog/profiles", tags=["catalog"])
@@ -636,7 +653,9 @@ async def list_relations(
         with db_manager.get_session("catalog") as session:
             repo = EntityRelationRepository(session)
             total = repo.count()
-            relations = repo.list(order_by=EntityRelation.name, limit=page_size, offset=page * page_size)
+            relations = repo.list(
+                order_by=EntityRelation.name, limit=page_size, offset=page * page_size
+            )
             data = [
                 {
                     "business_entity_id": str(r.business_entity_id),
@@ -649,12 +668,18 @@ async def list_relations(
                 for r in relations
             ]
             return JSONResponse(
-                content=PaginatedResponse(data=data, total=total, page=page, page_size=page_size, has_next=(page + 1) * page_size < total).model_dump(),
+                content=PaginatedResponse(
+                    data=data,
+                    total=total,
+                    page=page,
+                    page_size=page_size,
+                    has_next=(page + 1) * page_size < total,
+                ).model_dump(),
                 status_code=200,
             )
     except Exception as exc:
         logger.error("Failed to list relations: {}", exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -674,12 +699,16 @@ async def trigger_discovery() -> JSONResponse:
         )
         logger.info("Topology discovery triggered, task={}", task.id)
         return JSONResponse(
-            content=DiscoveryTriggerOut(status="triggered", message="Full topology discovery scheduled", task_id=str(task.id)).model_dump(),
+            content=DiscoveryTriggerOut(
+                status="triggered",
+                message="Full topology discovery scheduled",
+                task_id=str(task.id),
+            ).model_dump(),
             status_code=202,
         )
     except Exception as exc:
         logger.error("Failed to trigger discovery: {}", exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.post("/api/v1/topology/sync", tags=["topology"], response_model=DiscoveryTriggerOut)
@@ -694,12 +723,16 @@ async def trigger_sync() -> JSONResponse:
         )
         logger.info("Topology sync triggered, task={}", task.id)
         return JSONResponse(
-            content=DiscoveryTriggerOut(status="triggered", message="Incremental topology sync scheduled", task_id=str(task.id)).model_dump(),
+            content=DiscoveryTriggerOut(
+                status="triggered",
+                message="Incremental topology sync scheduled",
+                task_id=str(task.id),
+            ).model_dump(),
             status_code=202,
         )
     except Exception as exc:
         logger.error("Failed to trigger sync: {}", exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.get("/api/v1/topology/status", tags=["topology"], response_model=SyncStatusOut)
@@ -718,7 +751,7 @@ async def get_topology_status() -> JSONResponse:
         )
     except Exception as exc:
         logger.error("Failed to get topology status: {}", exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -730,8 +763,8 @@ async def get_topology_status() -> JSONResponse:
 async def get_telemetry(
     entity_id: str,
     metric_key: str,
-    start_ts: Optional[str] = Query(None),
-    end_ts: Optional[str] = Query(None),
+    start_ts: str | None = Query(None),
+    end_ts: str | None = Query(None),
     limit: int = Query(1000, ge=1, le=100000),
 ) -> JSONResponse:
     try:
@@ -751,15 +784,19 @@ async def get_telemetry(
             return JSONResponse(content=data, status_code=200)
     except Exception as exc:
         logger.error("Failed to get telemetry for {}/{}: {}", entity_id[:12], metric_key, exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-@app.get("/api/v1/telemetry/{entity_id}/{metric_key}/stats", tags=["telemetry"], response_model=TelemetryStatsOut)
+@app.get(
+    "/api/v1/telemetry/{entity_id}/{metric_key}/stats",
+    tags=["telemetry"],
+    response_model=TelemetryStatsOut,
+)
 async def get_telemetry_stats(
     entity_id: str,
     metric_key: str,
-    start_ts: Optional[str] = Query(None),
-    end_ts: Optional[str] = Query(None),
+    start_ts: str | None = Query(None),
+    end_ts: str | None = Query(None),
 ) -> JSONResponse:
     try:
         with db_manager.get_session("analytics") as session:
@@ -794,7 +831,7 @@ async def get_telemetry_stats(
             )
     except Exception as exc:
         logger.error("Failed to get telemetry stats for {}/{}: {}", entity_id[:12], metric_key, exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.post("/api/v1/ingestion/trigger", tags=["telemetry"], response_model=DiscoveryTriggerOut)
@@ -836,12 +873,14 @@ async def trigger_ingestion(request: Request) -> JSONResponse:
             task.id,
         )
         return JSONResponse(
-            content=DiscoveryTriggerOut(status="triggered", message="Ingestion scheduled", task_id=str(task.id)).model_dump(),
+            content=DiscoveryTriggerOut(
+                status="triggered", message="Ingestion scheduled", task_id=str(task.id)
+            ).model_dump(),
             status_code=202,
         )
     except Exception as exc:
         logger.error("Failed to trigger ingestion: {}", exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -865,7 +904,9 @@ async def train_model(req: TrainRequest) -> JSONResponse:
             horizon=req.horizon,
         )
         if model is None:
-            raise HTTPException(status_code=400, detail="Training failed — insufficient data or error")
+            raise HTTPException(
+                status_code=400, detail="Training failed — insufficient data or error"
+            )
         return JSONResponse(
             content=TrainResponse(
                 model_id=str(model.id),
@@ -880,7 +921,7 @@ async def train_model(req: TrainRequest) -> JSONResponse:
         raise
     except Exception as exc:
         logger.error("Training failed: {}", exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.post("/api/v1/forecast/predict", tags=["forecast"])
@@ -895,7 +936,10 @@ async def generate_forecast(req: PredictRequest) -> JSONResponse:
             horizon=req.horizon,
         )
         if forecast is None:
-            raise HTTPException(status_code=400, detail="Forecast generation failed — no champion model or insufficient data")
+            raise HTTPException(
+                status_code=400,
+                detail="Forecast generation failed — no champion model or insufficient data",
+            )
         result = ForecastResultOut(
             timestamps=[str(ts) for ts in (forecast.timestamps or [])],
             values=[float(v) for v in forecast.values],
@@ -909,21 +953,76 @@ async def generate_forecast(req: PredictRequest) -> JSONResponse:
         raise
     except Exception as exc:
         logger.error("Forecast failed: {}", exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-# TODO: forecast_series table does not exist in Trendz 1.15.0 schema.
-# Forecast results are stored in MLflow / segment_data, not a dedicated SQL table.
 @app.get("/api/v1/forecast/results/{entity_id}/{metric_key}", tags=["forecast"])
 async def get_forecast_results(
     entity_id: str,
     metric_key: str,
     limit: int = Query(100, ge=1, le=1000),
 ) -> JSONResponse:
-    return JSONResponse(
-        content={"detail": "forecast_series table does not exist in Trendz 1.15.0 schema. Use MLflow or segment_data for forecast storage."},
-        status_code=501,
-    )
+    try:
+        eid = _uuid(entity_id)
+    except HTTPException:
+        raise
+    try:
+        with db_manager.get_session("analytics") as session:
+            latest = session.execute(
+                select(Prediction.forecast_generated_at)
+                .where(Prediction.entity_id == eid, Prediction.metric_key == metric_key)
+                .order_by(Prediction.forecast_generated_at.desc())
+                .limit(1)
+            ).scalar_one_or_none()
+            if latest is None:
+                return JSONResponse(
+                    content={
+                        "entity_id": entity_id,
+                        "metric_key": metric_key,
+                        "forecast_generated_at": None,
+                        "points": [],
+                    },
+                    status_code=200,
+                )
+            rows = (
+                session.execute(
+                    select(Prediction)
+                    .where(
+                        Prediction.entity_id == eid,
+                        Prediction.metric_key == metric_key,
+                        Prediction.forecast_generated_at == latest,
+                    )
+                    .order_by(Prediction.horizon_step.asc())
+                    .limit(limit)
+                )
+                .scalars()
+                .all()
+            )
+            points = [
+                {
+                    "ts": p.ts.isoformat() if p.ts else None,
+                    "value": p.value,
+                    "lower_bound": p.lower_bound,
+                    "upper_bound": p.upper_bound,
+                    "horizon_step": p.horizon_step,
+                    "model_used": p.model_used,
+                }
+                for p in rows
+            ]
+        return JSONResponse(
+            content={
+                "entity_id": entity_id,
+                "metric_key": metric_key,
+                "forecast_generated_at": latest.isoformat() if latest else None,
+                "points": points,
+            },
+            status_code=200,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Failed to fetch forecast results: {}", exc)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.get("/api/v1/forecast/models/{entity_id}/{metric_key}", tags=["forecast"])
@@ -954,8 +1053,10 @@ async def list_forecast_models(
     except HTTPException:
         raise
     except Exception as exc:
-        logger.error("Failed to list forecast models for {}/{}: {}", entity_id[:12], metric_key, exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        logger.error(
+            "Failed to list forecast models for {}/{}: {}", entity_id[:12], metric_key, exc
+        )
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.post("/api/v1/forecast/competition", tags=["forecast"])
@@ -978,8 +1079,12 @@ async def run_competition(req: CompetitionRequest) -> JSONResponse:
         return JSONResponse(
             content={
                 "status": "completed",
-                "champion_algorithm": result.champion_algorithm if hasattr(result, "champion_algorithm") else None,
-                "champion_score": result.aggregated_metrics.smape if hasattr(result, "aggregated_metrics") else None,
+                "champion_algorithm": result.champion_algorithm
+                if hasattr(result, "champion_algorithm")
+                else None,
+                "champion_score": result.aggregated_metrics.smape
+                if hasattr(result, "aggregated_metrics")
+                else None,
             },
             status_code=200,
         )
@@ -987,11 +1092,15 @@ async def run_competition(req: CompetitionRequest) -> JSONResponse:
         raise
     except Exception as exc:
         logger.error("Competition failed: {}", exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 # TODO: is_champion column does not exist in real prediction_model table.
-@app.get("/api/v1/forecast/champion/{entity_id}/{metric_key}", tags=["forecast"], response_model=ChampionOut)
+@app.get(
+    "/api/v1/forecast/champion/{entity_id}/{metric_key}",
+    tags=["forecast"],
+    response_model=ChampionOut,
+)
 async def get_champion(
     entity_id: str,
     metric_key: str,
@@ -1009,7 +1118,9 @@ async def get_champion(
                 name=champion.name,
                 type=champion.type,
                 status=champion.status,
-                business_entity_id=str(champion.business_entity_id) if champion.business_entity_id else "",
+                business_entity_id=str(champion.business_entity_id)
+                if champion.business_entity_id
+                else "",
                 tb_telemetry_key=champion.tb_telemetry_key,
                 enabled=champion.enabled,
                 created_ts=champion.created_ts,
@@ -1020,7 +1131,7 @@ async def get_champion(
         raise
     except Exception as exc:
         logger.error("Failed to get champion for {}/{}: {}", entity_id[:12], metric_key, exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -1032,7 +1143,6 @@ async def get_champion(
 async def train_anomaly_detector(req: AnomalyTrainRequest) -> JSONResponse:
     try:
         from trendx.anomalies.detectors import AnomalyDetectorService
-        from trendx.database.repositories import AnomalyDetectorRepository
 
         svc = AnomalyDetectorService()
         detector = svc.train(
@@ -1058,7 +1168,7 @@ async def train_anomaly_detector(req: AnomalyTrainRequest) -> JSONResponse:
         raise
     except Exception as exc:
         logger.error("Anomaly detector training failed: {}", exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.post("/api/v1/anomaly/scan", tags=["anomaly"])
@@ -1078,7 +1188,7 @@ async def scan_anomalies(req: AnomalyScanRequest) -> JSONResponse:
         )
     except Exception as exc:
         logger.error("Anomaly scan failed: {}", exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 # TODO: scored_point_anomaly has columns (t, s, anomaly_id) only.
@@ -1109,7 +1219,7 @@ async def get_anomaly_scores(
             return JSONResponse(content=data, status_code=200)
     except Exception as exc:
         logger.error("Failed to get anomaly scores: {}", exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 # TODO: Real anomaly table has item_id/item_name, not entity_id/metric_key.
@@ -1147,7 +1257,7 @@ async def get_anomaly_episodes(
             return JSONResponse(content=data, status_code=200)
     except Exception as exc:
         logger.error("Failed to get anomaly episodes: {}", exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -1187,13 +1297,13 @@ async def create_task(req: TaskCreateRequest) -> JSONResponse:
         )
     except Exception as exc:
         logger.error("Failed to create task: {}", exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.get("/api/v1/tasks", tags=["tasks"])
 async def list_tasks(
-    status: Optional[str] = Query(None),
-    job_type: Optional[str] = Query(None),
+    status: str | None = Query(None),
+    job_type: str | None = Query(None),
     limit: int = Query(50, ge=1, le=200),
 ) -> JSONResponse:
     try:
@@ -1224,7 +1334,7 @@ async def list_tasks(
             return JSONResponse(content=result, status_code=200)
     except Exception as exc:
         logger.error("Failed to list tasks: {}", exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.get("/api/v1/tasks/{task_id}", tags=["tasks"], response_model=TaskOut)
@@ -1257,7 +1367,7 @@ async def get_task(task_id: str) -> JSONResponse:
         raise
     except Exception as exc:
         logger.error("Failed to get task {}: {}", task_id, exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.post("/api/v1/tasks/{task_id}/cancel", tags=["tasks"], response_model=TaskOut)
@@ -1292,7 +1402,7 @@ async def cancel_task(task_id: str) -> JSONResponse:
         raise
     except Exception as exc:
         logger.error("Failed to cancel task {}: {}", task_id, exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.post("/api/v1/tasks/{task_id}/retry", tags=["tasks"], response_model=TaskOut)
@@ -1344,36 +1454,133 @@ async def retry_task(task_id: str) -> JSONResponse:
         raise
     except Exception as exc:
         logger.error("Failed to retry task {}: {}", task_id, exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 # ─────────────────────────────────────────────────────────────────────────
-# Alert Endpoints
+# Alert Endpoints (TrendX-owned, Étape 013)
 # ─────────────────────────────────────────────────────────────────────────
-# TODO: alert_rule and alert_incident tables do not exist in Trendz 1.15.0 schema.
+
+
+def _alert_rule_out(r: AlertRule) -> dict[str, Any]:
+    return {
+        "id": str(r.id),
+        "name": r.name,
+        "entity_id": r.entity_id,
+        "metric_key": r.metric_key,
+        "rule_type": r.rule_type,
+        "condition_json": r.condition_json if r.condition_json is not None else {},
+        "cooldown_seconds": r.cooldown_seconds,
+        "min_duration_seconds": r.min_duration_seconds,
+        "severity": r.severity,
+        "is_active": r.is_active,
+        "created_at": r.created_at.isoformat() if r.created_at else "",
+        "updated_at": r.updated_at.isoformat() if r.updated_at else "",
+    }
 
 
 @app.get("/api/v1/alerts", tags=["alerts"])
 async def list_active_alerts(
-    entity_id: Optional[str] = Query(None),
+    entity_id: str | None = Query(None),
     limit: int = Query(50, ge=1, le=200),
 ) -> JSONResponse:
-    return JSONResponse(content=[], status_code=200)
+    try:
+        with db_manager.get_session("catalog") as session:
+            incidents = AlertIncidentRepository(session).find_active(entity_id)
+            data = [
+                {
+                    "id": inc.id,
+                    "logical_key": inc.logical_key,
+                    "entity_id": inc.entity_id,
+                    "metric_key": inc.metric_key,
+                    "severity": inc.severity,
+                    "status": inc.status,
+                    "opened_at": inc.opened_at.isoformat() if inc.opened_at else None,
+                    "acknowledged_at": inc.acknowledged_at.isoformat()
+                    if inc.acknowledged_at
+                    else None,
+                    "cleared_at": inc.cleared_at.isoformat() if inc.cleared_at else None,
+                    "closed_at": inc.closed_at.isoformat() if inc.closed_at else None,
+                    "last_value": inc.last_value,
+                    "open_reason": inc.open_reason,
+                    "opened_count": inc.opened_count,
+                }
+                for inc in incidents[:limit]
+            ]
+        return JSONResponse(content=data, status_code=200)
+    except Exception as exc:
+        logger.error("Failed to list active alerts: {}", exc)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.post("/api/v1/alerts/rules", tags=["alerts"], response_model=AlertRuleOut)
 async def create_alert_rule(req: AlertRuleCreate) -> JSONResponse:
-    raise HTTPException(status_code=501, detail="alert_rule table does not exist in Trendz 1.15.0 schema")
+    try:
+        with db_manager.get_session("catalog") as session:
+            repo = AlertRuleRepository(session)
+            rule = repo.create(
+                name=req.name,
+                entity_id=req.entity_id,
+                metric_key=req.metric_key,
+                rule_type=req.rule_type,
+                condition_json=req.condition_json,
+                cooldown_seconds=req.cooldown_seconds,
+                min_duration_seconds=req.min_duration_seconds,
+                severity=req.severity,
+                is_active=req.is_active,
+            )
+            session.commit()
+            out = _alert_rule_out(rule)
+        return JSONResponse(content=out, status_code=201)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Failed to create alert rule: {}", exc)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.get("/api/v1/alerts/rules", tags=["alerts"])
 async def list_alert_rules() -> JSONResponse:
-    return JSONResponse(content=[], status_code=200)
+    try:
+        with db_manager.get_session("catalog") as session:
+            rules = AlertRuleRepository(session).list()
+            data = [_alert_rule_out(r) for r in rules]
+        return JSONResponse(content=data, status_code=200)
+    except Exception as exc:
+        logger.error("Failed to list alert rules: {}", exc)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.put("/api/v1/alerts/rules/{rule_id}", tags=["alerts"], response_model=AlertRuleOut)
 async def update_alert_rule(rule_id: str, req: AlertRuleUpdate) -> JSONResponse:
-    raise HTTPException(status_code=501, detail="alert_rule table does not exist in Trendz 1.15.0 schema")
+    try:
+        rid = _uuid(rule_id)
+        with db_manager.get_session("catalog") as session:
+            repo = AlertRuleRepository(session)
+            rule = repo.get(rid)
+            if rule is None:
+                raise HTTPException(status_code=404, detail="Alert rule not found")
+            if req.name is not None:
+                rule.name = req.name
+            if req.condition_json is not None:
+                rule.condition_json = req.condition_json
+            if req.cooldown_seconds is not None:
+                rule.cooldown_seconds = req.cooldown_seconds
+            if req.min_duration_seconds is not None:
+                rule.min_duration_seconds = req.min_duration_seconds
+            if req.severity is not None:
+                rule.severity = req.severity
+            if req.is_active is not None:
+                rule.is_active = req.is_active
+            rule.updated_at = datetime.now(UTC)
+            session.commit()
+            out = _alert_rule_out(rule)
+        return JSONResponse(content=out, status_code=200)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error("Failed to update alert rule: {}", exc)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -1388,7 +1595,7 @@ async def admin_health() -> JSONResponse:
         content=HealthDetailedOut(
             status="ok" if all(db_status.values()) else "degraded",
             database=db_status,
-            timestamp=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+            timestamp=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
         ).model_dump(),
         status_code=200,
     )
@@ -1435,4 +1642,4 @@ async def admin_stats() -> JSONResponse:
         return JSONResponse(content=stats.model_dump(), status_code=200)
     except Exception as exc:
         logger.error("Failed to get admin stats: {}", exc)
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail=str(exc)) from exc

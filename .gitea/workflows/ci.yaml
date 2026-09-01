@@ -1,0 +1,270 @@
+name: Trendx CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+env:
+  PIP_CACHE_DIR: "/tmp/pip-cache"
+  POSTGRES_DB: trendx
+  POSTGRES_USER: trendx_app
+  POSTGRES_PASSWORD: ${{ secrets.TRENDX_TEST_DB_PASSWORD }}
+  PG_ADMIN_HOST: postgres
+  PG_ADMIN_PORT: "5432"
+  PG_ADMIN_DB: trendx
+  PG_ADMIN_USER: trendx_app
+  PG_ADMIN_PASSWORD: ${{ secrets.TRENDX_TEST_DB_PASSWORD }}
+  TRENDX_DB_NAME: trendx
+  TRENDX_DB_HOST: postgres
+  TRENDX_DB_PORT: "5432"
+  TRENDX_DB_USER: trendx_app
+  TRENDX_DB_PASSWORD: ${{ secrets.TRENDX_TEST_DB_PASSWORD }}
+  TRENDX_APP_USER: trendx_app
+  TRENDX_APP_PASSWORD: ${{ secrets.TRENDX_TEST_DB_PASSWORD }}
+  TRENDX_DEFAULT_TENANT_ID: df634b20-d6b0-11f0-bed9-45e34e17c7de
+  TRENDX_DEFAULT_CUSTOMER_ID: 8a40b580-9b9e-11f0-8e3f-c909dc64d424
+  TRENDX_DEFAULT_USER_ID: 8a513040-9b9e-11f0-8e3f-c909dc64d424
+  TB_BASE_URL: http://localhost:8080
+  TB_USERNAME: test@example.com
+  TB_PASSWORD: test
+  TB_AUTH_CONFIGURED: "false"
+
+jobs:
+  test-unit:
+    runs-on: ubuntu-latest
+    container:
+      image: python:3.12-slim
+    steps:
+      - name: Bootstrap (git + node for JS actions)
+        run: apt-get update && apt-get install -y --no-install-recommends git nodejs
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -c constraints.txt -e ".[dev]"
+      - name: Unit tests
+        run: pytest -m unit -ra --no-header --tb=short
+
+  test-integration:
+    runs-on: ubuntu-latest
+    container:
+      image: python:3.12-slim
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: trendx
+          POSTGRES_USER: trendx_app
+          POSTGRES_PASSWORD: ${{ secrets.TRENDX_TEST_DB_PASSWORD }}
+        ports:
+          - 5432:5432
+    steps:
+      - name: Bootstrap (git + node for JS actions)
+        run: apt-get update && apt-get install -y --no-install-recommends git nodejs
+      - uses: actions/checkout@v4
+      - name: Install dependencies and postgres client
+        run: |
+          python -m pip install --upgrade pip
+          pip install -c constraints.txt -e ".[dev]"
+          apt-get update && apt-get install -y --no-install-recommends postgresql-client
+          for i in $(seq 1 30); do pg_isready -h postgres -p 5432 && break; sleep 1; done
+      - name: Schemas, roles and migrations 001-006,009,010,011
+        run: |
+          PGPASSWORD="$POSTGRES_PASSWORD" psql -h postgres -U trendx_app -d trendx -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE SCHEMA IF NOT EXISTS trendx_catalog;
+          CREATE SCHEMA IF NOT EXISTS trendx_analytics;
+          SQL
+          PGPASSWORD="$POSTGRES_PASSWORD" psql -h postgres -U trendx_app -d trendx -v ON_ERROR_STOP=1 -v rp="$TRENDX_TEST_DB_PASSWORD" <<'SQL'
+          DO $$
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'trendx_migration') THEN
+              CREATE ROLE trendx_migration LOGIN PASSWORD :'rp';
+            END IF;
+          END; $$;
+          GRANT trendx_migration TO trendx_app;
+          SQL
+          for f in migrations/001_*.sql migrations/002_*.sql migrations/003_*.sql migrations/004_*.sql migrations/005_*.sql migrations/006_*.sql migrations/009_*.sql migrations/010_*.sql migrations/011_*.sql; do
+            [ -e "${f}" ] || continue
+            echo ">>> applying ${f}"
+            PGPASSWORD="$POSTGRES_PASSWORD" psql -h postgres -U trendx_app -d trendx -v ON_ERROR_STOP=1 -f "${f}"
+          done
+          PGPASSWORD="$POSTGRES_PASSWORD" psql -h postgres -U trendx_app -d trendx -v ON_ERROR_STOP=1 <<'SQL'
+          INSERT INTO trendx_analytics.aggregate_watermarks (aggregate_name, last_refresh_start, last_refresh_rows)
+          VALUES ('hourly', '2026-01-01T00:00:00+00:00', 0)
+          ON CONFLICT (aggregate_name) DO NOTHING;
+          SQL
+      - name: Integration tests (excluding migration_apply)
+        run: pytest -m "integration and not migration_apply" -ra --no-header --tb=short
+
+  test-migration-001:
+    runs-on: ubuntu-latest
+    container:
+      image: python:3.12-slim
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: trendx
+          POSTGRES_USER: trendx_app
+          POSTGRES_PASSWORD: ${{ secrets.TRENDX_TEST_DB_PASSWORD }}
+        ports:
+          - 5432:5432
+    steps:
+      - name: Bootstrap (git + node for JS actions)
+        run: apt-get update && apt-get install -y --no-install-recommends git nodejs
+      - uses: actions/checkout@v4
+      - name: Install dependencies and postgres client
+        run: |
+          python -m pip install --upgrade pip
+          pip install -c constraints.txt -e ".[dev]"
+          apt-get update && apt-get install -y --no-install-recommends postgresql-client
+          for i in $(seq 1 30); do pg_isready -h postgres -p 5432 && break; sleep 1; done
+      - name: Migration 001 native schema test
+        run: pytest tests/integration/test_migration_001_native_schema.py -m integration --run-integration -ra --no-header --tb=short
+
+  test-migration-007:
+    runs-on: ubuntu-latest
+    container:
+      image: python:3.12-slim
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: trendx
+          POSTGRES_USER: trendx_app
+          POSTGRES_PASSWORD: ${{ secrets.TRENDX_TEST_DB_PASSWORD }}
+        ports:
+          - 5432:5432
+    steps:
+      - name: Bootstrap (git + node for JS actions)
+        run: apt-get update && apt-get install -y --no-install-recommends git nodejs
+      - uses: actions/checkout@v4
+      - name: Install dependencies and postgres client
+        run: |
+          python -m pip install --upgrade pip
+          pip install -c constraints.txt -e ".[dev]"
+          apt-get update && apt-get install -y --no-install-recommends postgresql-client
+          for i in $(seq 1 30); do pg_isready -h postgres -p 5432 && break; sleep 1; done
+      - name: Schemas and roles, then apply migration 007 in isolation
+        run: |
+          PGPASSWORD="$POSTGRES_PASSWORD" psql -h postgres -U trendx_app -d trendx -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE SCHEMA IF NOT EXISTS trendx_catalog;
+          CREATE SCHEMA IF NOT EXISTS trendx_analytics;
+          SQL
+          PGPASSWORD="$POSTGRES_PASSWORD" psql -h postgres -U trendx_app -d trendx -v ON_ERROR_STOP=1 -v rp="$TRENDX_TEST_DB_PASSWORD" <<'SQL'
+          DO $$
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'trendx_migration') THEN
+              CREATE ROLE trendx_migration LOGIN PASSWORD :'rp';
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'trendx_ro') THEN
+              CREATE ROLE trendx_ro LOGIN PASSWORD :'rp';
+            END IF;
+          END; $$;
+          GRANT trendx_migration TO trendx_app;
+          SQL
+          PGPASSWORD="$POSTGRES_PASSWORD" psql -h postgres -U trendx_app -d trendx -v ON_ERROR_STOP=1 -f migrations/007_topology_tables.sql
+      - name: Migration 007 topology test
+        run: pytest tests/integration/test_migration_007_topology.py -m integration --run-integration -ra --no-header --tb=short
+
+  test-migration-008:
+    runs-on: ubuntu-latest
+    container:
+      image: python:3.12-slim
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: trendx
+          POSTGRES_USER: trendx_app
+          POSTGRES_PASSWORD: ${{ secrets.TRENDX_TEST_DB_PASSWORD }}
+        ports:
+          - 5432:5432
+    steps:
+      - name: Bootstrap (git + node for JS actions)
+        run: apt-get update && apt-get install -y --no-install-recommends git nodejs
+      - uses: actions/checkout@v4
+      - name: Install dependencies and postgres client
+        run: |
+          python -m pip install --upgrade pip
+          pip install -c constraints.txt -e ".[dev]"
+          apt-get update && apt-get install -y --no-install-recommends postgresql-client
+          for i in $(seq 1 30); do pg_isready -h postgres -p 5432 && break; sleep 1; done
+      - name: Migration 008 model_uri test (applies 001-008 in test)
+        run: pytest tests/integration/test_migration_008_model_uri.py -m integration --run-integration -ra --no-header --tb=short
+
+  security:
+    runs-on: ubuntu-latest
+    container:
+      image: python:3.12-slim
+    steps:
+      - name: Bootstrap (git + node for JS actions)
+        run: apt-get update && apt-get install -y --no-install-recommends git nodejs
+      - uses: actions/checkout@v4
+      - name: Install security tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install gitleaks bandit
+      - name: gitleaks (secret detection, equivalent to GitLab Secret-Detection)
+        run: gitleaks detect --source . --no-banner --redact --exit-code 1
+      - name: bandit (SAST equivalent to GitLab SAST for Python)
+        run: bandit -r src -c pyproject.toml -f txt
+
+  lint:
+    runs-on: ubuntu-latest
+    container:
+      image: ubuntu:22.04
+    steps:
+      - name: Bootstrap (git + node for JS actions)
+        run: apt-get update && apt-get install -y --no-install-recommends git nodejs
+      - uses: actions/checkout@v4
+      - name: Install lint tools
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends python3-pip shellcheck hadolint
+          pip install --break-system-packages ruff mypy typos
+      - name: ruff
+        run: ruff check .
+      - name: ruff-format
+        run: ruff format --check .
+      - name: mypy
+        run: mypy src
+      - name: typos
+        run: typos
+      - name: shellcheck
+        run: find . -name '*.sh' -not -path './.git/*' -print0 | xargs -0 shellcheck
+      - name: hadolint
+        run: find . -name 'Dockerfile*' -not -path './.git/*' -print0 | xargs -0 hadolint
+
+  test-migration-013:
+    runs-on: ubuntu-latest
+    container:
+      image: python:3.12-slim
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: trendx
+          POSTGRES_USER: trendx_app
+          POSTGRES_PASSWORD: ${{ secrets.TRENDX_TEST_DB_PASSWORD }}
+        ports:
+          - 5432:5432
+    env:
+      TRENDX_TEST_PGHOST: postgres
+      TRENDX_TEST_PGPORT: "5432"
+      TRENDX_TEST_PGUSER: trendx_app
+      TRENDX_TEST_PGPASSWORD: ${{ secrets.TRENDX_TEST_DB_PASSWORD }}
+      TRENDX_TEST_PGDATABASE: trendx
+    steps:
+      - name: Bootstrap (git + node for JS actions)
+        run: apt-get update && apt-get install -y --no-install-recommends git nodejs
+      - uses: actions/checkout@v4
+      - name: Install dependencies and postgres client
+        run: |
+          python -m pip install --upgrade pip
+          pip install -c constraints.txt -e ".[dev]"
+          apt-get update && apt-get install -y --no-install-recommends postgresql-client
+          for i in $(seq 1 30); do pg_isready -h postgres -p 5432 && break; sleep 1; done
+      - name: Migration 013 full-chain apply and idempotence
+        run: pytest tests/integration/test_runner_apply_migrations.py -m integration --run-integration --no-header --tb=short

@@ -1,27 +1,26 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
-from typing import Any, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    DateTime,
     Double,
     Float,
     ForeignKey,
     Integer,
-    LargeBinary,
     PrimaryKeyConstraint,
     Text,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID, INET
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
-from sqlalchemy.sql import func
+from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
-class Base(DeclarativeBase):
+class Base(DeclarativeBase):  # type: ignore[misc]
     pass
 
 
@@ -34,27 +33,27 @@ class BusinessEntity(Base):
     __tablename__ = "business_entity"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
     hidden: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     name: Mapped[str] = mapped_column(Text, nullable=False)
-    query: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    query: Mapped[str | None] = mapped_column(Text, nullable=True)
     shared_with_customers: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    tenant_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
 
 
 class BusinessEntityField(Base):
     __tablename__ = "business_entity_field"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
     hidden: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     name: Mapped[str] = mapped_column(Text, nullable=False)
-    query: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    type: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    calc_function: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    query: Mapped[str | None] = mapped_column(Text, nullable=True)
+    type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    calc_function: Mapped[str | None] = mapped_column(Text, nullable=True)
     sql_id_key: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     sql_ts_key: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    business_entity_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    business_entity_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("business_entity.id", ondelete="CASCADE"), nullable=True
     )
 
@@ -63,27 +62,23 @@ class BusinessEntityFieldMetadata(Base):
     __tablename__ = "business_entity_field_metadata"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    business_entity_field_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), nullable=False
-    )
+    business_entity_field_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     customer_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    aggregation: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    date_grouping: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    range_config: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    aggregation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    date_grouping: Mapped[str | None] = mapped_column(Text, nullable=True)
+    range_config: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class BusinessEntityMetadata(Base):
     __tablename__ = "business_entity_metadata"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    business_entity_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), nullable=False
-    )
+    business_entity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     customer_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    item_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
-    item_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    item_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    item_name: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class Relation(Base):
@@ -98,7 +93,7 @@ class Relation(Base):
     )
     direction: Mapped[str] = mapped_column(Text, primary_key=True)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    query: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    query: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     __table_args__ = (
         PrimaryKeyConstraint("business_entity_id", "name", "related_entity_id", "direction"),
@@ -114,13 +109,13 @@ class ClusterInfo(Base):
     __tablename__ = "cluster_info"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    cluster_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    segments_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    segments_percent: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    duration_ms: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
-    min_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    max_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    cluster_model_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    cluster_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    segments_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    segments_percent: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    duration_ms: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    min_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    max_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    cluster_model_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("cluster_model.id", ondelete="SET NULL"), nullable=True
     )
 
@@ -129,7 +124,7 @@ class ClusterExample(Base):
     __tablename__ = "cluster_example"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    cluster_info_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    cluster_info_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("cluster_info.id", ondelete="SET NULL"), nullable=True
     )
 
@@ -142,33 +137,33 @@ class ClusterModel(Base):
     __tablename__ = "cluster_model"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
-    customer_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    customer_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     create_ts: Mapped[int] = mapped_column(BigInteger, nullable=False)
     update_ts: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    status: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    type: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    properties_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str | None] = mapped_column(Text, nullable=True)
+    type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    properties_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("ml_properties.id", ondelete="SET NULL"), nullable=True
     )
-    dataset_config_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    dataset_config_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("dataset_config.id", ondelete="SET NULL"), nullable=True
     )
-    tb_telemetry_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    score_associated_field_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    tb_telemetry_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    score_associated_field_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), nullable=True
     )
-    score_index_associated_field_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    score_index_associated_field_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), nullable=True
     )
-    telemetry_save_period_unit: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    alarm_type: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    telemetry_save_period_unit: Mapped[str | None] = mapped_column(Text, nullable=True)
+    alarm_type: Mapped[str | None] = mapped_column(Text, nullable=True)
     enabled_alarm_deletion: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
-    alarm_warning_threshold: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    alarm_minor_threshold: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    alarm_major_threshold: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    alarm_critical_threshold: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    alarm_warning_threshold: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    alarm_minor_threshold: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    alarm_major_threshold: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    alarm_critical_threshold: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
 
 # =====================================================================
@@ -180,22 +175,20 @@ class MetricDefinition(Base):
     __tablename__ = "metric_definition"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    business_entity_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), nullable=False
-    )
+    business_entity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     item_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     item_name: Mapped[str] = mapped_column(Text, nullable=False)
     tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    customer_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
+    customer_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     user_input: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     how_to_calculate: Mapped[str] = mapped_column(Text, nullable=False)
     is_advanced_mode: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    use_cases: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    fields: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    code: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    calculation_field_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    use_cases: Mapped[str | None] = mapped_column(Text, nullable=True)
+    fields: Mapped[str | None] = mapped_column(Text, nullable=True)
+    code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    calculation_field_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), nullable=True
     )
     is_outdated: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -208,15 +201,11 @@ class MetricDefinitionMetadata(Base):
     __tablename__ = "metric_definition_metadata"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    metric_definition_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), nullable=False
-    )
-    business_entity_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), nullable=False
-    )
+    metric_definition_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    business_entity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     item_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    customer_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
+    customer_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     metric_name: Mapped[str] = mapped_column(Text, nullable=False)
     is_advanced_mode: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     is_saved: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -231,15 +220,9 @@ class MetricExploration(Base):
     customer_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     item_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     item_name: Mapped[str] = mapped_column(Text, nullable=False)
-    business_entity_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), nullable=False
-    )
-    business_entity_field_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), nullable=False
-    )
-    metric_definition_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), nullable=False
-    )
+    business_entity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    business_entity_field_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    metric_definition_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     exploration_ts: Mapped[int] = mapped_column(BigInteger, nullable=False)
 
 
@@ -251,29 +234,25 @@ class CalculationField(Base):
     customer_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     name: Mapped[str] = mapped_column(Text, nullable=False)
-    creation_time: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
-    update_time: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
-    business_entity_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), nullable=False
-    )
+    creation_time: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    update_time: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    business_entity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     associated_entity_field_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), nullable=False
     )
     language: Mapped[str] = mapped_column(Text, nullable=False)
     calculation_field_type: Mapped[str] = mapped_column(Text, nullable=False)
     return_data_type: Mapped[str] = mapped_column(Text, nullable=False)
-    grouping_interval: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    field_aggregation: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    grouping_interval: Mapped[str | None] = mapped_column(Text, nullable=True)
+    field_aggregation: Mapped[str | None] = mapped_column(Text, nullable=True)
     fill_gap_enable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    fill_gap_time_unit: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    fill_gap_strategy: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    fill_gap_time_unit: Mapped[str | None] = mapped_column(Text, nullable=True)
+    fill_gap_strategy: Mapped[str | None] = mapped_column(Text, nullable=True)
     tb_telemetry_key: Mapped[str] = mapped_column(Text, nullable=False)
     script: Mapped[str] = mapped_column(Text, nullable=False)
-    time_range_strategy: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    json_fixed_strategy_date_picker: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    manual_dataset_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), nullable=False
-    )
+    time_range_strategy: Mapped[str | None] = mapped_column(Text, nullable=True)
+    json_fixed_strategy_date_picker: Mapped[str | None] = mapped_column(Text, nullable=True)
+    manual_dataset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     split_time_range: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     split_time_range_time_unit: Mapped[str] = mapped_column(Text, nullable=False)
 
@@ -285,17 +264,15 @@ class CalculationField(Base):
 class CalculationFieldTaskData(Base):
     __tablename__ = "calculation_field_task_data"
 
-    calculation_field_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True
-    )
-    enabled: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
-    tz_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    json_item_name_set: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    json_item_set: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    json_reprocess_date_picker_config: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    refresh_time_unit: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    refresh_time_unit_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    refresh_time_unit_truncated: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    calculation_field_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    tz_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    json_item_name_set: Mapped[str | None] = mapped_column(Text, nullable=True)
+    json_item_set: Mapped[str | None] = mapped_column(Text, nullable=True)
+    json_reprocess_date_picker_config: Mapped[str | None] = mapped_column(Text, nullable=True)
+    refresh_time_unit: Mapped[str | None] = mapped_column(Text, nullable=True)
+    refresh_time_unit_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    refresh_time_unit_truncated: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
 
 # TODO: calculated_field_execution does not exist in Trendz 1.15.0 schema.
@@ -309,40 +286,34 @@ class CachedTelemetry(Base):
     __tablename__ = "cached_telemetry"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    item_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
-    tenant_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
-    upload_time: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
-    calculated_field: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
-    state_field: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
-    start_ts: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
-    end_ts: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
-    field_type: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    field_aggregation: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    date_aggregation_type: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    business_entity_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    item_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    upload_time: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    calculated_field: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    state_field: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    start_ts: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    end_ts: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    field_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    field_aggregation: Mapped[str | None] = mapped_column(Text, nullable=True)
+    date_aggregation_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    business_entity_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    business_entity_field_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), nullable=True
     )
-    business_entity_field_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), nullable=True
-    )
-    function: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    latest_telemetry_point_ts: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    function: Mapped[str | None] = mapped_column(Text, nullable=True)
+    latest_telemetry_point_ts: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
 
 class CachedTelemetryPoint(Base):
     __tablename__ = "cached_telemetry_point"
 
     ts: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    cached_telemetry_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True
-    )
-    numeric_value: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    string_value: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    boolean_value: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    cached_telemetry_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    numeric_value: Mapped[float | None] = mapped_column(Float, nullable=True)
+    string_value: Mapped[str | None] = mapped_column(Text, nullable=True)
+    boolean_value: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
-    __table_args__ = (
-        PrimaryKeyConstraint("ts", "cached_telemetry_id"),
-    )
+    __table_args__ = (PrimaryKeyConstraint("ts", "cached_telemetry_id"),)
 
 
 class Datasource(Base):
@@ -350,10 +321,10 @@ class Datasource(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    db_type: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    login: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    pass_: Mapped[Optional[str]] = mapped_column("pass", Text, nullable=True)
+    db_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    login: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pass_: Mapped[str | None] = mapped_column("pass", Text, nullable=True)
 
 
 # TODO: Backward-compatible alias.
@@ -390,14 +361,106 @@ class PredictionModel(Base):
     method_parameters: Mapped[str] = mapped_column(Text, nullable=False)
     item_state_map: Mapped[str] = mapped_column(Text, nullable=False)
     trained_item_set: Mapped[str] = mapped_column(Text, nullable=False)
-    business_entity_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), nullable=False
-    )
-    business_entity_field_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), nullable=False
-    )
+    business_entity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    business_entity_field_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     model_uri: Mapped[str | None] = mapped_column(Text, nullable=True)
     avoid_disabling: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Enrichissement TrendX-owned (Étape 013, additif, colonnes NULL).
+    # Lu via getattr() dans inference.py ; ne modifie aucune colonne Trendz.
+    frequency: Mapped[str | None] = mapped_column(Text, nullable=True)
+    algorithm: Mapped[str | None] = mapped_column(Text, nullable=True)
+    scaler: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    hyperparameters: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+
+
+# =====================================================================
+# LOT 3b/4: TrendX-owned alerting + forecast persistence (Étape 013)
+#   alert_rule / alert_incident : TrendX-owned (absents de Trendz 1.15.0)
+#   Prediction : mappe la table EXISTANTE trendx_analytics.predictions (011)
+# =====================================================================
+
+
+class AlertRule(Base):
+    __tablename__ = "alert_rule"
+    __table_args__ = ({"schema": "trendx_catalog"},)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    entity_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    metric_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rule_type: Mapped[str] = mapped_column(Text, nullable=False)
+    condition_json: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    cooldown_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=7200)
+    min_duration_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=60)
+    open_threshold: Mapped[float | None] = mapped_column(Double, nullable=True)
+    close_threshold: Mapped[float | None] = mapped_column(Double, nullable=True)
+    severity: Mapped[str] = mapped_column(Text, nullable=False, default="MEDIUM")
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
+    )
+
+
+class AlertIncident(Base):
+    __tablename__ = "alert_incident"
+    __table_args__ = ({"schema": "trendx_catalog"},)
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    logical_key: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    rule_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("trendx_catalog.alert_rule.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    entity_id: Mapped[str] = mapped_column(Text, nullable=False)
+    metric_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    severity: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="ACTIVE")
+    external_tb_alarm_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    opened_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
+    )
+    acknowledged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cleared_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    acknowledged_by: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_value: Mapped[float | None] = mapped_column(Double, nullable=True)
+    open_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    close_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    additional_info: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
+    opened_count: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+
+class Prediction(Base):
+    __tablename__ = "predictions"
+    __table_args__ = (
+        PrimaryKeyConstraint("ts", "entity_id", "metric_key", "forecast_generated_at", "model_id"),
+        {"schema": "trendx_analytics"},
+    )
+
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    entity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    metric_key: Mapped[str] = mapped_column(Text, nullable=False)
+    forecast_generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    model_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    model_used: Mapped[str] = mapped_column(Text, nullable=False)
+    run_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    value: Mapped[float] = mapped_column(Double, nullable=False)
+    lower_bound: Mapped[float | None] = mapped_column(Double, nullable=True)
+    upper_bound: Mapped[float | None] = mapped_column(Double, nullable=True)
+    horizon_step: Mapped[int] = mapped_column(Integer, nullable=False)
+    frequency: Mapped[str] = mapped_column(Text, nullable=False, default="1h")
+    mlflow_run_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    written_back: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    writeback_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
+    )
 
 
 class PredictionModelStatusHistory(Base):
@@ -407,7 +470,7 @@ class PredictionModelStatusHistory(Base):
     prediction_model_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     business_entity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     metric_key: Mapped[str] = mapped_column(Text, nullable=False)
-    previous_status: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    previous_status: Mapped[str | None] = mapped_column(Text, nullable=True)
     new_status: Mapped[str] = mapped_column(Text, nullable=False)
     changed_ts: Mapped[int] = mapped_column(BigInteger, nullable=False)
 
@@ -415,29 +478,23 @@ class PredictionModelStatusHistory(Base):
 class PredictionModelLastItemPoint(Base):
     __tablename__ = "prediction_model_last_item_point"
 
-    prediction_model_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True
-    )
+    prediction_model_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
     item_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
     ts: Mapped[int] = mapped_column(BigInteger, nullable=False)
 
-    __table_args__ = (
-        PrimaryKeyConstraint("prediction_model_id", "item_id"),
-    )
+    __table_args__ = (PrimaryKeyConstraint("prediction_model_id", "item_id"),)
 
 
 class PredictionModelTaskData(Base):
     __tablename__ = "prediction_model_task_data"
 
-    prediction_model_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True
-    )
-    item_set_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    enabled: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
-    enabled_partial_fit: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
-    refresh_time_unit: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    refresh_time_unit_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    refresh_time_unit_truncated: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    prediction_model_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    item_set_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    enabled: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    enabled_partial_fit: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    refresh_time_unit: Mapped[str | None] = mapped_column(Text, nullable=True)
+    refresh_time_unit_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    refresh_time_unit_truncated: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
 
 # TODO: prediction_run does not exist in Trendz 1.15.0 schema.
@@ -451,33 +508,25 @@ class Anomaly(Base):
     __tablename__ = "anomaly"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    item_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
-    item_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    start_ts: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
-    end_ts: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
-    cluster_id: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
-    score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    score_index: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    model_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), nullable=True
-    )
-    alarm_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), nullable=True
-    )
+    item_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    item_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    start_ts: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    end_ts: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    cluster_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    score_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    model_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    alarm_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
 
 
 class ScoredPointAnomaly(Base):
     __tablename__ = "scored_point_anomaly"
 
-    t: Mapped[Optional[int]] = mapped_column(BigInteger, primary_key=True)
-    s: Mapped[Optional[float]] = mapped_column(Float, primary_key=True)
-    anomaly_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), primary_key=True
-    )
+    t: Mapped[int | None] = mapped_column(BigInteger, primary_key=True)
+    s: Mapped[float | None] = mapped_column(Float, primary_key=True)
+    anomaly_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), primary_key=True)
 
-    __table_args__ = (
-        PrimaryKeyConstraint("t", "s", "anomaly_id"),
-    )
+    __table_args__ = (PrimaryKeyConstraint("t", "s", "anomaly_id"),)
 
 
 # TODO: Backward-compatible alias — columns differ wildly from old anomaly_score model.
@@ -487,58 +536,46 @@ AnomalyScore = ScoredPointAnomaly
 class ScoredPointCentroid(Base):
     __tablename__ = "scored_point_centroid"
 
-    t: Mapped[Optional[int]] = mapped_column(BigInteger, primary_key=True)
-    s: Mapped[Optional[float]] = mapped_column(Float, primary_key=True)
-    cluster_info_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), primary_key=True
-    )
+    t: Mapped[int | None] = mapped_column(BigInteger, primary_key=True)
+    s: Mapped[float | None] = mapped_column(Float, primary_key=True)
+    cluster_info_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), primary_key=True)
 
-    __table_args__ = (
-        PrimaryKeyConstraint("t", "s", "cluster_info_id"),
-    )
+    __table_args__ = (PrimaryKeyConstraint("t", "s", "cluster_info_id"),)
 
 
 class ScoredPointCluster(Base):
     __tablename__ = "scored_point_cluster"
 
-    t: Mapped[Optional[int]] = mapped_column(BigInteger, primary_key=True)
-    s: Mapped[Optional[float]] = mapped_column(Float, primary_key=True)
-    cluster_example_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    t: Mapped[int | None] = mapped_column(BigInteger, primary_key=True)
+    s: Mapped[float | None] = mapped_column(Float, primary_key=True)
+    cluster_example_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), primary_key=True
     )
 
-    __table_args__ = (
-        PrimaryKeyConstraint("t", "s", "cluster_example_id"),
-    )
+    __table_args__ = (PrimaryKeyConstraint("t", "s", "cluster_example_id"),)
 
 
 class ScoredPointHistogram(Base):
     __tablename__ = "scored_point_histogram"
 
-    t: Mapped[Optional[int]] = mapped_column(BigInteger, primary_key=True)
-    s: Mapped[Optional[float]] = mapped_column(Float, primary_key=True)
-    cluster_info_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), primary_key=True
-    )
+    t: Mapped[int | None] = mapped_column(BigInteger, primary_key=True)
+    s: Mapped[float | None] = mapped_column(Float, primary_key=True)
+    cluster_info_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), primary_key=True)
 
-    __table_args__ = (
-        PrimaryKeyConstraint("t", "s", "cluster_info_id"),
-    )
+    __table_args__ = (PrimaryKeyConstraint("t", "s", "cluster_info_id"),)
 
 
 class AnomalyModelTaskData(Base):
     __tablename__ = "anomaly_model_task_data"
 
-    anomaly_model_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True
-    )
+    anomaly_model_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
     enabled_refresh: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     enabled_save_to_tb: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     enabled_alarm_creation: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    item_set_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    refresh_time_unit: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    refresh_time_unit_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    refresh_time_unit_truncated: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    item_set_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    refresh_time_unit: Mapped[str | None] = mapped_column(Text, nullable=True)
+    refresh_time_unit_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    refresh_time_unit_truncated: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
 
 # TODO: alert_rule does not exist in Trendz 1.15.0 schema.
@@ -562,40 +599,36 @@ class ViewConfig(Base):
     __tablename__ = "view_config"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    config_definition: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    created_at: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
-    date_picker_config: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    runtime_filters: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    settings: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    tz_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    updated_at: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
-    view_type: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    enable_report_cache: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
-    enable_persisted_cache: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
-    cache_time_unit: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    auto_refresh_cache: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
-    task_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
-    refresh_frequency_time_unit: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    refresh_frequency_time_unit_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    config_definition: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    date_picker_config: Mapped[str | None] = mapped_column(Text, nullable=True)
+    name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    runtime_filters: Mapped[str | None] = mapped_column(Text, nullable=True)
+    settings: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tz_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    updated_at: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    view_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    enable_report_cache: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    enable_persisted_cache: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    cache_time_unit: Mapped[str | None] = mapped_column(Text, nullable=True)
+    auto_refresh_cache: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    task_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    refresh_frequency_time_unit: Mapped[str | None] = mapped_column(Text, nullable=True)
+    refresh_frequency_time_unit_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     enable_calculated_telemetry_saving: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False
     )
-    calculated_telemetry_saving_task_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    calculated_telemetry_saving_task_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), nullable=True
     )
-    calculated_telemetry_saving_execution_time_unit: Mapped[Optional[str]] = mapped_column(
+    calculated_telemetry_saving_execution_time_unit: Mapped[str | None] = mapped_column(
         Text, nullable=True
     )
-    calculated_telemetry_saving_execution_time_unit_count: Mapped[Optional[int]] = (
-        mapped_column(Integer, nullable=True)
+    calculated_telemetry_saving_execution_time_unit_count: Mapped[int | None] = mapped_column(
+        Integer, nullable=True
     )
-    root_entity_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), nullable=True
-    )
-    row_click_entity_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), nullable=True
-    )
+    root_entity_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    row_click_entity_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     customer_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     collection_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
@@ -607,64 +640,58 @@ class ViewField(Base):
     __tablename__ = "view_field"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    aggregation_type: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    aggregation_type: Mapped[str | None] = mapped_column(Text, nullable=True)
     use_delta: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    color_config: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    condition_field_ids: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    date_grouping: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    color_config: Mapped[str | None] = mapped_column(Text, nullable=True)
+    condition_field_ids: Mapped[str | None] = mapped_column(Text, nullable=True)
+    date_grouping: Mapped[str | None] = mapped_column(Text, nullable=True)
     enable_runtime_filter: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    field_definition: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    field_definition: Mapped[str | None] = mapped_column(Text, nullable=True)
     hidden: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     skip_render: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     include_historical_data: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    field_label: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    local_time_range: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    field_label: Mapped[str | None] = mapped_column(Text, nullable=True)
+    local_time_range: Mapped[str | None] = mapped_column(Text, nullable=True)
     missed_relation_field: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     batch_calculation: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     native_calculation: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    calc_function: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    calc_function: Mapped[str | None] = mapped_column(Text, nullable=True)
     local_calculation: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    from_template_entity_field: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False
-    )
+    from_template_entity_field: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     calculated_field: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    state_condition: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    state_condition: Mapped[str | None] = mapped_column(Text, nullable=True)
     state_field: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    state_property: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    parsed_condition: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    parsed_function: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    is_anomaly_field: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
-    anomaly_model_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), nullable=True
-    )
-    is_prediction_model_field: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
-    prediction_model_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), nullable=True
-    )
-    prediction_model_orig_entity_field_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    state_property: Mapped[str | None] = mapped_column(Text, nullable=True)
+    parsed_condition: Mapped[str | None] = mapped_column(Text, nullable=True)
+    parsed_function: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_anomaly_field: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    anomaly_model_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    is_prediction_model_field: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    prediction_model_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    prediction_model_orig_entity_field_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), nullable=True
     )
     is_set_prediction_period: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     prediction_period_unit: Mapped[str] = mapped_column(Text, nullable=False)
     prediction_period_unit_count: Mapped[int] = mapped_column(Integer, nullable=False)
-    selected_anomaly_field: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    selected_anomaly_field: Mapped[str | None] = mapped_column(Text, nullable=True)
     for_state_condition: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     is_alarm_field: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    selected_alarm_field: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    script_language: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    selected_alarm_field: Mapped[str | None] = mapped_column(Text, nullable=True)
+    script_language: Mapped[str | None] = mapped_column(Text, nullable=True)
     fill_gap_enable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    fill_gap_time_unit: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    fill_gap_strategy: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    fill_gap_time_unit: Mapped[str | None] = mapped_column(Text, nullable=True)
+    fill_gap_strategy: Mapped[str | None] = mapped_column(Text, nullable=True)
     prediction_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    prediction_method: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    prediction_method: Mapped[str | None] = mapped_column(Text, nullable=True)
     prediction_range_sec: Mapped[int] = mapped_column(Integer, nullable=False)
-    custom_prediction_method: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    multivariable_prediction_field_ids: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    custom_prediction_method: Mapped[str | None] = mapped_column(Text, nullable=True)
+    multivariable_prediction_field_ids: Mapped[str | None] = mapped_column(Text, nullable=True)
     scale_value: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     separate_axis: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     separate_view_group: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    seria_type: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    unit: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    seria_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    unit: Mapped[str | None] = mapped_column(Text, nullable=True)
     virtual_date_field: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     field_order: Mapped[int] = mapped_column(Integer, nullable=False)
     visually_hidden_field: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -672,18 +699,12 @@ class ViewField(Base):
         Boolean, nullable=False, default=False
     )
     state_max_duration: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
-    entity_field_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), nullable=True
-    )
-    business_entity_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), nullable=True
-    )
-    view_config_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    entity_field_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    business_entity_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    view_config_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("view_config.id", ondelete="CASCADE"), nullable=True
     )
-    dataset_config_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), nullable=True
-    )
+    dataset_config_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
 
 
 # TODO: report_config does not exist in Trendz 1.15.0 schema.
@@ -742,7 +763,9 @@ class TrendzTask(Base):
     json_configs: Mapped[str] = mapped_column(Text, nullable=False)
 
     __table_args__ = (
-        UniqueConstraint("reference_type", "reference_key", name="trendz_task_reference_type_reference_key_key"),
+        UniqueConstraint(
+            "reference_type", "reference_key", name="trendz_task_reference_type_reference_key_key"
+        ),
     )
 
 
@@ -772,10 +795,14 @@ class TrendzTaskExecutionProgressStep(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     execution_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("trendz_task_execution.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=True),
+        ForeignKey("trendz_task_execution.id", ondelete="CASCADE"),
+        nullable=False,
     )
-    parent_step_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("trendz_task_execution_progress_step.id", ondelete="CASCADE"), nullable=True
+    parent_step_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("trendz_task_execution_progress_step.id", ondelete="CASCADE"),
+        nullable=True,
     )
     name: Mapped[str] = mapped_column(Text, nullable=False)
     start_ts: Mapped[int] = mapped_column(BigInteger, nullable=False)
@@ -785,12 +812,8 @@ class TrendzTaskExecutionProgressStep(Base):
 class TrendzTaskExecutionRequest(Base):
     __tablename__ = "trendz_task_execution_request"
 
-    task_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True
-    )
-    execution_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True
-    )
+    task_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    execution_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
     tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     customer_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
@@ -800,17 +823,13 @@ class TrendzTaskExecutionRequest(Base):
     created_ts: Mapped[int] = mapped_column(BigInteger, nullable=False)
     state: Mapped[str] = mapped_column(Text, nullable=False)
 
-    __table_args__ = (
-        PrimaryKeyConstraint("task_id", "execution_id"),
-    )
+    __table_args__ = (PrimaryKeyConstraint("task_id", "execution_id"),)
 
 
 class TrendzTaskExecutionStateRecord(Base):
     __tablename__ = "trendz_task_execution_state_record"
 
-    execution_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True
-    )
+    execution_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
     state: Mapped[str] = mapped_column(Text, nullable=False)
     last_update_ts: Mapped[int] = mapped_column(BigInteger, nullable=False)
     removed_task: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -843,12 +862,14 @@ class TrendzTaskSequenceItem(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     sequence_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("trendz_task_sequence.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=True),
+        ForeignKey("trendz_task_sequence.id", ondelete="CASCADE"),
+        nullable=False,
     )
     reference_type: Mapped[str] = mapped_column(Text, nullable=False)
     reference_key: Mapped[str] = mapped_column(Text, nullable=False)
-    order_number: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    execution_delay_ms: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
+    order_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    execution_delay_ms: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
 
 
 # TODO: checkpoint does not exist in Trendz 1.15.0 schema.
@@ -869,7 +890,7 @@ class TrendzSystemProperty(Base):
     __tablename__ = "trendz_system_property"
 
     property_key: Mapped[str] = mapped_column(Text, primary_key=True)
-    property_value: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    property_value: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 # TODO: notification does not exist in Trendz 1.15.0 schema.
@@ -917,11 +938,11 @@ class CustomPrompt(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(Text, nullable=False)
-    prompt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_system: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    tenant_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
-    customer_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
-    user_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    customer_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     created_ts: Mapped[int] = mapped_column(BigInteger, nullable=False)
     last_modified_ts: Mapped[int] = mapped_column(BigInteger, nullable=False)
     is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -931,12 +952,12 @@ class CustomPromptMetadata(Base):
     __tablename__ = "custom_prompt_metadata"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    prompt: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    data: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    response: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    data: Mapped[str | None] = mapped_column(Text, nullable=True)
+    response: Mapped[str | None] = mapped_column(Text, nullable=True)
     tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    customer_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
-    user_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
+    customer_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     duration: Mapped[int] = mapped_column(BigInteger, nullable=False)
     created_ts: Mapped[int] = mapped_column(BigInteger, nullable=False)
 
@@ -945,29 +966,27 @@ class CustomViewSettings(Base):
     __tablename__ = "custom_view_settings"
 
     domain: Mapped[str] = mapped_column(Text, primary_key=True)
-    palette_selection: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    palette_trendz: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    palette_tb: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    tab_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    logo_base64: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    palette_selection: Mapped[str | None] = mapped_column(Text, nullable=True)
+    palette_trendz: Mapped[str | None] = mapped_column(Text, nullable=True)
+    palette_tb: Mapped[str | None] = mapped_column(Text, nullable=True)
+    url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    tab_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    logo_base64: Mapped[str | None] = mapped_column(Text, nullable=True)
     dark_mode: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     help_mode_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    thingsboard_redirect_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    thingsboard_redirect_url: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class DatasetConfig(Base):
     __tablename__ = "dataset_config"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    max_points_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    start_ts: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
-    end_ts: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
-    business_entity_id: Mapped[Optional[uuid.UUID]] = mapped_column(
-        UUID(as_uuid=True), nullable=True
-    )
-    tz_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    item_set: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    max_points_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    start_ts: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    end_ts: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    business_entity_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    tz_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    item_set: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class DomainTenantPair(Base):
@@ -976,31 +995,25 @@ class DomainTenantPair(Base):
     domain: Mapped[str] = mapped_column(Text, primary_key=True)
     tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
 
-    __table_args__ = (
-        PrimaryKeyConstraint("domain", "tenant_id"),
-    )
+    __table_args__ = (PrimaryKeyConstraint("domain", "tenant_id"),)
 
 
 class LatestTelemetry(Base):
     __tablename__ = "latest_telemetry"
 
-    calculation_field_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True
-    )
+    calculation_field_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
     item_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
     key: Mapped[str] = mapped_column(Text, primary_key=True)
     value: Mapped[int] = mapped_column(BigInteger, nullable=False)
 
-    __table_args__ = (
-        PrimaryKeyConstraint("calculation_field_id", "item_id", "key"),
-    )
+    __table_args__ = (PrimaryKeyConstraint("calculation_field_id", "item_id", "key"),)
 
 
 class LicenceData(Base):
     __tablename__ = "licence_data"
 
     tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
-    content: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    content: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class LlmConfig(Base):
@@ -1023,7 +1036,7 @@ class LlmSettings(Base):
     tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     use_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    default_llm_config_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    default_llm_config_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), nullable=True
     )
 
@@ -1031,24 +1044,18 @@ class LlmSettings(Base):
 class LlmSettingsChatTypeLink(Base):
     __tablename__ = "llm_settings_chat_type_link"
 
-    llm_setting_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True
-    )
+    llm_setting_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
     chat_type: Mapped[str] = mapped_column(Text, primary_key=True)
-    llm_config_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), nullable=False
-    )
+    llm_config_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
 
-    __table_args__ = (
-        PrimaryKeyConstraint("llm_setting_id", "chat_type"),
-    )
+    __table_args__ = (PrimaryKeyConstraint("llm_setting_id", "chat_type"),)
 
 
 class MlProperties(Base):
     __tablename__ = "ml_properties"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    json_value: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    json_value: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class ManualDataset(Base):
@@ -1062,15 +1069,15 @@ class SegmentData(Base):
     __tablename__ = "segment_data"
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    model_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
-    item_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
-    item_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    range_start_ts: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
-    range_end_ts: Mapped[Optional[int]] = mapped_column(BigInteger, nullable=True)
-    prehistorical_telemetry: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    historical_telemetry: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    additional_telemetries: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    prediction_telemetry: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    model_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    item_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    item_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    range_start_ts: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    range_end_ts: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    prehistorical_telemetry: Mapped[str | None] = mapped_column(Text, nullable=True)
+    historical_telemetry: Mapped[str | None] = mapped_column(Text, nullable=True)
+    additional_telemetries: Mapped[str | None] = mapped_column(Text, nullable=True)
+    prediction_telemetry: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class UserMetadata(Base):
@@ -1079,12 +1086,12 @@ class UserMetadata(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     customer_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    default_business_entity_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    default_business_entity_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), nullable=True
     )
-    default_date_picker_config: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    default_item_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
-    default_item_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    default_date_picker_config: Mapped[str | None] = mapped_column(Text, nullable=True)
+    default_item_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    default_item_name: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class UserRecord(Base):
@@ -1100,9 +1107,7 @@ class UserRecord(Base):
     validation_last_ts: Mapped[int] = mapped_column(BigInteger, nullable=False)
     json_data: Mapped[str] = mapped_column(Text, nullable=False)
 
-    __table_args__ = (
-        PrimaryKeyConstraint("tenant_id", "customer_id", "user_id"),
-    )
+    __table_args__ = (PrimaryKeyConstraint("tenant_id", "customer_id", "user_id"),)
 
 
 class ViewAssistanceChat(Base):
@@ -1110,13 +1115,13 @@ class ViewAssistanceChat(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    customer_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
-    user_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), nullable=True)
+    customer_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
     type: Mapped[str] = mapped_column(Text, nullable=False)
-    chat_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    available_topology: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    reference_key: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    metric_definition_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+    chat_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    available_topology: Mapped[str | None] = mapped_column(Text, nullable=True)
+    reference_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    metric_definition_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), nullable=True
     )
     created_ts: Mapped[int] = mapped_column(BigInteger, nullable=False)
@@ -1129,13 +1134,15 @@ class ViewAssistanceChatMessage(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     chat_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("view_assistance_chat.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=True),
+        ForeignKey("view_assistance_chat.id", ondelete="CASCADE"),
+        nullable=False,
     )
     user_question: Mapped[str] = mapped_column(Text, nullable=False)
-    code: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    ai_answer: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    ai_memory: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    json_job_response: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ai_answer: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ai_memory: Mapped[str | None] = mapped_column(Text, nullable=True)
+    json_job_response: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_modified_by: Mapped[str] = mapped_column(Text, nullable=False)
     created_ts: Mapped[int] = mapped_column(BigInteger, nullable=False)
     last_modified_ts: Mapped[int] = mapped_column(BigInteger, nullable=False)
@@ -1150,7 +1157,7 @@ class ViewAssistanceTokenUsage(Base):
     tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     input_token_used: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     output_token_used: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
-    model_name: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    model_name: Mapped[str | None] = mapped_column(Text, nullable=True)
     start_of_month_ts: Mapped[int] = mapped_column(BigInteger, nullable=False)
     is_system_model: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
