@@ -16,7 +16,6 @@ services:
     networks:
       - trendx_edge
       - trendx_internal
-      - mobili_dahsboard_default
     cpus: "0.5"
     mem_limit: 256m
     pids_limit: 100

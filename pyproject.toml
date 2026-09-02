@@ -169,6 +169,17 @@ cours = "cours"
 langage = "langage"
 explicatif = "explicatif"
 restauration = "restauration"
+Respecte = "Respecte"
+Commandes = "Commandes"
+environnement = "environnement"
+projet = "projet"
+ressources = "ressources"
+moteurs = "moteurs"
+Ressources = "Ressources"
+Projet = "Projet"
+certificat = "certificat"
+Conflit = "Conflit"
+Alignement = "Alignement"
 
 # Baseline technique préexistante (HEAD 050c0ae) : src/trendx/main.py contient 41
 # diagnostics "Untyped decorator" FastAPI en mode strict, non liés a Wave 3 et non

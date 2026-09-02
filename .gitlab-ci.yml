@@ -80,54 +80,38 @@ test-integration:
       CREATE SCHEMA IF NOT EXISTS trendx_analytics;
       SQL
     - |
-      # The migration chain (notably 004) expects the trendx_migration role to exist
-      # (object ownership / SECURITY DEFINER functions). In a full deployment this role is
-      # created by the bootstrap (migration 000), which is intentionally excluded here.
-      # Create it idempotently so the chain applies on the integration job's single role.
+      # Roles required by the canonical chain (000 grants to them; 007 sets
+      # OWNER trendx_migration and GRANTs to trendx_ro). They are NOLOGIN
+      # placeholder roles for the ephemeral CI database only — no password, so no
+      # secret is ever committed. In production these roles are created by the
+      # infrastructure bootstrap, not here.
       PGPASSWORD="$POSTGRES_PASSWORD" psql -h postgres -U trendx_app -d trendx -v ON_ERROR_STOP=1 <<'SQL'
       DO $$
       BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'trendx_migration') THEN
-          CREATE ROLE trendx_migration LOGIN PASSWORD 'trendx_migration_pass';
+          CREATE ROLE trendx_migration NOLOGIN;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'trendx_grafana') THEN
+          CREATE ROLE trendx_grafana NOLOGIN;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'trendx_ro') THEN
+          CREATE ROLE trendx_ro NOLOGIN;
         END IF;
       END;
       $$;
       GRANT trendx_migration TO trendx_app;
       SQL
     - |
-      # Apply 001 -> 006 (+ 009/010/011) (P1 scope). Migration 000 is a privileged
-      # bootstrap (separate databases/roles) and is excluded on purpose. Migration
-      # 007 is intentionally skipped here: it grants to the trendx_ro role, which
-      # is not provisioned by the integration job and is outside P1 scope.
-      # Migration 008 (adds model_uri to prediction_model) is part of 0.3 and is
-      # NOT applied in P1: it is out of P1 scope (its former schema defect — 008
-      # targeting trendx_catalog.prediction_model while the table lived in public
-      # — is now RESOLVED: 001 creates the catalogue in trendx_catalog and 008
-      # targets trendx_catalog.prediction_model; see B7 / migration 003). The P1
-      # integration test validates migration 006's own artifact
-      # (trendx_catalog.prediction_model_status_history) without depending on 008.
-      # Each file is applied with ON_ERROR_STOP=1 and is idempotent/reentrant.
-      # Migration 003 (003_relocate_catalog.sql) IS part of the chain: it creates
-      # the trendx_catalog schema (idempotent) and, on a historical base where the
-      # catalogue still lives in public, relocates it to trendx_catalog. On a
-      # blank base 003 is a no-op because 001 already targets trendx_catalog.
-      # Migration 009 (native ts_kv / ts_kv_latest) is required by the P1 integration
-      # test test_migration_009_native_ts_kv.py: on native PostgreSQL 002 is a no-op,
-      # so ts_kv does not exist unless 009 is applied. 009 runs AFTER 004 (it creates
-      # a plain heap, not a partitioned table, so ensure_partitions_forward() is not
-      # triggered and the chain stays green). Migrations 007/008 remain skipped here
-      # (out of P1 scope, see above). Migration 011 (B5 Lot 2) creates the
-      # native partitioned ML tables (predictions/anomaly_scores/data_quality/
-      # ml_metrics) so that ensure_partitions_forward() (004) works in native
-      # PostgreSQL; it runs AFTER 010 and only adds partitioned parents.
-      for f in migrations/001_*.sql migrations/002_*.sql migrations/003_*.sql \
-                migrations/004_*.sql migrations/005_*.sql migrations/006_*.sql \
-                migrations/009_*.sql migrations/010_*.sql migrations/011_*.sql; do
-        [ -e "${f}" ] || continue
-        echo ">>> applying ${f}"
-        PGPASSWORD="$POSTGRES_PASSWORD" psql -h postgres -U trendx_app -d trendx \
-            -v ON_ERROR_STOP=1 -f "${f}"
-      done
+      # Canonical migration chain 000 -> 012 applied by the single runner.
+      # Replaces the previous hard-coded per-file loop: the runner is now the ONLY
+      # execution path. It discovers migrations/migrations/NNN_*.sql in numeric
+      # order, applies each atomically (psql -1, or ON_ERROR_STOP=1 for migrations
+      # that manage their own transaction), traces public.schema_version, and
+      # refuses to write without TRENDX_CONFIRM_APPLY (set explicitly below — not a
+      # secret). This integrates 008 and 012 into the canonical chain.
+      export PGPASSWORD="$POSTGRES_PASSWORD"
+      PGHOST=postgres PGPORT=5432 PGUSER=trendx_app PGDATABASE=trendx TRENDX_CONFIRM_APPLY=YES \
+        bash scripts/apply-migrations.sh --apply
     - |
       # Seed the aggregate watermark row the integration tests expect (idempotent).
       # Runs AFTER the full migration chain so the table (created by 004) already exists.
@@ -255,10 +239,10 @@ test-migration-007:
       DO $$
       BEGIN
         IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'trendx_migration') THEN
-          CREATE ROLE trendx_migration LOGIN PASSWORD 'trendx_migration_pass';
+          CREATE ROLE trendx_migration NOLOGIN;
         END IF;
         IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'trendx_ro') THEN
-          CREATE ROLE trendx_ro LOGIN PASSWORD 'trendx_ro_pass';
+          CREATE ROLE trendx_ro NOLOGIN;
         END IF;
       END;
       $$;
@@ -329,3 +313,62 @@ test-migration-001:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_PIPELINE_SOURCE == "push"'
+
+# ── Canonical runner + 000/002 migration tests (disposable PostgreSQL) ──────
+# Runs the canonical runner end-to-end (000 -> 012) and the 000/002 migration
+# tests against the real PostgreSQL service (no Docker-in-Docker needed):
+# TRENDX_TEST_PG* point the fixtures at this service. The real infra roles are
+# provisioned idempotently (NOLOGIN, no password) so 000 grants and 007
+# OWNER/GRANT succeed. No secret is committed (roles have no password).
+test-canonical-runner:
+  stage: test
+  image: python:3.12-slim
+  services:
+    - name: postgres:16-alpine
+      alias: postgres
+  variables:
+    PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+    POSTGRES_DB: trendx
+    POSTGRES_USER: trendx_app
+    POSTGRES_PASSWORD: trendx_app_pass
+    TRENDX_TEST_PGHOST: postgres
+    TRENDX_TEST_PGPORT: "5432"
+    TRENDX_TEST_PGUSER: trendx_app
+    TRENDX_TEST_PGPASSWORD: trendx_app_pass
+    TRENDX_TEST_PGDATABASE: trendx
+    TRENDX_APP_USER: trendx_app
+    TRENDX_APP_PASSWORD: trendx_app_pass
+  before_script:
+    - python -m pip install --upgrade pip
+    - pip install -c constraints.txt -e ".[dev]"
+    - apt-get update && apt-get install -y --no-install-recommends postgresql-client
+    - |
+      for i in $(seq 1 30); do
+        pg_isready -h postgres -p 5432 && break
+        sleep 1
+      done
+    - |
+      # Provision the real infra roles (NOLOGIN placeholders, no secret) so the
+      # canonical chain (000 grants, 007 OWNER/GRANT) applies cleanly. trendx_app
+      # is the service superuser (POSTGRES_USER); the others are created idempotently.
+      PGPASSWORD="$POSTGRES_PASSWORD" psql -h postgres -U trendx_app -d trendx -v ON_ERROR_STOP=1 <<'SQL'
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'trendx_migration') THEN
+          CREATE ROLE trendx_migration NOLOGIN;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'trendx_grafana') THEN
+          CREATE ROLE trendx_grafana NOLOGIN;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'trendx_ro') THEN
+          CREATE ROLE trendx_ro NOLOGIN;
+        END IF;
+      END;
+      $$;
+      SQL
+  script:
+    # -m integration is REQUIRED so conftest.py does not skip the integration-marked
+    # tests (fail-open guard). The fixtures use TRENDX_TEST_PG* (this service).
+    - pytest tests/integration/test_runner_apply_migrations.py tests/integration/test_migration_000_schema_bootstrap.py tests/integration/test_migration_002_analytics_schema.py -m integration --run-integration -ra --no-header --tb=short
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'

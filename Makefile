@@ -5,7 +5,7 @@
 
 SHELL := /bin/bash
 
-.PHONY: help setup install build build-images up up-minimal up-full status health logs logs-api logs-worker logs-ui logs-reverse-proxy down down-clean lint fmt format typecheck type-check test test-unit test-integration test-e2e migrate seed seed-test-data doctor backup restore-check restore-test clean shell venv dc-config
+.PHONY: help setup install build build-images up up-minimal up-full status health logs logs-api logs-worker logs-ui logs-reverse-proxy down down-clean lint fmt format typecheck type-check test test-unit test-integration test-e2e migrate migrate-check seed seed-test-data doctor backup restore-check restore-test clean shell venv dc-config
 
 # Valeurs par défaut
 PYTHON ?= $(shell command -v python3 >/dev/null 2>&1 && echo python3 || (command -v python >/dev/null 2>&1 && echo python || echo python3))
@@ -162,11 +162,15 @@ test-e2e: ## Tests end-to-end (MVP complet)
 # ————————————————————————————————————————
 # Migrations SQL tracées via public.schema_version (sur PostgreSQL externe existant)
 # ————————————————————————————————————————
-migrate: ## Appliquer les migrations SQL tracées sur la base trendx (AGENTS §17)
-	@echo "[trendx-migrate] 001_trendz_native_schema.sql → trendx..."
-	@docker exec $(PG_EXTERNAL_CONTAINER) psql -v ON_ERROR_STOP=1 -U postgres -d trendx -c "SELECT 1 FROM information_schema.tables WHERE table_schema = 'trendx_catalog' AND table_name = 'business_entity' LIMIT 1;" | grep -q 1 || \
-		docker exec $(PG_EXTERNAL_CONTAINER) psql -v ON_ERROR_STOP=1 -U postgres -d trendx -f /migrations/001_trendz_native_schema.sql
-	@echo "[trendx-migrate] catalogue OK."
+migrate: ## Appliquer les migrations SQL (runner canonique 000-012) sur la base trendx
+	@echo "[trendx-migrate] runner canonique → base $${PGDATABASE:-trendx}"
+	@echo "[trendx-migrate] (écriture conditionnée à TRENDX_CONFIRM_APPLY=YES|yes|true|1|VALID)"
+	PGHOST="$${PGHOST:-127.0.0.1}" PGPORT="$${PGPORT:-5432}" PGUSER="$${PGUSER:-trendx_migration}" PGDATABASE="$${PGDATABASE:-trendx}" \
+		bash scripts/apply-migrations.sh --apply
+
+migrate-check: ## Lister les migrations qui seraient appliquées (runner --check, aucun écrit)
+	PGHOST="$${PGHOST:-127.0.0.1}" PGPORT="$${PGPORT:-5432}" PGUSER="$${PGUSER:-trendx_migration}" PGDATABASE="$${PGDATABASE:-trendx}" \
+		bash scripts/apply-migrations.sh --check
 
 # ————————————————————————————————————————
 # Data test / seed

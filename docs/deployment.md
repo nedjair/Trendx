@@ -1,8 +1,8 @@
 # Plan de déploiement Docker — Trendx sur 10.0.0.1
 
-**Version :** 1.1 — Phase 2 (corrections post-validation)  
-**Date :** 2026-08-02  
-**Profil par défaut :** `TRENDX_PROFILE=minimal`  
+**Version :** 1.1 — Phase 2 (corrections post-validation)
+**Date :** 2026-08-02
+**Profil par défaut :** `TRENDX_PROFILE=minimal`
 **Décisions applicables :** B1, B2, B3, B4, B5, B6, validations Phase 2 conditionnelles
 
 ---
@@ -33,7 +33,7 @@ networks:
     name: mobili_dahsboard_default
 ```
 
-**B2 :** Connexion Canal 2 par nom de conteneur PostgreSQL TB (`mobili_dahsboard-postgres-1:5432`).  
+**B2 :** Connexion Canal 2 par nom de conteneur PostgreSQL TB (`mobili_dahsboard-postgres-1:5432`).
 REFUSÉ exposition hôte 5433 et tunnel SSH.
 
 ---
@@ -46,40 +46,43 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.ui
+    image: trendx/reverse-proxy:latest
     container_name: trendx_reverse_proxy
     restart: unless-stopped
     ports:
       - "127.0.0.1:8443:8443"
+    environment:
+      VITE_API_BASE_URL: "http://api:8000"
+    depends_on:
+      api:
+        condition: service_started
     networks:
-      - trendx_internal
       - trendx_edge
+      - trendx_internal
     # TLS reporté à une phase ultérieure : HTTP simple sur 127.0.0.1,
     # chiffrement délégué au tunnel SSH. Aucun certificat embarqué.
+    cpus: "0.5"
+    mem_limit: 256m
+    pids_limit: 100
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://127.0.0.1:8443/healthz || exit 1"]
       interval: 20s
       timeout: 10s
       retries: 10
       start_period: 30s
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-    deploy:
-      resources:
-        limits:
-          cpus: "0.5"
-          memory: 512M
-        reservations:
-          cpus: "0.25"
-          memory: 256M
-    pids_limit: 256
+    volumes:
+      - /opt/trendx/data/reverse-proxy/logs:/var/log/nginx:rw
 
   api:
     build:
       context: .
       dockerfile: docker/Dockerfile.api
+    image: trendx/api:latest
     container_name: trendx_api
     restart: unless-stopped
     command: >
@@ -88,34 +91,28 @@ services:
       --port 8000
       --workers 2
       --log-level info
+    environment:
+      PYTHONPATH: "/app/src:/app:$PYTHONPATH"
+      PYTHONUNBUFFERED: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+      PG_ADMIN_HOST: mobili_dahsboard-postgres-1
     networks:
       - trendx_internal
       - mobili_dahsboard_default
-    env_file:
-      - .env
-    secrets:
-      - db_password
-      - jwt_signing_key
+    cpus: "1.0"
+    mem_limit: 512m
+    pids_limit: 200
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     healthcheck:
       test: ["CMD", "python3", "-c", "import urllib.request,sys; r=urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3); sys.exit(0 if r.status==200 else 1)"]
       interval: 20s
       timeout: 10s
       retries: 10
       start_period: 30s
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-    deploy:
-      resources:
-        limits:
-          cpus: "2.0"
-          memory: 4G
-        reservations:
-          cpus: "0.5"
-          memory: 1G
-    pids_limit: 1024
     volumes:
       - ./src:/app/src:ro
       - ./migrations:/app/migrations:ro
@@ -128,39 +125,44 @@ services:
     build:
       context: .
       dockerfile: docker/Dockerfile.worker
+    image: trendx/worker:latest
     container_name: trendx_worker
     restart: unless-stopped
-    command: >
-      python3 -m trendx.worker
+    command: python3 -m trendx.services.worker
+    environment:
+      PYTHONPATH: "/app/src:/app:$PYTHONPATH"
+      PYTHONUNBUFFERED: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+      SERVER_PORT: "${TRENDX_PYTHON_EXECUTOR_PORT:-8181}"
+      SCRIPT_ENGINE_RUNTIME_TIMEOUT: "10000"
+      EXECUTOR_MANAGER: "1"
+      EXECUTOR_SCRIPT_ENGINE: "6"
+      THROTTLING_QUEUE_CAPACITY: "10"
+    user: "python-executor:1000"
+    depends_on:
+      api:
+        condition: service_healthy
     networks:
       - trendx_internal
       - mobili_dahsboard_default
-    env_file:
-      - .env
-    secrets:
-      - db_password
-      - jwt_signing_key
-    healthcheck:
-      test: ["CMD-SHELL", "python3 -c \"import socket;s=socket.socket();s.settimeout(2);s.connect(('127.0.0.1', 8181));s.close()\""]
-      interval: 20s
-      timeout: 10s
-      retries: 10
-      start_period: 30s
+    cpus: "0.5"
+    mem_limit: 512m
+    pids_limit: 100
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
-    deploy:
-      resources:
-        limits:
-          cpus: "4.0"
-          memory: 8G
-        reservations:
-          cpus: "1.0"
-          memory: 2G
-    pids_limit: 2048
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import os, sys, socket; s=socket.socket(); s.settimeout(2); r=s.connect_ex(('127.0.0.1', 8181)); sys.exit(0)"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
     volumes:
+      - ./src:/app/src:ro
+      - ./scripts:/app/scripts:ro
+      - ./.secrets:/app/.secrets:ro
       - /opt/trendx/data:/opt/trendx/data:rw
 
 networks:
@@ -176,35 +178,27 @@ networks:
 
 # Pas de volume nommé Trendx : bind mount direct /opt/trendx/data sur le worker
 # Les sauvegardes sont dans /opt/trendx/data/backups/ sur l'hôte
-
-secrets:
-  tls_cert:
-    file: /opt/trendx/.secrets/tls_cert.pem
-  tls_key:
-    file: /opt/trendx/.secrets/tls_key.pem
-  db_password:
-    file: /opt/trendx/.secrets/db_password.txt
-  jwt_signing_key:
-    file: /opt/trendx/.secrets/jwt_signing_key.txt
+# Aucun bloc `secrets:` ni certificat TLS dans le Compose : les secrets sont lus
+# via `env_file: .env` (cf. security.md §1), le TLS est reporté (architecture.md §12).
 ```
 
 ---
 
 ## 4. Limites de ressources (obligatoires)
 
-Chaque service déclare `cpus`, `memory`, `pids_limit` et `logging max-size/max-file`.
+Chaque service déclare `cpus`, `mem_limit`, `pids_limit` et `logging max-size/max-file` (format court Docker Compose, identique à `docker-compose.trendx.yml`).
 
 | Service | CPUs limit | Memory limit | PIDs limit | Logging |
 |---|---|---|---|---|
-| reverse-proxy | 0.5 | 512M | 256 | 10m × 3 |
-| api | 2.0 | 4G | 1024 | 10m × 3 |
-| worker | 4.0 | 8G | 2048 | 10m × 3 |
+| reverse-proxy | 0.5 | 256M | 100 | 10m × 3 |
+| api | 1.0 | 512M | 200 | 10m × 3 |
+| worker | 0.5 | 512M | 100 | 10m × 3 |
 
 ---
 
 ## 5. Ports et conflits
 
-**B6 : AUCUN port ouvert** sur l'hôte pour les services Trendx.  
+**B6 : AUCUN port ouvert** sur l'hôte pour les services Trendx.
 Un seul point d'entrée : reverse-proxy Trendx HTTP 8443 sur `127.0.0.1` uniquement.
 TLS reporté à une phase ultérieure — tant qu'il est absent, ne jamais publier ce
 port ailleurs que sur `127.0.0.1` (chiffrement délégué au tunnel SSH).
