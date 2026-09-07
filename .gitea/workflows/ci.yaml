@@ -222,8 +222,12 @@ jobs:
       - name: Install lint tools
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends python3-pip shellcheck hadolint
+          apt-get install -y --no-install-recommends python3-pip shellcheck
           pip install --break-system-packages ruff mypy typos
+          HADOLINT_VERSION="2.12.0"
+          curl -sSfL "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-Linux-x86_64" -o /usr/local/bin/hadolint
+          chmod +x /usr/local/bin/hadolint
+          hadolint --version
       - name: ruff
         run: ruff check .
       - name: ruff-format
