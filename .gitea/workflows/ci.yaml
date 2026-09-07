@@ -38,7 +38,7 @@ jobs:
     steps:
       - name: Bootstrap (git + node for JS actions)
         run: apt-get update && apt-get install -y --no-install-recommends git nodejs
-      - uses: actions/checkout@v4
+      - uses: http://10.0.0.101:3000/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -62,7 +62,7 @@ jobs:
     steps:
       - name: Bootstrap (git + node for JS actions)
         run: apt-get update && apt-get install -y --no-install-recommends git nodejs
-      - uses: actions/checkout@v4
+      - uses: http://10.0.0.101:3000/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Install dependencies and postgres client
         run: |
           python -m pip install --upgrade pip
@@ -113,7 +113,7 @@ jobs:
     steps:
       - name: Bootstrap (git + node for JS actions)
         run: apt-get update && apt-get install -y --no-install-recommends git nodejs
-      - uses: actions/checkout@v4
+      - uses: http://10.0.0.101:3000/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Install dependencies and postgres client
         run: |
           python -m pip install --upgrade pip
@@ -139,7 +139,7 @@ jobs:
     steps:
       - name: Bootstrap (git + node for JS actions)
         run: apt-get update && apt-get install -y --no-install-recommends git nodejs
-      - uses: actions/checkout@v4
+      - uses: http://10.0.0.101:3000/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Install dependencies and postgres client
         run: |
           python -m pip install --upgrade pip
@@ -184,7 +184,7 @@ jobs:
     steps:
       - name: Bootstrap (git + node for JS actions)
         run: apt-get update && apt-get install -y --no-install-recommends git nodejs
-      - uses: actions/checkout@v4
+      - uses: http://10.0.0.101:3000/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Install dependencies and postgres client
         run: |
           python -m pip install --upgrade pip
@@ -201,7 +201,7 @@ jobs:
     steps:
       - name: Bootstrap (git + node for JS actions)
         run: apt-get update && apt-get install -y --no-install-recommends git nodejs
-      - uses: actions/checkout@v4
+      - uses: http://10.0.0.101:3000/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Install security tools
         run: |
           python -m pip install --upgrade pip
@@ -226,7 +226,7 @@ jobs:
     steps:
       - name: Bootstrap (git + node for JS actions)
         run: apt-get update && apt-get install -y --no-install-recommends git nodejs
-      - uses: actions/checkout@v4
+      - uses: http://10.0.0.101:3000/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Install lint tools
         run: |
           apt-get update
@@ -273,7 +273,7 @@ jobs:
     steps:
       - name: Bootstrap (git + node for JS actions)
         run: apt-get update && apt-get install -y --no-install-recommends git nodejs
-      - uses: actions/checkout@v4
+      - uses: http://10.0.0.101:3000/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Install dependencies and postgres client
         run: |
           python -m pip install --upgrade pip
