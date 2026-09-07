@@ -200,7 +200,7 @@ jobs:
       image: python:3.12-slim
     steps:
       - name: Bootstrap (git + node for JS actions)
-        run: apt-get update && apt-get install -y --no-install-recommends git nodejs
+        run: apt-get update && apt-get install -y --no-install-recommends git nodejs curl
       - uses: http://10.0.0.101:3000/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Install security tools
         run: |
