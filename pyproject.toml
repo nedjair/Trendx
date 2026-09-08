@@ -117,6 +117,9 @@ exclude_dirs = ["tests"]
 
 [tool.typos.default.extend-words]
 MAPE = "MAPE"
+# Identifiant métier MAPE (Mean Absolute Percentage Error) en minuscules,
+# utilisé comme nom de variable/paramètre (ex. base.py) — comme MAPE ci-dessus.
+mape = "mape"
 sur = "sur"
 Contraintes = "Contraintes"
 fixe = "fixe"
