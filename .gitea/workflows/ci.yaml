@@ -241,7 +241,15 @@ jobs:
         run: |
           apt-get update
           apt-get install -y --no-install-recommends python3-pip shellcheck
-          pip install ruff==0.3.5 mypy==1.9.0 typos
+          # Typing set : mêmes versions épinglées que le hook mypy pre-commit
+          # (alignement étape 78) + constraints.txt pour figer les transitives.
+          # Paquets non typés (pandas, sklearn, …) volontairement absents :
+          # les installer sans stubs créerait des erreurs import-untyped
+          # d'un seul côté et romprait l'alignement (Any des deux côtés sinon).
+          pip install -c constraints.txt ruff==0.3.5 mypy==1.9.0 typos \
+            pydantic==2.6.4 pydantic-settings==2.2.1 sqlalchemy==2.0.29 \
+            fastapi==0.110.0 httpx==0.27.0 loguru==0.7.2 numpy==1.26.4 \
+            tenacity==8.2.3 redis==5.0.3 types-redis==4.6.0.20241004
           HADOLINT_VERSION="2.12.0"
           HADOLINT_SHA256="56de6d5e5ec427e17b74fa48d51271c7fc0d61244bf5c90e828aab8362d55010"
           curl -sSfL "http://10.0.0.101:3000/api/packages/trendx/generic/hadolint/${HADOLINT_VERSION}/hadolint-Linux-x86_64" -o /usr/local/bin/hadolint
