@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import cast
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 from loguru import logger
 
@@ -182,7 +183,7 @@ class Segmenter:
         step_size: int = 1,
         ts_col: str = "ts",
         value_col: str | None = None,
-    ) -> tuple[np.ndarray, np.ndarray | None]:
+    ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64] | None]:
         if df.empty or len(df) < window_size:
             logger.warning(
                 "DataFrame too short ({n}) for window_size={ws}",
