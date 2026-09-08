@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Any, Optional, Protocol, Self, runtime_checkable
+from typing import Any, Protocol, Self, runtime_checkable
 
 import numpy as np
 import numpy.typing as npt
@@ -19,11 +18,9 @@ class Strategy(Enum):
 
 @runtime_checkable
 class ForecastModel(Protocol):
-    def fit(self, data: Any, *, context: Optional[dict[str, Any]] = None) -> Self: ...
+    def fit(self, data: Any, *, context: dict[str, Any] | None = None) -> Self: ...
 
-    def predict(
-        self, horizon: int, *, context: Optional[dict[str, Any]] = None
-    ) -> "ForecastResult": ...
+    def predict(self, horizon: int, *, context: dict[str, Any] | None = None) -> ForecastResult: ...
 
     def save(self, path: str) -> None: ...
 
@@ -57,7 +54,7 @@ class ForecastMetrics:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, float]) -> "ForecastMetrics":
+    def from_dict(cls, data: dict[str, float]) -> ForecastMetrics:
         return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
 
 
@@ -66,7 +63,7 @@ class ForecastResult:
     values: npt.NDArray[np.float64]
     lower_bound: npt.NDArray[np.float64]
     upper_bound: npt.NDArray[np.float64]
-    timestamps: Optional[npt.NDArray[np.datetime64]] = None
+    timestamps: npt.NDArray[np.datetime64] | None = None
     model_name: str = ""
     metrics: ForecastMetrics = field(default_factory=ForecastMetrics)
 
@@ -86,8 +83,8 @@ class ForecastResult:
 def compute_metrics(
     y_true: npt.NDArray[np.float64],
     y_pred: npt.NDArray[np.float64],
-    y_lower: Optional[npt.NDArray[np.float64]] = None,
-    y_upper: Optional[npt.NDArray[np.float64]] = None,
+    y_lower: npt.NDArray[np.float64] | None = None,
+    y_upper: npt.NDArray[np.float64] | None = None,
 ) -> ForecastMetrics:
     y_true = np.asarray(y_true, dtype=np.float64).ravel()
     y_pred = np.asarray(y_pred, dtype=np.float64).ravel()

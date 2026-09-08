@@ -1,20 +1,19 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from airflow.decorators import dag, task
 from loguru import logger
 from pendulum import duration
-
 from trendx.config import settings
-from trendx.services.ingestion import IngestionService
 from trendx.preprocessing.quality import DataQualityService
+from trendx.services.ingestion import IngestionService
 
 
 @dag(
     schedule="0 * * * *",
-    start_date=datetime(2025, 1, 1, tzinfo=timezone.utc),
+    start_date=datetime(2025, 1, 1, tzinfo=UTC),
     catchup=False,
     default_args={
         "retries": 3,
@@ -34,7 +33,7 @@ def trendx_telemetry_ingestion() -> None:
         """Discover devices and metric pairs that need telemetry ingestion based on checkpoints."""
         ingestion = IngestionService()
         devices = ingestion._discover_devices()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         pending: list[dict] = []
         for device in devices:
@@ -48,12 +47,14 @@ def trendx_telemetry_ingestion() -> None:
                     start_ts = now - timedelta(days=settings.training_lookback_days)
                 if start_ts >= now:
                     continue
-                pending.append({
-                    "entity_id": eid,
-                    "metric_key": key,
-                    "start_ts": start_ts.isoformat(),
-                    "end_ts": now.isoformat(),
-                })
+                pending.append(
+                    {
+                        "entity_id": eid,
+                        "metric_key": key,
+                        "start_ts": start_ts.isoformat(),
+                        "end_ts": now.isoformat(),
+                    }
+                )
 
         logger.info(
             "Discovered {n} pending device/metric pairs for ingestion",
@@ -96,12 +97,14 @@ def trendx_telemetry_ingestion() -> None:
         updated: list[dict] = []
         for result in ingestion_results:
             if result.get("total_stored", 0) > 0:
-                updated.append({
-                    "entity_id": result["entity_id"],
-                    "metric_key": result["metric_key"],
-                    "watermark": result.get("end_ts"),
-                    "records": result.get("total_stored"),
-                })
+                updated.append(
+                    {
+                        "entity_id": result["entity_id"],
+                        "metric_key": result["metric_key"],
+                        "watermark": result.get("end_ts"),
+                        "records": result.get("total_stored"),
+                    }
+                )
         logger.info("Checkpoints updated for {n} pairs", n=len(updated))
         return updated
 
@@ -114,8 +117,8 @@ def trendx_telemetry_ingestion() -> None:
             return {"status": "skipped", "reason": "no_data_ingested"}
 
         quality = DataQualityService()
-        from trendx.database.connection import manager as db_manager
         from sqlalchemy import text
+        from trendx.database.connection import manager as db_manager
 
         engine = db_manager.get_engine("analytics")
         reports: list[dict] = []
@@ -131,26 +134,36 @@ def trendx_telemetry_ingestion() -> None:
                     LIMIT 500
                 """)
                 import pandas as pd
+
                 with engine.connect() as conn:
-                    rows = conn.execute(stmt, {
-                        "eid": cp["entity_id"],
-                        "key": cp["metric_key"],
-                        "start": cp.get("watermark", datetime.now(timezone.utc).isoformat()),
-                    }).fetchall()
+                    rows = conn.execute(
+                        stmt,
+                        {
+                            "eid": cp["entity_id"],
+                            "key": cp["metric_key"],
+                            "start": cp.get("watermark", datetime.now(UTC).isoformat()),
+                        },
+                    ).fetchall()
                 if rows:
                     df = pd.DataFrame(rows, columns=["ts", "value"])
                     report = quality.generate_report(
                         entity_id=cp["entity_id"],
                         metric_key=cp["metric_key"],
-                        start_ts=datetime.fromisoformat(cp.get("watermark", datetime.now(timezone.utc).isoformat())),
-                        end_ts=datetime.now(timezone.utc),
+                        start_ts=datetime.fromisoformat(
+                            cp.get("watermark", datetime.now(UTC).isoformat())
+                        ),
+                        end_ts=datetime.now(UTC),
                         df=df,
                         expected_frequency=settings.forecast_frequency,
                     )
                     reports.append(report)
             except Exception as exc:
-                logger.error("Quality check failed for {eid}/{key}: {exc}",
-                             eid=cp["entity_id"][:12], key=cp["metric_key"], exc=exc)
+                logger.error(
+                    "Quality check failed for {eid}/{key}: {exc}",
+                    eid=cp["entity_id"][:12],
+                    key=cp["metric_key"],
+                    exc=exc,
+                )
 
         return {
             "status": "completed",

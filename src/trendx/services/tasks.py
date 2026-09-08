@@ -273,7 +273,7 @@ class TaskService:
             .limit(1)
         )
         result = session.execute(stmt)
-        return cast("TrendzTaskExecution | None", result.scalars().first())
+        return result.scalars().first()
 
     def _touch_state_record(
         self,
@@ -299,7 +299,7 @@ class TaskService:
             session.add(rec)
         else:
             rec.last_update_ts = now
-        return cast(TrendzTaskExecutionStateRecord, rec)
+        return rec
 
     def update_progress(
         self,

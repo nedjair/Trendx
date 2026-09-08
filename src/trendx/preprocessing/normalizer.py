@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 from loguru import logger
 from scipy import stats as scipy_stats
@@ -20,7 +21,7 @@ from sklearn.preprocessing import (
 
 
 class Normalizer:
-    SCALER_TYPES = {
+    SCALER_TYPES: ClassVar[dict[str, type]] = {
         "standard": SkStandardScaler,
         "robust": SkRobustScaler,
         "minmax": SkMinMaxScaler,
@@ -50,7 +51,7 @@ class Normalizer:
     def scaler(self) -> Any:
         return self._scaler
 
-    def _auto_select(self, data: np.ndarray) -> str:
+    def _auto_select(self, data: npt.NDArray[np.float64]) -> str:
         if len(data) < 4:
             logger.info("Too few samples ({n}), using StandardScaler", n=len(data))
             return "standard"
@@ -90,7 +91,7 @@ class Normalizer:
 
     def fit(
         self,
-        data: pd.Series | pd.DataFrame | np.ndarray,
+        data: pd.Series | pd.DataFrame | npt.NDArray[np.float64],
         method: str | None = None,
     ) -> Normalizer:
         method = method or self._method
@@ -146,8 +147,8 @@ class Normalizer:
 
     def transform(
         self,
-        data: pd.Series | pd.DataFrame | np.ndarray,
-    ) -> np.ndarray:
+        data: pd.Series | pd.DataFrame | npt.NDArray[np.float64],
+    ) -> npt.NDArray[np.float64]:
         if not self._fitted or self._scaler is None:
             msg = "Normalizer has not been fitted yet. Call fit() first."
             raise RuntimeError(msg)
@@ -178,8 +179,8 @@ class Normalizer:
 
     def inverse_transform(
         self,
-        data: np.ndarray | pd.Series | pd.DataFrame,
-    ) -> np.ndarray:
+        data: npt.NDArray[np.float64] | pd.Series | pd.DataFrame,
+    ) -> npt.NDArray[np.float64]:
         if not self._fitted or self._scaler is None:
             msg = "Normalizer has not been fitted yet. Call fit() first."
             raise RuntimeError(msg)
@@ -208,9 +209,9 @@ class Normalizer:
 
     def fit_transform(
         self,
-        data: pd.Series | pd.DataFrame | np.ndarray,
+        data: pd.Series | pd.DataFrame | npt.NDArray[np.float64],
         method: str | None = None,
-    ) -> np.ndarray:
+    ) -> npt.NDArray[np.float64]:
         self.fit(data, method=method)
         return self.transform(data)
 

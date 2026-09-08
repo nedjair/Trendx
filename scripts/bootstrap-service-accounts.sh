@@ -4,6 +4,8 @@ umask 077
 
 # Default mode is local validation. Applying changes requires both --apply and
 # TRENDX_CONFIRM_APPLY=YES. No ThingsBoard writeback or alarm operation exists here.
+# SC1007 volontaire : préfixe CDPATH= vide neutralisant CDPATH pour cd (portabilité POSIX).
+# shellcheck disable=SC1007
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 ENV_FILE=${ENV_FILE:-"$ROOT_DIR/.env"}
 MODE=check
@@ -44,6 +46,8 @@ require_var PG_ADMIN_HOST; require_var PG_ADMIN_USER; require_var PG_ADMIN_DB
 
 mkdir -p "$(dirname "$secret_file")"
 touch "$secret_file"; chmod 600 "$secret_file"
+# SC1090 nécessaire : fichier de secrets local à chemin variable (créé plus haut, chmod 600).
+# shellcheck disable=SC1090
 source "$secret_file" 2>/dev/null || true
 random_password() { openssl rand -base64 48 | tr -dc 'A-Za-z0-9_@%+=' | cut -c1-40; }
 persist_secret() { local key=$1 value=$2; if ! grep -q "^${key}=" "$secret_file"; then printf '%s=%q\n' "$key" "$value" >>"$secret_file"; fi; }

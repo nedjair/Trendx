@@ -28,10 +28,18 @@ for f in "README.md" "AGENTS.md" ".gitignore" ".env.example" \
          "pyproject.toml" "docker-compose.yml" "Makefile" \
          "MCPs et SKILLS.md" "Procédure de mise en œuvre Trendx.md" \
          "skills de mise en oeuvre.md"; do
-  [ -f "${ROOT}/$f" ] && pass "fichier présent : $f" || fail "FICHIER MANQUANT : $f"
+  if [ -f "${ROOT}/$f" ]; then
+    pass "fichier présent : $f"
+  else
+    fail "FICHIER MANQUANT : $f"
+  fi
 done
 for d in docs docker migrations dags src grafana scripts tests config; do
-  [ -d "${ROOT}/$d" ] && pass "dossier présent : $d/" || fail "DOSSIER MANQUANT : $d/"
+  if [ -d "${ROOT}/$d" ]; then
+    pass "dossier présent : $d/"
+  else
+    fail "DOSSIER MANQUANT : $d/"
+  fi
 done
 echo
 
@@ -42,7 +50,11 @@ if [ ! -f "$ENV_FILE" ]; then
 else
   pass ".env présent"
   perms=$(stat -c '%a' "$ENV_FILE" 2>/dev/null || echo "")
-  [ "$perms" = "600" ] && pass "droits .env = 600" || warn "droits .env = $perms (attendu 600)"
+  if [ "$perms" = "600" ]; then
+    pass "droits .env = 600"
+  else
+    warn "droits .env = $perms (attendu 600)"
+  fi
   for k in TRENDX_ENV TRENDX_LOG_LEVEL TRENDX_TIMEZONE \
            TB_BASE_URL TB_USERNAME TB_PASSWORD TB_DEVICE_ID TB_METRIC_NAME \
            ANALYTICS_DB_HOST ANALYTICS_DB_PORT ANALYTICS_DB_NAME ANALYTICS_DB_USER ANALYTICS_DB_PASSWORD \
@@ -134,9 +146,11 @@ for row in "${MCP_CIBLES[@]}"; do
   case "$chemin" in
     *":native")
       mcname="${chemin%:native}"
-      [ -d "${MCP_HOME}/${mcname}" ] \
-        && pass "$cible  →  $mcname (natif Trae)" \
-        || fail "$cible  →  $mcname INTROUVABLE dans ~/.trae/mcps"
+      if [ -d "${MCP_HOME}/${mcname}" ]; then
+        pass "$cible  →  $mcname (natif Trae)"
+      else
+        fail "$cible  →  $mcname INTROUVABLE dans ~/.trae/mcps"
+      fi
       ;;
     "implicite:"*)
       pass "$cible  →  $chemin"
@@ -158,20 +172,28 @@ echo "${BLD}6/7 Skills natifs Trae${RST}"
 SKILL_HOME="${HOME}/.trae/builtin/global/skills"
 SKILL_HOME_2="${HOME}/.trae/builtin_skills"
 for sk in skill-creator web-dev; do
-  [ -f "${SKILL_HOME}/${sk}/SKILL.md" ] \
-    && pass "Skill natif : $sk" \
-    || fail "SKILL NATIF MANQUANT : $sk"
+  if [ -f "${SKILL_HOME}/${sk}/SKILL.md" ]; then
+    pass "Skill natif : $sk"
+  else
+    fail "SKILL NATIF MANQUANT : $sk"
+  fi
 done
-[ -f "${SKILL_HOME_2}/TRAE-generate-mini-app/SKILL.md" ] \
-  && pass "Skill natif : TRAE-generate-mini-app" \
-  || fail "SKILL NATIF MANQUANT : TRAE-generate-mini-app"
+if [ -f "${SKILL_HOME_2}/TRAE-generate-mini-app/SKILL.md" ]; then
+  pass "Skill natif : TRAE-generate-mini-app"
+else
+  fail "SKILL NATIF MANQUANT : TRAE-generate-mini-app"
+fi
 SC="${HOME}/.trae/skill-config.json"
 if [ -f "$SC" ]; then
   pass "config skills : $(basename "$SC")"
   dyn=$(python3 -c "import json; print(json.load(open('$SC')).get('builtinSkillStatus',{}).get('TRAE-dynamic-ui','?'))" 2>/dev/null || echo "?")
   case "$dyn" in False|false) pass "TRAE-dynamic-ui désactivé (attendu Trendx)" ;; *) warn "TRAE-dynamic-ui=$dyn (valeur attendue : false)" ;; esac
    n_dis=$(python3 -c "import json; print(len(json.load(open('$SC')).get('disabledSkills',[])))" 2>/dev/null || echo "?")
-  [ "$n_dis" = "0" ] && pass "Aucun skill natif désactivé" || warn "$n_dis skill(s) natif(s) marqué(s) désactivés"
+  if [ "$n_dis" = "0" ]; then
+    pass "Aucun skill natif désactivé"
+  else
+    warn "$n_dis skill(s) natif(s) marqué(s) désactivés"
+  fi
 else
   warn "fichier skill-config.json absent — valeurs par défaut appliquées"
 fi

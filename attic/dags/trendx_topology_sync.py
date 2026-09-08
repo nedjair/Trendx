@@ -1,20 +1,18 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from airflow.decorators import dag, task
 from airflow.operators.python import get_current_context
 from loguru import logger
 from pendulum import duration
-
-from trendx.config import settings
 from trendx.thingsboard.discovery import TopologyDiscoveryService
 
 
 @dag(
     schedule="*/15 * * * *",
-    start_date=datetime(2025, 1, 1, tzinfo=timezone.utc),
+    start_date=datetime(2025, 1, 1, tzinfo=UTC),
     catchup=False,
     default_args={
         "retries": 3,
@@ -39,11 +37,12 @@ def trendx_topology_sync() -> None:
         force = (dag_run and dag_run.conf and dag_run.conf.get("force_full", False)) or False
         if not force:
             from airflow.models.variable import Variable
+
             try:
                 last_full = Variable.get("trendx_topology_last_full_sync", default_var=None)
                 if last_full:
                     last_dt = datetime.fromisoformat(last_full)
-                    if datetime.now(timezone.utc) - last_dt < timedelta(hours=6):
+                    if datetime.now(UTC) - last_dt < timedelta(hours=6):
                         logger.info("Full sync skipped — last full sync less than 6h ago")
                         return {"status": "skipped", "reason": "within_cooldown"}
             except Exception:
@@ -67,7 +66,8 @@ def trendx_topology_sync() -> None:
         result = asyncio.run(_run())
 
         from airflow.models.variable import Variable
-        Variable.set("trendx_topology_last_full_sync", datetime.now(timezone.utc).isoformat())
+
+        Variable.set("trendx_topology_last_full_sync", datetime.now(UTC).isoformat())
         logger.info("Full sync result: {r}", r=result)
         return result
 
@@ -76,6 +76,7 @@ def trendx_topology_sync() -> None:
     )
     def incremental_sync() -> dict:
         """Incremental topology sync — discovers new/removed entities and updates the catalog."""
+
         async def _run():
             service = TopologyDiscoveryService()
             catalog = await service.incremental_sync()
@@ -121,8 +122,8 @@ def trendx_topology_sync() -> None:
     )
     def update_catalog(validation: dict) -> str:
         """Update catalog metadata — sync count, last sync timestamp."""
-        from trendx.database.connection import manager as db_manager
         from sqlalchemy import text
+        from trendx.database.connection import manager as db_manager
 
         engine = db_manager.get_engine("catalog")
         with engine.begin() as conn:
@@ -132,10 +133,10 @@ def trendx_topology_sync() -> None:
                     VALUES ('last_topology_sync', :ts)
                     ON CONFLICT (sync_key) DO UPDATE SET sync_value = EXCLUDED.sync_value
                 """),
-                {"ts": datetime.now(timezone.utc).isoformat()},
+                {"ts": datetime.now(UTC).isoformat()},
             )
         logger.info("Catalog sync metadata updated")
-        return f"catalog_updated_at_{datetime.now(timezone.utc).isoformat()}"
+        return f"catalog_updated_at_{datetime.now(UTC).isoformat()}"
 
     full = full_sync()
     inc = incremental_sync()

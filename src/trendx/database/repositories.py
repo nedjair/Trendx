@@ -545,11 +545,11 @@ class AlertIncidentRepository(BaseRepository[AlertIncident]):
         stmt = select(AlertIncident).where(AlertIncident.status.in_(("ACTIVE", "ACK")))
         if entity_id is not None:
             stmt = stmt.where(AlertIncident.entity_id == str(entity_id))
-        return cast(Sequence[AlertIncident], self._session.scalars(stmt).all())
+        return self._session.scalars(stmt).all()
 
     def find_by_logical_key(self, logical_key: str) -> AlertIncident | None:
         stmt = select(AlertIncident).where(AlertIncident.logical_key == logical_key).limit(1)
-        return cast(AlertIncident | None, self._session.scalars(stmt).first())
+        return self._session.scalars(stmt).first()
 
     @staticmethod
     def _to_uuid(value: Any) -> uuid.UUID | None:

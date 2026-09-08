@@ -1,19 +1,18 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from airflow.decorators import dag, task
 from loguru import logger
 from pendulum import duration
-
+from sqlalchemy import text
 from trendx.config import settings
 from trendx.database.connection import manager as db_manager
-from sqlalchemy import text
 
 
 @dag(
     schedule="0 4 * * *",
-    start_date=datetime(2025, 1, 1, tzinfo=timezone.utc),
+    start_date=datetime(2025, 1, 1, tzinfo=UTC),
     catchup=False,
     default_args={
         "retries": 3,
@@ -32,7 +31,7 @@ def trendx_maintenance() -> None:
     def purge_old_data() -> dict:
         """Remove telemetry and forecast data outside the configured retention period."""
         retention_days = max(settings.training_lookback_days * 2, 180)
-        cutoff = datetime.now(timezone.utc)
+        _cutoff = datetime.now(UTC)
 
         engine = db_manager.get_engine("analytics")
         total_purged = 0
@@ -56,8 +55,16 @@ def trendx_maintenance() -> None:
             except Exception as exc:
                 logger.error("Failed to purge {table}: {exc}", table=table, exc=exc)
 
-        logger.info("Data purge complete: {n} rows removed (retention={d} days)", n=total_purged, d=retention_days)
-        return {"status": "completed", "rows_purged": total_purged, "retention_days": retention_days}
+        logger.info(
+            "Data purge complete: {n} rows removed (retention={d} days)",
+            n=total_purged,
+            d=retention_days,
+        )
+        return {
+            "status": "completed",
+            "rows_purged": total_purged,
+            "retention_days": retention_days,
+        }
 
     @task(
         execution_timeout=duration(minutes=15),
@@ -75,7 +82,9 @@ def trendx_maintenance() -> None:
         refreshed = 0
         for cagg in caggs:
             try:
-                stmt = text(f"CALL refresh_continuous_aggregate('{cagg}', NOW() - INTERVAL '2 days', NOW())")
+                stmt = text(
+                    f"CALL refresh_continuous_aggregate('{cagg}', NOW() - INTERVAL '2 days', NOW())"
+                )
                 with engine.begin() as conn:
                     conn.execute(stmt)
                 logger.info("Refreshed continuous aggregate: {cagg}", cagg=cagg)
@@ -98,8 +107,14 @@ def trendx_maintenance() -> None:
             cleaned = 0
             for task_obj in stuck:
                 try:
-                    repo.complete(task_obj.id, error_message="Stale task — auto-cleaned by maintenance")
-                    logger.info("Cleaned up stuck task {id} (status={status})", id=task_obj.id, status=task_obj.status)
+                    repo.complete(
+                        task_obj.id, error_message="Stale task — auto-cleaned by maintenance"
+                    )
+                    logger.info(
+                        "Cleaned up stuck task {id} (status={status})",
+                        id=task_obj.id,
+                        status=task_obj.status,
+                    )
                     cleaned += 1
                 except Exception as exc:
                     logger.error("Failed to clean task {id}: {exc}", id=task_obj.id, exc=exc)
@@ -143,7 +158,9 @@ def trendx_maintenance() -> None:
                 logger.info("VACUUM ANALYZE completed on catalog.{table}", table=table)
                 vacuumed += 1
             except Exception as exc:
-                logger.warning("VACUUM ANALYZE failed on catalog.{table}: {exc}", table=table, exc=exc)
+                logger.warning(
+                    "VACUUM ANALYZE failed on catalog.{table}: {exc}", table=table, exc=exc
+                )
 
         return {"status": "completed", "tables_vacuumed": vacuumed}
 
@@ -164,7 +181,7 @@ def trendx_maintenance() -> None:
                 if exp.name and exp.name.startswith("trendx_"):
                     runs = tracker._client.search_runs(
                         experiment_ids=[exp.experiment_id],
-                        filter_string=f"end_time < {int((datetime.now(timezone.utc).timestamp() - cutoff_days * 86400) * 1000)}",
+                        filter_string=f"end_time < {int((datetime.now(UTC).timestamp() - cutoff_days * 86400) * 1000)}",
                     )
                     for run in runs:
                         try:
@@ -190,7 +207,7 @@ def trendx_maintenance() -> None:
     ) -> dict:
         """Aggregate and log a maintenance summary report."""
         report = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "data_purge": purge,
             "cagg_refresh": cagg,
             "task_cleanup": tasks,

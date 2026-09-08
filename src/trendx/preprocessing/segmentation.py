@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import cast
 
 import numpy as np
+import numpy.typing as npt
 import pandas as pd
 from loguru import logger
 
@@ -182,7 +183,7 @@ class Segmenter:
         step_size: int = 1,
         ts_col: str = "ts",
         value_col: str | None = None,
-    ) -> tuple[np.ndarray, np.ndarray | None]:
+    ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64] | None]:
         if df.empty or len(df) < window_size:
             logger.warning(
                 "DataFrame too short ({n}) for window_size={ws}",
@@ -208,16 +209,17 @@ class Segmenter:
         n = len(values)
 
         n_windows = (n - window_size) // step_size + 1
-        windows = np.array([
-            values[i : i + window_size]
-            for i in range(0, n - window_size + 1, step_size)
-        ])
+        windows = np.array(
+            [values[i : i + window_size] for i in range(0, n - window_size + 1, step_size)]
+        )
 
         if n_windows > 0 and len(windows) > 0:
-            targets = np.array([
-                values[i + window_size] if i + window_size < n else np.nan
-                for i in range(0, n - window_size + 1, step_size)
-            ])
+            targets = np.array(
+                [
+                    values[i + window_size] if i + window_size < n else np.nan
+                    for i in range(0, n - window_size + 1, step_size)
+                ]
+            )
             targets = targets[~np.isnan(targets)]
         else:
             targets = None
@@ -237,7 +239,7 @@ class Segmenter:
                 return col
         numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
         if numeric_cols:
-            return numeric_cols[0]
+            return cast(str, numeric_cols[0])
         return "value"
 
     def expand_window(

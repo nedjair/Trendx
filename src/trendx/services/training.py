@@ -11,10 +11,6 @@ from sqlalchemy import text
 from trendx.config import settings
 from trendx.database.connection import manager as db_manager
 from trendx.database.models import PredictionModel
-from trendx.database.repositories import (
-    BusinessEntityRepository,
-    MetricDefinitionRepository,
-)
 from trendx.forecasting import Strategy, create_model
 from trendx.forecasting.base import ForecastMetrics, compute_metrics
 from trendx.forecasting.selector import CompetitionResult, ModelSelector
@@ -242,46 +238,6 @@ class TrainingService:
             logger.error("Training failed for {}/{}: {}", entity_id[:12], metric_key, exc)
             self._tracker.end_run("FAILED")
             return None
-
-    def train_all_models(
-        self,
-        tenant_id: str | None = None,
-        profile_id: str | None = None,
-    ) -> list[dict[str, Any]]:
-        results: list[dict[str, Any]] = []
-        with db_manager.get_session("catalog") as session:
-            entity_repo = BusinessEntityRepository(session)
-            metric_repo = MetricDefinitionRepository(session)
-            entities = entity_repo.find_by_type("DEVICE")
-            metrics = metric_repo.find_active()
-        for entity in entities:
-            for metric in metrics:
-                try:
-                    model = self.train_model(
-                        entity_id=str(entity.id),
-                        metric_key=metric.item_name,
-                    )
-                    results.append(
-                        {
-                            "entity_id": str(entity.id)[:12],
-                            "metric_key": metric.item_name,
-                            "success": model is not None,
-                            "model_id": str(model.id) if model else None,
-                        }
-                    )
-                except Exception as exc:
-                    logger.error(
-                        "Train_all failed for {}/{}: {}", str(entity.id)[:12], metric.item_name, exc
-                    )
-                    results.append(
-                        {
-                            "entity_id": str(entity.id)[:12],
-                            "metric_key": metric.item_name,
-                            "success": False,
-                            "error": str(exc),
-                        }
-                    )
-        return results
 
     def run_competition(
         self,

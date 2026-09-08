@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any
 
 from sqlalchemy import text
-
 from trendx.database.connection import get_analytics_engine
 
 

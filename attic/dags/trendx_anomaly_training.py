@@ -1,19 +1,18 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from airflow.decorators import dag, task
 from loguru import logger
 from pendulum import duration
-
-from trendx.config import settings
+from trendx.anomalies.detectors import create_detector
 from trendx.anomalies.features import FeatureExtractor
-from trendx.anomalies.detectors import BaseDetector, create_detector, DETECTOR_REGISTRY
+from trendx.config import settings
 
 
 @dag(
     schedule="0 3 * * *",
-    start_date=datetime(2025, 1, 1, tzinfo=timezone.utc),
+    start_date=datetime(2025, 1, 1, tzinfo=UTC),
     catchup=False,
     default_args={
         "retries": 3,
@@ -31,8 +30,8 @@ def trendx_anomaly_training() -> None:
     )
     def get_eligible_devices() -> list[dict]:
         """Identify devices with sufficient telemetry data for anomaly detector training."""
-        from trendx.database.connection import manager as db_manager
         from sqlalchemy import text
+        from trendx.database.connection import manager as db_manager
 
         engine = db_manager.get_engine("analytics")
         min_points = settings.anomaly_window_size * 7
@@ -48,11 +47,13 @@ def trendx_anomaly_training() -> None:
         with engine.connect() as conn:
             rows = conn.execute(stmt, {"min_pts": min_points}).fetchall()
             for row in rows:
-                pairs.append({
-                    "entity_id": row[0],
-                    "metric_key": row[1],
-                    "point_count": row[2],
-                })
+                pairs.append(
+                    {
+                        "entity_id": row[0],
+                        "metric_key": row[1],
+                        "point_count": row[2],
+                    }
+                )
         logger.info(
             "Found {n} eligible device/metric pairs for anomaly training (min_points={m})",
             n=len(pairs),
@@ -67,10 +68,10 @@ def trendx_anomaly_training() -> None:
     )
     def extract_features(pair: dict) -> dict:
         """Extract windowed statistical features from a device/metric time series."""
-        import pandas as pd
         import numpy as np
-        from trendx.database.connection import manager as db_manager
+        import pandas as pd
         from sqlalchemy import text
+        from trendx.database.connection import manager as db_manager
 
         engine = db_manager.get_engine("analytics")
         stmt = text("""
@@ -83,10 +84,16 @@ def trendx_anomaly_training() -> None:
             ORDER BY ts ASC
         """)
         with engine.connect() as conn:
-            rows = conn.execute(stmt, {"eid": pair["entity_id"], "key": pair["metric_key"]}).fetchall()
+            rows = conn.execute(
+                stmt, {"eid": pair["entity_id"], "key": pair["metric_key"]}
+            ).fetchall()
 
         if not rows:
-            return {"entity_id": pair["entity_id"], "metric_key": pair["metric_key"], "status": "insufficient_data"}
+            return {
+                "entity_id": pair["entity_id"],
+                "metric_key": pair["metric_key"],
+                "status": "insufficient_data",
+            }
 
         df = pd.DataFrame(rows, columns=["ts", "value"])
         df["ts"] = pd.to_datetime(df["ts"])
@@ -97,24 +104,34 @@ def trendx_anomaly_training() -> None:
         features_df = extractor.extract_features(series)
 
         if features_df.empty:
-            return {"entity_id": pair["entity_id"], "metric_key": pair["metric_key"], "status": "insufficient_data"}
+            return {
+                "entity_id": pair["entity_id"],
+                "metric_key": pair["metric_key"],
+                "status": "insufficient_data",
+            }
 
         features_df = features_df.select_dtypes(include=[np.number])
         internal_cols = {"_start", "_end"}
         feature_cols = [c for c in features_df.columns if c not in internal_cols]
 
         if len(feature_cols) < 3:
-            return {"entity_id": pair["entity_id"], "metric_key": pair["metric_key"], "status": "insufficient_features"}
+            return {
+                "entity_id": pair["entity_id"],
+                "metric_key": pair["metric_key"],
+                "status": "insufficient_features",
+            }
 
         feature_array = features_df[feature_cols].values.astype(np.float64)
         finite_mask = np.isfinite(feature_array).all(axis=1)
         if finite_mask.sum() < 10:
-            return {"entity_id": pair["entity_id"], "metric_key": pair["metric_key"], "status": "insufficient_clean_data"}
+            return {
+                "entity_id": pair["entity_id"],
+                "metric_key": pair["metric_key"],
+                "status": "insufficient_clean_data",
+            }
 
         feature_array = feature_array[finite_mask]
-        timestamps = features_df.index[finite_mask]
-
-        import json
+        _timestamps = features_df.index[finite_mask]
 
         def convert_timestamp(ts):
             if isinstance(ts, pd.Timestamp):
@@ -142,10 +159,10 @@ def trendx_anomaly_training() -> None:
         entity_id = feature_result["entity_id"]
         metric_key = feature_result["metric_key"]
 
-        import pandas as pd
         import numpy as np
-        from trendx.database.connection import manager as db_manager
+        import pandas as pd
         from sqlalchemy import text
+        from trendx.database.connection import manager as db_manager
 
         engine = db_manager.get_engine("analytics")
         stmt = text("""
@@ -178,17 +195,21 @@ def trendx_anomaly_training() -> None:
         feature_array = feature_array[finite_mask]
 
         algorithm = "IsolationForest"
-        detector = create_detector(algorithm, {
-            "contamination": settings.anomaly_contamination,
-            "random_state": 42,
-        })
+        detector = create_detector(
+            algorithm,
+            {
+                "contamination": settings.anomaly_contamination,
+                "random_state": 42,
+            },
+        )
         detector.fit(feature_array)
 
         from trendx.mlops.tracking import MLflowTracker
+
         tracker = MLflowTracker()
         run_id = tracker.start_run(
             experiment_name=f"anomaly_{entity_id[:12]}_{metric_key}",
-            run_name=f"IsolationForest_{int(datetime.now(timezone.utc).timestamp())}",
+            run_name=f"IsolationForest_{int(datetime.now(UTC).timestamp())}",
             tags={
                 "entity_id": entity_id,
                 "metric_key": metric_key,
@@ -199,26 +220,34 @@ def trendx_anomaly_training() -> None:
 
         try:
             from trendx.mlops.registry import ModelRegistry
+
             registry = ModelRegistry()
-            import json
             registry._get_repo()
 
-            tracker.log_params({
-                "algorithm": algorithm,
-                "contamination": settings.anomaly_contamination,
-                "window_size": settings.anomaly_window_size,
-                "n_windows": len(feature_array),
-                "n_features": len(feature_cols),
-            })
-            tracker.log_tags({
-                "entity_id": entity_id,
-                "metric_key": metric_key,
-                "type": "anomaly_detector",
-            })
+            tracker.log_params(
+                {
+                    "algorithm": algorithm,
+                    "contamination": settings.anomaly_contamination,
+                    "window_size": settings.anomaly_window_size,
+                    "n_windows": len(feature_array),
+                    "n_features": len(feature_cols),
+                }
+            )
+            tracker.log_tags(
+                {
+                    "entity_id": entity_id,
+                    "metric_key": metric_key,
+                    "type": "anomaly_detector",
+                }
+            )
             tracker.end_run("FINISHED")
         except Exception as exc:
-            logger.error("MLflow logging failed for anomaly detector {eid}/{key}: {exc}",
-                         eid=entity_id[:12], key=metric_key, exc=exc)
+            logger.error(
+                "MLflow logging failed for anomaly detector {eid}/{key}: {exc}",
+                eid=entity_id[:12],
+                key=metric_key,
+                exc=exc,
+            )
             tracker.end_run("FAILED")
 
         logger.info(
@@ -246,7 +275,9 @@ def trendx_anomaly_training() -> None:
         """Register trained anomaly detectors and log summary."""
         trained = sum(1 for r in train_results if r.get("train_status") == "trained")
         skipped = sum(1 for r in train_results if r.get("train_status") == "skipped")
-        failed = sum(1 for r in train_results if r.get("train_status") not in ("trained", "skipped"))
+        failed = sum(
+            1 for r in train_results if r.get("train_status") not in ("trained", "skipped")
+        )
         logger.info(
             "Anomaly model training complete: {ok} trained, {skip} skipped, {fail} failed",
             ok=trained,

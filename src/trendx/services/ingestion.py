@@ -34,8 +34,8 @@ def _get_filesystem_type(path: str) -> str:
                 parts = line.split()
                 if len(parts) >= 3 and parts[1] == path:
                     return parts[2]
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("Lecture /proc/mounts impossible, fstype inconnu : {}", exc)
     return "unknown"
 
 
@@ -338,34 +338,29 @@ class IngestionService:
                         f"{self._lit(r['source'])}, {self._lit(r['ingestion_id'])})"
                     )
                 values_clause = ",\n".join(rows)
-                stmt = text(
-                    f"""
-                    INSERT INTO ts_kv (ts, entity_id, metric_key, dbl_v, source, ingestion_id)
-                    VALUES {values_clause}
-                    ON CONFLICT (ts, entity_id, metric_key)
-                    DO UPDATE SET
-                        dbl_v = EXCLUDED.dbl_v,
-                        source = EXCLUDED.source,
-                        ingestion_id = EXCLUDED.ingestion_id,
-                        created_at = NOW()
-                    """
+                # Requête assemblée hors de text() : la clause VALUES provient
+                # exclusivement des helpers _lit/_lit_uuid (échappement des
+                # quotes, cast ::uuid) — aucune interpolation brute.
+                insert_ts_kv = (
+                    "INSERT INTO ts_kv (ts, entity_id, metric_key, dbl_v, source, ingestion_id)"
+                    f" VALUES {values_clause}"  # nosec B608 -- clause assemblée exclusivement via _lit/_lit_uuid (échappement quotes, cast ::uuid).
+                    " ON CONFLICT (ts, entity_id, metric_key)"
+                    " DO UPDATE SET dbl_v = EXCLUDED.dbl_v, source = EXCLUDED.source,"
+                    " ingestion_id = EXCLUDED.ingestion_id, created_at = NOW()"
                 )
+                stmt = text(insert_ts_kv)
                 result = conn.execute(stmt)
                 inserted += result.rowcount
 
                 try:
-                    latest_stmt = text(
-                        f"""
-                        INSERT INTO ts_kv_latest (entity_id, metric_key, ts, dbl_v, source)
-                        VALUES {values_clause}
-                        ON CONFLICT (entity_id, metric_key)
-                        DO UPDATE SET
-                            ts = EXCLUDED.ts,
-                            dbl_v = EXCLUDED.dbl_v,
-                            source = EXCLUDED.source,
-                            updated_at = NOW()
-                        """
+                    insert_ts_kv_latest = (
+                        "INSERT INTO ts_kv_latest (entity_id, metric_key, ts, dbl_v, source)"
+                        f" VALUES {values_clause}"  # nosec B608 -- clause assemblée exclusivement via _lit/_lit_uuid (échappement quotes, cast ::uuid).
+                        " ON CONFLICT (entity_id, metric_key)"
+                        " DO UPDATE SET ts = EXCLUDED.ts, dbl_v = EXCLUDED.dbl_v,"
+                        " source = EXCLUDED.source, updated_at = NOW()"
                     )
+                    latest_stmt = text(insert_ts_kv_latest)
                     conn.execute(latest_stmt)
                 except Exception as exc:
                     logger.warning(

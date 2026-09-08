@@ -96,8 +96,8 @@ class TelemetryReader:
         if self._sql_conn is not None:
             try:
                 self._sql_conn.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Erreur ignorée à la fermeture SQL : {}", exc)
             self._sql_conn = None
 
     async def _read_via_sql(

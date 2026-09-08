@@ -1,18 +1,17 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from airflow.decorators import dag, task
 from loguru import logger
 from pendulum import duration
-
 from trendx.config import settings
 from trendx.services.alerting import AlertingService
 
 
 @dag(
     schedule="*/15 * * * *",
-    start_date=datetime(2025, 1, 1, tzinfo=timezone.utc),
+    start_date=datetime(2025, 1, 1, tzinfo=UTC),
     catchup=False,
     default_args={
         "retries": 3,
@@ -65,7 +64,7 @@ def trendx_alarm_generation() -> None:
         triggered: list[dict] = []
         threshold_rules = [r for r in rules if r.rule_type == "threshold"]
         no_data_rules = [r for r in rules if r.rule_type == "no_data"]
-        anomaly_rules = [r for r in rules if r.rule_type == "anomaly"]
+        _anomaly_rules = [r for r in rules if r.rule_type == "anomaly"]
 
         from sqlalchemy import text
 
@@ -92,14 +91,16 @@ def trendx_alarm_generation() -> None:
                 results = alerting.evaluate_threshold_rules(eid, metric_key, current_value)
                 for r in results:
                     if r.get("status") in ("created", "already_active"):
-                        triggered.append({
-                            "entity_id": eid,
-                            "metric_key": metric_key,
-                            "rule_type": "threshold",
-                            "rule_name": rule.name,
-                            "status": r["status"],
-                            "severity": rule.severity,
-                        })
+                        triggered.append(
+                            {
+                                "entity_id": eid,
+                                "metric_key": metric_key,
+                                "rule_type": "threshold",
+                                "rule_name": rule.name,
+                                "status": r["status"],
+                                "severity": rule.severity,
+                            }
+                        )
 
             for rule in no_data_rules:
                 metric_key = rule.metric_key
@@ -117,13 +118,15 @@ def trendx_alarm_generation() -> None:
                 results = alerting.evaluate_no_data_rules(eid, metric_key, last_ts)
                 for r in results:
                     if r.get("status") in ("created", "already_active"):
-                        triggered.append({
-                            "entity_id": eid,
-                            "metric_key": metric_key,
-                            "rule_type": "no_data",
-                            "rule_name": rule.name,
-                            "status": r["status"],
-                        })
+                        triggered.append(
+                            {
+                                "entity_id": eid,
+                                "metric_key": metric_key,
+                                "rule_type": "no_data",
+                                "rule_name": rule.name,
+                                "status": r["status"],
+                            }
+                        )
 
         logger.info(
             "Rule evaluation complete: {n} rules evaluated, {t} triggered",

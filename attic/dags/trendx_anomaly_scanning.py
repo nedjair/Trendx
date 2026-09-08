@@ -1,18 +1,16 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from airflow.decorators import dag, task
 from loguru import logger
 from pendulum import duration
-
 from trendx.config import settings
-from trendx.anomalies.scoring import AnomalyScorer
 
 
 @dag(
     schedule="15 * * * *",
-    start_date=datetime(2025, 1, 1, tzinfo=timezone.utc),
+    start_date=datetime(2025, 1, 1, tzinfo=UTC),
     catchup=False,
     default_args={
         "retries": 3,
@@ -43,12 +41,14 @@ def trendx_anomaly_scanning() -> None:
             key = f"{d.entity_id}:{d.metric_key}"
             if key not in seen:
                 seen.add(key)
-                active.append({
-                    "entity_id": str(d.entity_id) if d.entity_id else "",
-                    "metric_key": d.metric_key or "",
-                    "algorithm": d.algorithm or "IsolationForest",
-                    "detector_id": str(d.id),
-                })
+                active.append(
+                    {
+                        "entity_id": str(d.entity_id) if d.entity_id else "",
+                        "metric_key": d.metric_key or "",
+                        "algorithm": d.algorithm or "IsolationForest",
+                        "detector_id": str(d.id),
+                    }
+                )
 
         logger.info("Found {n} active anomaly detectors", n=len(active))
         return active
@@ -64,10 +64,10 @@ def trendx_anomaly_scanning() -> None:
         metric_key = detector_info["metric_key"]
         algorithm = detector_info.get("algorithm", "IsolationForest")
 
-        import pandas as pd
         import numpy as np
-        from trendx.database.connection import manager as db_manager
+        import pandas as pd
         from sqlalchemy import text
+        from trendx.database.connection import manager as db_manager
 
         engine = db_manager.get_engine("analytics")
         stmt = text("""
@@ -94,6 +94,7 @@ def trendx_anomaly_scanning() -> None:
             return {"entity_id": entity_id, "metric_key": metric_key, "status": "insufficient_data"}
 
         from trendx.anomalies.features import FeatureExtractor
+
         extractor = FeatureExtractor(window_size=settings.anomaly_window_size)
         features_df = extractor.extract_features(series)
         if features_df.empty:
@@ -108,13 +109,17 @@ def trendx_anomaly_scanning() -> None:
             return {"entity_id": entity_id, "metric_key": metric_key, "status": "no_clean_data"}
 
         feature_clean = feature_array[finite_mask]
-        timestamps = features_df.index[finite_mask]
+        _timestamps = features_df.index[finite_mask]
 
         from trendx.anomalies.detectors import create_detector
-        detector = create_detector(algorithm, {
-            "contamination": settings.anomaly_contamination,
-            "random_state": 42,
-        })
+
+        detector = create_detector(
+            algorithm,
+            {
+                "contamination": settings.anomaly_contamination,
+                "random_state": 42,
+            },
+        )
         detector.fit(feature_clean)
         raw_scores = detector.score(feature_clean)
 
@@ -131,9 +136,8 @@ def trendx_anomaly_scanning() -> None:
     )
     def compute_scores(scan_results: list[dict]) -> list[dict]:
         """Normalise raw anomaly scores and persist them to the database."""
-        import numpy as np
-        from trendx.database.connection import manager as db_manager
         from sqlalchemy import text
+        from trendx.database.connection import manager as db_manager
 
         scored: list[dict] = []
         engine = db_manager.get_engine("analytics")
@@ -153,22 +157,31 @@ def trendx_anomaly_scanning() -> None:
             norm = min(raw / 100.0, 1.0) if raw > 0 else 0.0
             try:
                 with engine.begin() as conn:
-                    conn.execute(stmt, {
-                        "eid": entity_id,
-                        "key": metric_key,
-                        "raw": raw,
-                        "norm": norm,
-                        "algo": result.get("algorithm", "IsolationForest"),
-                    })
-                scored.append({
-                    "entity_id": entity_id,
-                    "metric_key": metric_key,
-                    "score": norm,
-                    "status": "scored",
-                })
+                    conn.execute(
+                        stmt,
+                        {
+                            "eid": entity_id,
+                            "key": metric_key,
+                            "raw": raw,
+                            "norm": norm,
+                            "algo": result.get("algorithm", "IsolationForest"),
+                        },
+                    )
+                scored.append(
+                    {
+                        "entity_id": entity_id,
+                        "metric_key": metric_key,
+                        "score": norm,
+                        "status": "scored",
+                    }
+                )
             except Exception as exc:
-                logger.error("Failed to persist anomaly score for {eid}/{key}: {exc}",
-                             eid=entity_id[:12], key=metric_key, exc=exc)
+                logger.error(
+                    "Failed to persist anomaly score for {eid}/{key}: {exc}",
+                    eid=entity_id[:12],
+                    key=metric_key,
+                    exc=exc,
+                )
 
         logger.info("Computed and stored {n} anomaly scores", n=len(scored))
         return scored

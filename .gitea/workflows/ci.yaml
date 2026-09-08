@@ -34,11 +34,11 @@ jobs:
   test-unit:
     runs-on: ubuntu-latest
     container:
-      image: python:3.12-slim
+      image: 10.0.0.101:3000/trendx/python:3.12-slim@sha256:a249c9f47e05708dd367f3fe8ada03cf347390fad66fb8b0518c0ef55ae3cb84
     steps:
       - name: Bootstrap (git + node for JS actions)
         run: apt-get update && apt-get install -y --no-install-recommends git nodejs
-      - uses: actions/checkout@v4
+      - uses: http://10.0.0.101:3000/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -49,10 +49,10 @@ jobs:
   test-integration:
     runs-on: ubuntu-latest
     container:
-      image: python:3.12-slim
+      image: 10.0.0.101:3000/trendx/python:3.12-slim@sha256:a249c9f47e05708dd367f3fe8ada03cf347390fad66fb8b0518c0ef55ae3cb84
     services:
       postgres:
-        image: postgres:16-alpine
+        image: 10.0.0.101:3000/trendx/postgres:16-alpine@sha256:7a396fd264a2067788b6551122b50f162bf6136312c7fc9d74381cb92c648382
         env:
           POSTGRES_DB: trendx
           POSTGRES_USER: trendx_app
@@ -62,7 +62,7 @@ jobs:
     steps:
       - name: Bootstrap (git + node for JS actions)
         run: apt-get update && apt-get install -y --no-install-recommends git nodejs
-      - uses: actions/checkout@v4
+      - uses: http://10.0.0.101:3000/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Install dependencies and postgres client
         run: |
           python -m pip install --upgrade pip
@@ -100,10 +100,10 @@ jobs:
   test-migration-001:
     runs-on: ubuntu-latest
     container:
-      image: python:3.12-slim
+      image: 10.0.0.101:3000/trendx/python:3.12-slim@sha256:a249c9f47e05708dd367f3fe8ada03cf347390fad66fb8b0518c0ef55ae3cb84
     services:
       postgres:
-        image: postgres:16-alpine
+        image: 10.0.0.101:3000/trendx/postgres:16-alpine@sha256:7a396fd264a2067788b6551122b50f162bf6136312c7fc9d74381cb92c648382
         env:
           POSTGRES_DB: trendx
           POSTGRES_USER: trendx_app
@@ -113,7 +113,7 @@ jobs:
     steps:
       - name: Bootstrap (git + node for JS actions)
         run: apt-get update && apt-get install -y --no-install-recommends git nodejs
-      - uses: actions/checkout@v4
+      - uses: http://10.0.0.101:3000/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Install dependencies and postgres client
         run: |
           python -m pip install --upgrade pip
@@ -126,10 +126,10 @@ jobs:
   test-migration-007:
     runs-on: ubuntu-latest
     container:
-      image: python:3.12-slim
+      image: 10.0.0.101:3000/trendx/python:3.12-slim@sha256:a249c9f47e05708dd367f3fe8ada03cf347390fad66fb8b0518c0ef55ae3cb84
     services:
       postgres:
-        image: postgres:16-alpine
+        image: 10.0.0.101:3000/trendx/postgres:16-alpine@sha256:7a396fd264a2067788b6551122b50f162bf6136312c7fc9d74381cb92c648382
         env:
           POSTGRES_DB: trendx
           POSTGRES_USER: trendx_app
@@ -139,7 +139,7 @@ jobs:
     steps:
       - name: Bootstrap (git + node for JS actions)
         run: apt-get update && apt-get install -y --no-install-recommends git nodejs
-      - uses: actions/checkout@v4
+      - uses: http://10.0.0.101:3000/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Install dependencies and postgres client
         run: |
           python -m pip install --upgrade pip
@@ -171,10 +171,10 @@ jobs:
   test-migration-008:
     runs-on: ubuntu-latest
     container:
-      image: python:3.12-slim
+      image: 10.0.0.101:3000/trendx/python:3.12-slim@sha256:a249c9f47e05708dd367f3fe8ada03cf347390fad66fb8b0518c0ef55ae3cb84
     services:
       postgres:
-        image: postgres:16-alpine
+        image: 10.0.0.101:3000/trendx/postgres:16-alpine@sha256:7a396fd264a2067788b6551122b50f162bf6136312c7fc9d74381cb92c648382
         env:
           POSTGRES_DB: trendx
           POSTGRES_USER: trendx_app
@@ -184,7 +184,7 @@ jobs:
     steps:
       - name: Bootstrap (git + node for JS actions)
         run: apt-get update && apt-get install -y --no-install-recommends git nodejs
-      - uses: actions/checkout@v4
+      - uses: http://10.0.0.101:3000/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Install dependencies and postgres client
         run: |
           python -m pip install --upgrade pip
@@ -197,15 +197,23 @@ jobs:
   security:
     runs-on: ubuntu-latest
     container:
-      image: python:3.12-slim
+      image: 10.0.0.101:3000/trendx/python:3.12-slim@sha256:a249c9f47e05708dd367f3fe8ada03cf347390fad66fb8b0518c0ef55ae3cb84
     steps:
       - name: Bootstrap (git + node for JS actions)
-        run: apt-get update && apt-get install -y --no-install-recommends git nodejs
-      - uses: actions/checkout@v4
+        run: apt-get update && apt-get install -y --no-install-recommends git nodejs curl
+      - uses: http://10.0.0.101:3000/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Install security tools
         run: |
           python -m pip install --upgrade pip
-          pip install gitleaks bandit
+          pip install bandit
+          GITLEAKS_VERSION="8.30.1"
+          GITLEAKS_SHA256="551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+          curl -sSfL "http://10.0.0.101:3000/api/packages/trendx/generic/gitleaks/${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" -o /tmp/gitleaks.tar.gz
+          echo "${GITLEAKS_SHA256}  /tmp/gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/gitleaks.tar.gz -C /tmp
+          mv /tmp/gitleaks /usr/local/bin/gitleaks
+          chmod +x /usr/local/bin/gitleaks
+          gitleaks version
       - name: gitleaks (secret detection, equivalent to GitLab Secret-Detection)
         run: gitleaks detect --source . --no-banner --redact --exit-code 1
       - name: bandit (SAST equivalent to GitLab SAST for Python)
@@ -214,16 +222,40 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     container:
-      image: ubuntu:22.04
+      image: 10.0.0.101:3000/trendx/ubuntu:22.04@sha256:79676deb51ebb02885b0b9d33788e78a37cf1045ad79d1bb04c6a222c3556b3d
     steps:
-      - name: Bootstrap (git + node for JS actions)
-        run: apt-get update && apt-get install -y --no-install-recommends git nodejs
-      - uses: actions/checkout@v4
+      - name: Bootstrap (git + tools for JS actions)
+        run: apt-get update && apt-get install -y --no-install-recommends git curl ca-certificates xz-utils
+      - name: Install Node 20 from Gitea
+        run: |
+          NODE_VERSION="v20.20.2"
+          NODE_SHA256="df770b2a6f130ed8627c9782c988fda9669fa23898329a61a871e32f965e007d"
+          curl -sSfL "http://10.0.0.101:3000/api/packages/trendx/generic/node/${NODE_VERSION}/node-${NODE_VERSION}-linux-x64.tar.xz" -o /tmp/node.tar.xz
+          echo "${NODE_SHA256}  /tmp/node.tar.xz" | sha256sum -c -
+          tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1
+          rm -f /tmp/node.tar.xz
+          test "$(node --version)" = "v20.20.2"
+          test "$(npm --version)" = "10.8.2"
+      - uses: http://10.0.0.101:3000/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Install lint tools
         run: |
           apt-get update
-          apt-get install -y --no-install-recommends python3-pip shellcheck hadolint
-          pip install --break-system-packages ruff mypy typos
+          apt-get install -y --no-install-recommends python3-pip shellcheck
+          # Typing set : mêmes versions épinglées que le hook mypy pre-commit
+          # (alignement étape 78) + constraints.txt pour figer les transitives.
+          # Paquets non typés (pandas, sklearn, …) volontairement absents :
+          # les installer sans stubs créerait des erreurs import-untyped
+          # d'un seul côté et romprait l'alignement (Any des deux côtés sinon).
+          pip install -c constraints.txt ruff==0.3.5 mypy==1.9.0 typos==1.21.0 \
+            pydantic==2.6.4 pydantic-settings==2.2.1 sqlalchemy==2.0.29 \
+            fastapi==0.110.0 httpx==0.27.0 loguru==0.7.2 numpy==1.26.4 \
+            tenacity==8.2.3 redis==5.0.3 types-redis==4.6.0.20241004
+          HADOLINT_VERSION="2.12.0"
+          HADOLINT_SHA256="56de6d5e5ec427e17b74fa48d51271c7fc0d61244bf5c90e828aab8362d55010"
+          curl -sSfL "http://10.0.0.101:3000/api/packages/trendx/generic/hadolint/${HADOLINT_VERSION}/hadolint-Linux-x86_64" -o /usr/local/bin/hadolint
+          echo "${HADOLINT_SHA256}  /usr/local/bin/hadolint" | sha256sum -c -
+          chmod +x /usr/local/bin/hadolint
+          hadolint --version
       - name: ruff
         run: ruff check .
       - name: ruff-format
@@ -231,7 +263,7 @@ jobs:
       - name: mypy
         run: mypy src
       - name: typos
-        run: typos
+        run: typos --config pyproject.toml
       - name: shellcheck
         run: find . -name '*.sh' -not -path './.git/*' -print0 | xargs -0 shellcheck
       - name: hadolint
@@ -240,10 +272,10 @@ jobs:
   test-migration-013:
     runs-on: ubuntu-latest
     container:
-      image: python:3.12-slim
+      image: 10.0.0.101:3000/trendx/python:3.12-slim@sha256:a249c9f47e05708dd367f3fe8ada03cf347390fad66fb8b0518c0ef55ae3cb84
     services:
       postgres:
-        image: postgres:16-alpine
+        image: 10.0.0.101:3000/trendx/postgres:16-alpine@sha256:7a396fd264a2067788b6551122b50f162bf6136312c7fc9d74381cb92c648382
         env:
           POSTGRES_DB: trendx
           POSTGRES_USER: trendx_app
@@ -259,7 +291,7 @@ jobs:
     steps:
       - name: Bootstrap (git + node for JS actions)
         run: apt-get update && apt-get install -y --no-install-recommends git nodejs
-      - uses: actions/checkout@v4
+      - uses: http://10.0.0.101:3000/actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Install dependencies and postgres client
         run: |
           python -m pip install --upgrade pip

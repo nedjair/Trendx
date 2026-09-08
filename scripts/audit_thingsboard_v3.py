@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """Audit complémentaire : version TB, données device alternatif riche, SSH 10.0.0.1 check infos."""
-import urllib.request
+
 import json
 import ssl
 import sys
+import urllib.request
+from datetime import UTC
 
 
 def get_env_var(key, filepath=".env"):
-    with open(filepath, "r") as f:
+    with open(filepath) as f:
         for line in f:
             line = line.strip()
             if line and not line.startswith("#") and "=" in line:
@@ -18,18 +20,19 @@ def get_env_var(key, filepath=".env"):
 
 
 def main():
-    TB_BASE_URL = get_env_var("TB_BASE_URL") or "https://10.0.0.1:8081"
-    TB_USERNAME = get_env_var("TB_USERNAME") or ""
-    TB_PASSWORD = get_env_var("TB_PASSWORD") or ""
+    tb_base_url = get_env_var("TB_BASE_URL") or "https://10.0.0.1:8081"
+    tb_username = get_env_var("TB_USERNAME") or ""
+    tb_password = get_env_var("TB_PASSWORD") or ""
 
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
 
     def api_get(path, headers_extra=None, params=None):
-        url = f"{TB_BASE_URL.rstrip('/')}{path}"
+        url = f"{tb_base_url.rstrip('/')}{path}"
         if params:
             from urllib.parse import urlencode
+
             url += "?" + urlencode(params)
         h = {"Content-Type": "application/json"}
         if headers_extra:
@@ -39,9 +42,9 @@ def main():
             return json.loads(resp.read().decode()), resp.headers, resp.status
 
     # Auth
-    login_data = json.dumps({"username": TB_USERNAME, "password": TB_PASSWORD}).encode()
+    login_data = json.dumps({"username": tb_username, "password": tb_password}).encode()
     req = urllib.request.Request(
-        f"{TB_BASE_URL.rstrip('/')}/api/auth/login",
+        f"{tb_base_url.rstrip('/')}/api/auth/login",
         data=login_data,
         headers={"Content-Type": "application/json"},
     )
@@ -60,10 +63,9 @@ def main():
         ("POST", "/api/auth/logout", "{}"),
     ]:
         try:
-            url = f"{TB_BASE_URL.rstrip('/')}{path}"
+            url = f"{tb_base_url.rstrip('/')}{path}"
             data = body.encode() if body else None
-            req = urllib.request.Request(url, data=data, method=method,
-                                         headers=auth_headers)
+            req = urllib.request.Request(url, data=data, method=method, headers=auth_headers)
             with urllib.request.urlopen(req, context=ctx, timeout=10) as resp:
                 headers = dict(resp.headers)
                 # Chercher la version dans les headers ou le body
@@ -72,7 +74,9 @@ def main():
                     if "version" in k.lower() or "x-" in k.lower():
                         version_found += f" {k}={v[:80]};"
                 body_raw = resp.read().decode()[:200]
-                print(f"  {method} {path} -> status={resp.status} headers_version={version_found} body_preview={body_raw}")
+                print(
+                    f"  {method} {path} -> status={resp.status} headers_version={version_found} body_preview={body_raw}"
+                )
         except urllib.error.HTTPError as e:
             error_body = ""
             try:
@@ -87,9 +91,9 @@ def main():
     # 2. Données pour le device ALG16025001 (292 clés, le plus riche)
     print("=== Données device ALG16025001 (plus riche) ===")
     try:
-        devices_data, _, _ = api_get("/api/tenant/devices",
-                                     headers_extra=auth_headers,
-                                     params={"pageSize": 100, "page": 0})
+        devices_data, _, _ = api_get(
+            "/api/tenant/devices", headers_extra=auth_headers, params={"pageSize": 100, "page": 0}
+        )
         target_dev = None
         for d in devices_data.get("data", []):
             if d.get("name") == "ALG16025001":
@@ -101,20 +105,43 @@ def main():
         did = target_dev["id"]["id"]
         print(f"Device '{target_dev['name']}' | type={target_dev['type']} | id={did[:12]}...")
 
-        from datetime import datetime, timedelta, timezone
-        now = datetime.now(timezone.utc)
+        from datetime import datetime, timedelta
+
+        now = datetime.now(UTC)
         start30 = now - timedelta(days=30)
 
-        keys_ts, _, _ = api_get(f"/api/plugins/telemetry/DEVICE/{did}/keys/timeseries",
-                                headers_extra=auth_headers)
+        keys_ts, _, _ = api_get(
+            f"/api/plugins/telemetry/DEVICE/{did}/keys/timeseries", headers_extra=auth_headers
+        )
         print(f"Total clés: {len(keys_ts)}")
 
         # Focus sur les clés battery, énergie, température, les plus importantes
-        priority_keys = [k for k in keys_ts if any(kw in k.lower() for kw in
-            ["battery_soc", "battery_v", "battery_i", "battery_p", "battery_ce",
-             "battery_t", "state_of_charge", "voltage", "current", "power",
-             "temperature", "humidity", "yield", "energy", "consumption",
-             "solar", "frequency"])]
+        priority_keys = [
+            k
+            for k in keys_ts
+            if any(
+                kw in k.lower()
+                for kw in [
+                    "battery_soc",
+                    "battery_v",
+                    "battery_i",
+                    "battery_p",
+                    "battery_ce",
+                    "battery_t",
+                    "state_of_charge",
+                    "voltage",
+                    "current",
+                    "power",
+                    "temperature",
+                    "humidity",
+                    "yield",
+                    "energy",
+                    "consumption",
+                    "solar",
+                    "frequency",
+                ]
+            )
+        ]
         # Limiter à 40 clés pour ne pas surcharger
         priority_keys = priority_keys[:40]
         if not priority_keys:
@@ -122,7 +149,7 @@ def main():
 
         print(f"\nAnalyse de {len(priority_keys)} clés prioritaires sur 30 jours:")
         for i in range(0, len(priority_keys), 10):
-            batch = priority_keys[i:i+10]
+            batch = priority_keys[i : i + 10]
             params = {
                 "keys": ",".join(batch),
                 "startTs": int(start30.timestamp() * 1000),
@@ -132,7 +159,9 @@ def main():
             try:
                 data, _, _ = api_get(
                     f"/api/plugins/telemetry/DEVICE/{did}/values/timeseries",
-                    headers_extra=auth_headers, params=params)
+                    headers_extra=auth_headers,
+                    params=params,
+                )
                 for k in batch:
                     vals = data.get(k, [])
                     n = len(vals)
@@ -144,7 +173,9 @@ def main():
                             except Exception:
                                 pass
                         if numeric_vals:
-                            print(f"  {k}: {n} pts | min={min(numeric_vals):.2f} | max={max(numeric_vals):.2f} | moy={sum(numeric_vals)/len(numeric_vals):.2f} | dernier={vals[0].get('ts','?')}")
+                            print(
+                                f"  {k}: {n} pts | min={min(numeric_vals):.2f} | max={max(numeric_vals):.2f} | moy={sum(numeric_vals)/len(numeric_vals):.2f} | dernier={vals[0].get('ts','?')}"
+                            )
                         else:
                             print(f"  {k}: {n} pts (non numérique)")
                     else:
@@ -159,7 +190,9 @@ def main():
                         try:
                             data2, _, _ = api_get(
                                 f"/api/plugins/telemetry/DEVICE/{did}/values/timeseries",
-                                headers_extra=auth_headers, params=params2)
+                                headers_extra=auth_headers,
+                                params=params2,
+                            )
                             n2 = len(data2.get(k, []))
                             print(f"  {k}: 0/30j, {n2}/1an")
                         except Exception:

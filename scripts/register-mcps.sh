@@ -52,7 +52,7 @@ convert_mcp() {
 
   # Convertir SERVER_METADATA.json
   if [ -f "${src_dir}/SERVER_METADATA.json" ]; then
-    python3 -c "
+    if python3 -c "
 import json, sys
 with open('${src_dir}/SERVER_METADATA.json') as f:
     data = json.load(f)
@@ -64,8 +64,7 @@ trae_meta = {
 with open('${dst_dir}/${mcp_name}/SERVER_METADATA.json', 'w') as f:
     json.dump(trae_meta, f, indent=2)
     f.write('\n')
-" 2>/dev/null
-    if [ $? -eq 0 ]; then
+" 2>/dev/null; then
       echo -e "    ${GREEN}[OK]${NC} SERVER_METADATA.json converti"
     else
       echo -e "    ${RED}[ERR]${NC} Échec conversion SERVER_METADATA.json"
@@ -81,8 +80,9 @@ with open('${dst_dir}/${mcp_name}/SERVER_METADATA.json', 'w') as f:
     local tool_count=0
     for tool_file in "${src_dir}/tools"/*.json; do
       [ -f "$tool_file" ] || continue
-      local fname=$(basename "$tool_file")
-      python3 -c "
+      local fname
+      fname=$(basename "$tool_file")
+      if python3 -c "
 import json, sys
 with open('${tool_file}') as f:
     data = json.load(f)
@@ -92,8 +92,7 @@ if 'inputSchema' in data:
 with open('${dst_dir}/${mcp_name}/tools/${fname}', 'w') as f:
     json.dump(data, f, indent=2)
     f.write('\n')
-" 2>/dev/null
-      if [ $? -eq 0 ]; then
+" 2>/dev/null; then
         tool_count=$((tool_count + 1))
       else
         echo -e "    ${RED}[ERR]${NC} Échec conversion ${fname}"

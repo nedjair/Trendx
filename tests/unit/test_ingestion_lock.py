@@ -4,7 +4,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
-
 from trendx.config import settings
 from trendx.main import app
 

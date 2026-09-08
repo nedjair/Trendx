@@ -1,17 +1,16 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from airflow.decorators import dag, task
 from loguru import logger
 from pendulum import duration
-
 from trendx.services.inference import InferenceService
 
 
 @dag(
     schedule="0 * * * *",
-    start_date=datetime(2025, 1, 1, tzinfo=timezone.utc),
+    start_date=datetime(2025, 1, 1, tzinfo=UTC),
     catchup=False,
     default_args={
         "retries": 3,
@@ -39,14 +38,16 @@ def trendx_prediction_generation() -> None:
         models: list[dict] = []
         for m in champions:
             if m.is_champion:
-                models.append({
-                    "entity_id": str(m.entity_id),
-                    "metric_key": m.metric_key,
-                    "algorithm": m.algorithm,
-                    "horizon": m.horizon,
-                    "frequency": m.frequency,
-                    "model_id": str(m.id),
-                })
+                models.append(
+                    {
+                        "entity_id": str(m.entity_id),
+                        "metric_key": m.metric_key,
+                        "algorithm": m.algorithm,
+                        "horizon": m.horizon,
+                        "frequency": m.frequency,
+                        "model_id": str(m.id),
+                    }
+                )
         logger.info("Found {n} champion models for forecast generation", n=len(models))
         return models
 

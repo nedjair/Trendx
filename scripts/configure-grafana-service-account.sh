@@ -4,6 +4,8 @@ umask 077
 require() { command -v "$1" >/dev/null || { echo "Missing command: $1" >&2; exit 1; }; }
 for c in curl jq; do require "$c"; done
 for v in GRAFANA_URL GRAFANA_ADMIN_USER GRAFANA_ADMIN_PASSWORD GRAFANA_DATASOURCE_NAME GRAFANA_SERVICE_ACCOUNT_NAME; do [[ -n ${!v:-} ]] || { echo "Missing variable: $v" >&2; exit 1; }; done
+# SC1007 volontaire : préfixe CDPATH= vide neutralisant CDPATH pour cd (portabilité POSIX).
+# shellcheck disable=SC1007
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 token_file=${GRAFANA_TOKEN_FILE:-.secrets/grafana-trendx.token}; [[ $token_file = /* ]] || token_file="$ROOT_DIR/$token_file"
 mkdir -p "$(dirname "$token_file")"; chmod 700 "$(dirname "$token_file")"

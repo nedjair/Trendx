@@ -1,17 +1,14 @@
 from __future__ import annotations
 
-import json
-import pickle
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
 from loguru import logger
-
 from trendx.config import settings
 from trendx.forecasting.base import ForecastMetrics, ForecastModel, ForecastResult
 
@@ -52,16 +49,16 @@ class ArimaModel(ForecastModel):
 
     def __init__(
         self,
-        order: Optional[tuple[int, int, int]] = None,
-        seasonal_order: Optional[tuple[int, int, int, int]] = None,
-        seasonal: bool = True,
+        order: tuple[int, int, int] | None = None,
+        seasonal_order: tuple[int, int, int, int] | None = None,
+        seasonal: bool = True,  # noqa: FBT001,FBT002 -- API stable : positionnel historique ; passage keyword-only casserait les appelants existants.
         max_p: int = 5,
         max_d: int = 2,
         max_q: int = 5,
-        max_P: int = 2,
-        max_D: int = 1,
-        max_Q: int = 2,
-        m: Optional[int] = None,
+        max_P: int = 2,  # noqa: N803 -- convention pmdarima/statsmodels (P,D,Q majuscules) + clés de config "max_P"/"max_D"/"max_Q" ; renommer casserait la compatibilité.
+        max_D: int = 1,  # noqa: N803 -- voir max_P ci-dessus.
+        max_Q: int = 2,  # noqa: N803 -- voir max_P ci-dessus.
+        m: int | None = None,
         confidence_level: float = 0.80,
         information_criterion: str = "aic",
     ) -> None:
@@ -78,12 +75,10 @@ class ArimaModel(ForecastModel):
         self.confidence_level = confidence_level
         self.information_criterion = information_criterion
         self._model: Any = None
-        self._last_y: Optional[npt.NDArray[np.float64]] = None
-        self._train_df: Optional[pd.DataFrame] = None
+        self._last_y: npt.NDArray[np.float64] | None = None
+        self._train_df: pd.DataFrame | None = None
 
-    def fit(
-        self, data: Any, *, context: Optional[dict[str, Any]] = None
-    ) -> "ArimaModel":
+    def fit(self, data: Any, *, context: dict[str, Any] | None = None) -> ArimaModel:
         from pmdarima import auto_arima
 
         logger.info("ArimaModel.fit started")
@@ -140,7 +135,7 @@ class ArimaModel(ForecastModel):
         return self
 
     def predict(
-        self, horizon: int = 24, *, context: Optional[dict[str, Any]] = None
+        self, horizon: int = 24, *, context: dict[str, Any] | None = None
     ) -> ForecastResult:
         if self._model is None or self._train_df is None:
             msg = "Model not fitted yet. Call fit() first."
@@ -213,7 +208,7 @@ class ArimaModel(ForecastModel):
         logger.info("ArimaModel saved to {}", path)
 
     @classmethod
-    def load(cls, path: str) -> "ArimaModel":
+    def load(cls, path: str) -> ArimaModel:
         import joblib
 
         path_obj = Path(path)

@@ -3,13 +3,12 @@ from __future__ import annotations
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
 from loguru import logger
-
 from trendx.config import settings
 from trendx.forecasting.base import ForecastMetrics, ForecastModel, ForecastResult
 
@@ -68,7 +67,7 @@ class FourierModel(ForecastModel):
         k_daily: int = 3,
         k_weekly: int = 3,
         k_yearly: int = 5,
-        include_trend: bool = True,
+        include_trend: bool = True,  # noqa: FBT001,FBT002 -- API publique stable ; passage keyword-only casserait les appelants existants.
         confidence_level: float = 0.80,
     ) -> None:
         self.k_daily = k_daily
@@ -78,7 +77,7 @@ class FourierModel(ForecastModel):
         self.confidence_level = confidence_level
         self._model: Any = None
         self._feature_cols: list[str] = []
-        self._train_df: Optional[pd.DataFrame] = None
+        self._train_df: pd.DataFrame | None = None
 
         if k_daily <= 0 and k_weekly <= 0 and k_yearly <= 0:
             msg = "At least one seasonality must have k > 0"
@@ -112,9 +111,7 @@ class FourierModel(ForecastModel):
 
         return pd.DataFrame(features)
 
-    def fit(
-        self, data: Any, *, context: Optional[dict[str, Any]] = None
-    ) -> "FourierModel":
+    def fit(self, data: Any, *, context: dict[str, Any] | None = None) -> FourierModel:
         from sklearn.linear_model import LinearRegression
 
         logger.info("FourierModel.fit started")
@@ -124,11 +121,11 @@ class FourierModel(ForecastModel):
         features = self._build_features(df)
         self._feature_cols = list(features.columns)
 
-        X = features.values.astype(np.float64)
+        x = features.values.astype(np.float64)
         y = df["y"].values.astype(np.float64)
 
         self._model = LinearRegression()
-        self._model.fit(X, y)
+        self._model.fit(x, y)
         self._train_df = df
 
         elapsed = time.monotonic() - t_start
@@ -136,7 +133,7 @@ class FourierModel(ForecastModel):
         return self
 
     def predict(
-        self, horizon: int = 24, *, context: Optional[dict[str, Any]] = None
+        self, horizon: int = 24, *, context: dict[str, Any] | None = None
     ) -> ForecastResult:
         if self._model is None or self._train_df is None:
             msg = "Model not fitted yet. Call fit() first."
@@ -151,15 +148,15 @@ class FourierModel(ForecastModel):
 
         future_df = pd.DataFrame({"ds": future_ts})
         future_features = self._build_features(future_df)
-        X_future = future_features.values.astype(np.float64)
+        x_future = future_features.values.astype(np.float64)
 
-        values = self._model.predict(X_future).astype(np.float64)
+        values = self._model.predict(x_future).astype(np.float64)
 
         residuals = self._train_df["y"].values - self._model.predict(
             self._build_features(self._train_df).values.astype(np.float64)
         )
         n = len(residuals)
-        k = X_future.shape[1]
+        k = x_future.shape[1]
         std_resid = np.std(residuals, ddof=k) if n > k else np.std(residuals)
 
         from scipy import stats as scipy_stats
@@ -211,7 +208,7 @@ class FourierModel(ForecastModel):
         logger.info("FourierModel saved to {}", path)
 
     @classmethod
-    def load(cls, path: str) -> "FourierModel":
+    def load(cls, path: str) -> FourierModel:
         import joblib
 
         path_obj = Path(path)

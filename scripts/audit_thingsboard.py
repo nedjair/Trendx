@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
 """Audit ThingsBoard en lecture seule - Phase 1."""
-import urllib.request
+
 import json
 import ssl
 import sys
+import urllib.request
 from collections import Counter
+from datetime import UTC
 
 
 def get_env_var(key, filepath=".env"):
-    with open(filepath, "r") as f:
+    with open(filepath) as f:
         for line in f:
             line = line.strip()
             if line and not line.startswith("#") and "=" in line:
@@ -19,11 +21,11 @@ def get_env_var(key, filepath=".env"):
 
 
 def main():
-    TB_BASE_URL = get_env_var("TB_BASE_URL") or "https://10.0.0.1:8081"
-    TB_USERNAME = get_env_var("TB_USERNAME") or ""
-    TB_PASSWORD = get_env_var("TB_PASSWORD") or ""
+    tb_base_url = get_env_var("TB_BASE_URL") or "https://10.0.0.1:8081"
+    tb_username = get_env_var("TB_USERNAME") or ""
+    tb_password = get_env_var("TB_PASSWORD") or ""
 
-    print(f"=== ThingsBoard Base URL: {TB_BASE_URL} ===")
+    print(f"=== ThingsBoard Base URL: {tb_base_url} ===")
     print()
 
     ctx = ssl.create_default_context()
@@ -33,7 +35,7 @@ def main():
     # 1. Version / info endpoint
     print("=== Version ThingsBoard ===")
     try:
-        req = urllib.request.Request(f"{TB_BASE_URL.rstrip('/')}/api/info")
+        req = urllib.request.Request(f"{tb_base_url.rstrip('/')}/api/info")
         with urllib.request.urlopen(req, context=ctx, timeout=10) as resp:
             data = json.loads(resp.read().decode())
             print(json.dumps(data, indent=2))
@@ -45,9 +47,9 @@ def main():
     print("=== Authentification ===")
     token = None
     try:
-        login_data = json.dumps({"username": TB_USERNAME, "password": TB_PASSWORD}).encode()
+        login_data = json.dumps({"username": tb_username, "password": tb_password}).encode()
         req = urllib.request.Request(
-            f"{TB_BASE_URL.rstrip('/')}/api/auth/login",
+            f"{tb_base_url.rstrip('/')}/api/auth/login",
             data=login_data,
             headers={"Content-Type": "application/json"},
         )
@@ -71,9 +73,10 @@ def main():
     }
 
     def api_get(path, params=None):
-        url = f"{TB_BASE_URL.rstrip('/')}{path}"
+        url = f"{tb_base_url.rstrip('/')}{path}"
         if params:
             from urllib.parse import urlencode
+
             url += "?" + urlencode(params)
         req = urllib.request.Request(url, headers=auth_headers)
         with urllib.request.urlopen(req, context=ctx, timeout=20) as resp:
@@ -187,7 +190,7 @@ def main():
             keys_str += "..."
         print(f"  * {dname}: {len(keys)} clés - {keys_str}")
 
-    print(f"\n  Clés les plus fréquentes:")
+    print("\n  Clés les plus fréquentes:")
     for k, c in all_keys_global.most_common(30):
         print(f"    - {k}: {c} devices")
     print()
@@ -198,8 +201,9 @@ def main():
     target_metric = get_env_var("TB_METRIC_NAME")
     if target_device_id and target_device_id != "replace_me":
         try:
-            from datetime import datetime, timedelta, timezone
-            now = datetime.now(timezone.utc)
+            from datetime import datetime, timedelta
+
+            now = datetime.now(UTC)
             start = now - timedelta(days=7)
             params = {
                 "keys": target_metric,
@@ -207,7 +211,9 @@ def main():
                 "endTs": int(now.timestamp() * 1000),
                 "limit": 10000,
             }
-            data = api_get(f"/api/plugins/telemetry/DEVICE/{target_device_id}/values/timeseries", params)
+            data = api_get(
+                f"/api/plugins/telemetry/DEVICE/{target_device_id}/values/timeseries", params
+            )
             vals = data.get(target_metric, [])
             print(f"Points récupérés (7 derniers jours): {len(vals)}")
             if vals:
@@ -236,11 +242,11 @@ def main():
         did = d.get("id", {}).get("id", "")
         dname = d.get("name", "?")
         try:
-            data = api_get(f"/api/relations/info", {"fromId": did, "fromType": "DEVICE"})
+            data = api_get("/api/relations/info", {"fromId": did, "fromType": "DEVICE"})
             if data:
                 print(f"  * {dname}: {len(data)} relations sortantes")
                 relation_count += len(data)
-            data2 = api_get(f"/api/relations/info", {"toId": did, "toType": "DEVICE"})
+            data2 = api_get("/api/relations/info", {"toId": did, "toType": "DEVICE"})
             if data2:
                 print(f"  * {dname}: {len(data2)} relations entrantes")
                 relation_count += len(data2)
@@ -255,13 +261,23 @@ def main():
         did = d.get("id", {}).get("id", "")
         dname = d.get("name", "?")
         try:
-            server_attrs = api_get(f"/api/plugins/telemetry/DEVICE/{did}/values/attributes/SERVER_SCOPE")
-            client_attrs = api_get(f"/api/plugins/telemetry/DEVICE/{did}/values/attributes/CLIENT_SCOPE")
-            shared_attrs = api_get(f"/api/plugins/telemetry/DEVICE/{did}/values/attributes/SHARED_SCOPE")
-            print(f"  * {dname}: server={len(server_attrs)}, client={len(client_attrs)}, shared={len(shared_attrs)}")
+            server_attrs = api_get(
+                f"/api/plugins/telemetry/DEVICE/{did}/values/attributes/SERVER_SCOPE"
+            )
+            client_attrs = api_get(
+                f"/api/plugins/telemetry/DEVICE/{did}/values/attributes/CLIENT_SCOPE"
+            )
+            shared_attrs = api_get(
+                f"/api/plugins/telemetry/DEVICE/{did}/values/attributes/SHARED_SCOPE"
+            )
+            print(
+                f"  * {dname}: server={len(server_attrs)}, client={len(client_attrs)}, shared={len(shared_attrs)}"
+            )
             if server_attrs:
                 for a in server_attrs[:5]:
-                    print(f"    SERVER: {a.get('key')} = {a.get('value')[:60] if isinstance(a.get('value'),str) else a.get('value')}")
+                    print(
+                        f"    SERVER: {a.get('key')} = {a.get('value')[:60] if isinstance(a.get('value'),str) else a.get('value')}"
+                    )
         except Exception:
             pass
     print()
