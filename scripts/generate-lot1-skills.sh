@@ -89,7 +89,7 @@ ${SKILL_DESC_FULL[$sk]}
 - Outils filesystem Trae (Read / Write / Glob / Grep / LS)
 - RunCommand bash + docker compose + python3 + jq + sshpass
 - MCPs recommandés : mcp_Docker, mcp_Postgrest, mcp_ssh, mcp_thingsboard
-- Pre-commit workflow : `git status` puis `git diff --cached` avant commit
+- Pre-commit workflow : \`git status\` puis \`git diff --cached\` avant commit
 
 ## 7. Procédure pas à pas
 
@@ -102,16 +102,16 @@ ${SKILL_DESC_FULL[$sk]}
 
 ## 8. Commandes ou scripts autorisés
 
-- `make install / up / down / status / logs`
-- `scripts/validate-stack.sh`, `scripts/deploy-mcps.sh`
-- `scripts/pre-commit-hook.sh` (activation hook)
-- `docker compose -f docker-compose.yml ...`
-- `python3 src/trendx/...`
+- \`make install / up / down / status / logs\`
+- \`scripts/validate-stack.sh\`, \`scripts/deploy-mcps.sh\`
+- \`scripts/pre-commit-hook.sh\` (activation hook)
+- \`docker compose -f docker-compose.yml ...\`
+- \`python3 src/trendx/...\`
 
 ## 9. Contrôles avant modification
 
 - Healthcheck Docker / Postgres / Airflow / MLflow / Grafana
-- `git status` + `git diff --cached`
+- \`git status\` + \`git diff --cached\`
 - permissions .env 600, absence de secret dans la sortie
 - Variables attendues toutes renseignées dans .env
 
@@ -131,7 +131,7 @@ ${SKILL_DESC_FULL[$sk]}
 
 ## 12. Rollback
 
-- `make down` pour la stack Docker
+- \`make down\` pour la stack Docker
 - Restaurer backup SQL TimescaleDB
 - Remettre dernier watermark valide
 - Recharger dernier modèle MLflow validé
