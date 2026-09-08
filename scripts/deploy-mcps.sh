@@ -30,7 +30,6 @@ echo -e "${BOLD}${CYAN}========================================${NC}"
 echo ""
 
 ERRORS=0
-declare -a DASHBOARD_ROWS=()
 declare -a MCP_STATUS=()
 
 echo -e "${BOLD}Étape 1/3: Vérification de la structure des dossiers...${NC}"
@@ -104,7 +103,7 @@ for entry in "${MCP_STATUS[@]}"; do
   if [ "${valid}" = false ]; then
     for i in "${!MCP_STATUS[@]}"; do
       if [[ "${MCP_STATUS[$i]}" == "${mcp}|"* ]]; then
-        MCP_STATUS[$i]="${mcp}|${tool_count}|JSON_INVALIDE"
+        MCP_STATUS[i]="${mcp}|${tool_count}|JSON_INVALIDE"
         break
       fi
     done

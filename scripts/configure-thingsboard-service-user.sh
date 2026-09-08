@@ -7,6 +7,8 @@ for v in TB_BASE_URL TB_USERNAME TB_PASSWORD TB_DEVICE_ID TB_CONFIRMED_DEVICE_ID
 [[ ${TB_WRITEBACK_ENABLED:-false} == false && ${TB_ALARMS_ENABLED:-false} == false ]] || { echo "Refusing: writeback and alarms must remain disabled" >&2; exit 1; }
 [[ ${TB_CONFIRMED_CUSTOMER_ISOLATED} == true ]] || { echo "Refusing: customer isolation must be explicitly confirmed" >&2; exit 1; }
 [[ -n ${TB_CONFIRMED_CUSTOMER_DEVICE_COUNT:-} && ${TB_CONFIRMED_CUSTOMER_DEVICE_COUNT} == 1 ]] || { echo "Refusing: customer device count must be explicitly confirmed as 1" >&2; exit 1; }
+# SC1007 volontaire : préfixe CDPATH= vide neutralisant CDPATH pour cd (portabilité POSIX).
+# shellcheck disable=SC1007
 ROOT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 secret_file=${TRENDX_CREDENTIALS_FILE:-.secrets/service-accounts.env}; [[ $secret_file = /* ]] || secret_file="$ROOT_DIR/$secret_file"; mkdir -p "$(dirname "$secret_file")"; touch "$secret_file"; chmod 600 "$secret_file"
 tmp=$(mktemp); trap 'rm -f "$tmp"' EXIT; token=$(curl -fsS -H 'Content-Type: application/json' -d "$(jq -cn --arg u "$TB_USERNAME" --arg p "$TB_PASSWORD" '{username:$u,password:$p}')" "$TB_BASE_URL/api/auth/login" | jq -r .token)

@@ -31,8 +31,13 @@ step()  { echo "[restore-test] $*"; }
 ok()    { echo "[restore-test]   OK : $*"; }
 
 # ── Préconditions ────────────────────────────────────────────
+# SC2012 accepté : noms de dossiers horodatés générés par la sauvegarde (charset contrôlé) ;
+# un find changerait la sémantique (slash final, symlinks) sur ce chemin critique de restauration.
+# shellcheck disable=SC2012
 latest="$(ls -td "${BACKUP_ROOT}"/*/ 2>/dev/null | head -1 || true)"
 [ -n "${latest}" ] || fatal "aucun dossier de backup dans ${BACKUP_ROOT}"
+# SC2012 accepté : nom de fichier fixe trendx.dump.gz, motif sans joker ambigu.
+# shellcheck disable=SC2012
 dump="$(ls "${latest}"trendx.dump.gz 2>/dev/null | head -1 || true)"
 [ -n "${dump}" ] || fatal "aucun trendx.dump.gz dans ${latest}"
 step "dump utilisé : ${dump}"

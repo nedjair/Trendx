@@ -12,6 +12,8 @@ if [ ! -f "${ENV_FILE}" ]; then
 fi
 
 set -a
+# SC1090 nécessaire : chargement dynamique du .env local (chemin construit, jamais distant).
+# shellcheck disable=SC1090
 source "${ENV_FILE}"
 set +a
 
