@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from loguru import logger
 from trendx.config import settings
@@ -323,7 +323,7 @@ class AlertingService:
         if open_th is None:
             return True
         current = incident.get("current_value", 0.0)
-        return current >= open_th
+        return cast(bool, current >= open_th)
 
     def _check_hysteresis_value(self, incident: dict[str, Any], current_value: float) -> bool:
         close_th = incident.get("close_threshold")
@@ -333,8 +333,8 @@ class AlertingService:
             incident_repo = AlertIncidentRepository(session)
             existing = incident_repo.find_by_logical_key(incident["logical_key"])
         if existing is None or existing.status not in ("ACTIVE", "ACK"):
-            return current_value >= (incident.get("open_threshold", close_th))
-        return current_value < close_th
+            return cast(bool, current_value >= (incident.get("open_threshold", close_th)))
+        return cast(bool, current_value < close_th)
 
     def _maybe_clear_alarm(
         self,

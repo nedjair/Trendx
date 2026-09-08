@@ -79,7 +79,7 @@ class AnomalyScorer:
             if iqr < 1e-12:
                 iqr = np.std(scores) if np.std(scores) > 1e-12 else 1.0
             z = (scores - median) / iqr
-            normalized = scipy_stats.norm.cdf(z)
+            normalized: npt.NDArray[np.float64] = scipy_stats.norm.cdf(z)
         elif method == "minmax":
             s_min, s_max = float(scores.min()), float(scores.max())
             if s_max - s_min < 1e-12:
@@ -303,8 +303,10 @@ class AnomalyScorer:
         ep_scores = scores[indices]
         ep_times = timestamps[indices]
 
-        start_ts = datetime.utcfromtimestamp(np.datetime64(ep_times[0], "s").astype(np.int64))
-        end_ts = datetime.utcfromtimestamp(np.datetime64(ep_times[-1], "s").astype(np.int64))
+        start_ts = datetime.utcfromtimestamp(
+            float(np.datetime64(ep_times[0], "s").astype(np.int64))
+        )
+        end_ts = datetime.utcfromtimestamp(float(np.datetime64(ep_times[-1], "s").astype(np.int64)))
         duration = (end_ts - start_ts).total_seconds()
         peak = float(np.max(ep_scores))
         mean = float(np.mean(ep_scores))
