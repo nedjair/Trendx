@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     # refuse (409) tant que TRENDX_INGEST_ENABLED n'est pas set a true.
     trendx_ingest_enabled: bool = Field(default=False, alias="TRENDX_INGEST_ENABLED")
 
-    trendx_api_host: str = Field(default="0.0.0.0", alias="TRENDX_API_HOST")
+    trendx_api_host: str = Field(default="0.0.0.0", alias="TRENDX_API_HOST")  # nosec B104 -- défaut conteneur : écoute toutes interfaces derrière le reverse-proxy, exposition gérée au niveau compose/pare-feu, surchargeable par TRENDX_API_HOST.
     trendx_api_port: int = Field(default=8000, alias="TRENDX_API_PORT")
     trendx_python_executor_port: int = Field(default=8181, alias="TRENDX_PYTHON_EXECUTOR_PORT")
     trendx_workers: int = Field(default=2, alias="TRENDX_WORKERS")

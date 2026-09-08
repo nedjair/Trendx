@@ -39,15 +39,15 @@ class _HealthHandler(BaseHTTPRequestHandler):
                 + str(EXECUTOR_PORT).encode()
                 + b"}"
             )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Health response write failed (ignored): {}", exc)
 
     def log_message(self, format: str, *args: Any, **kwargs: Any) -> None:
         return
 
 
 def _start_executor_http_server(port: int) -> None:
-    addr = ("0.0.0.0", port)
+    addr = ("0.0.0.0", port)  # nosec B104 -- health endpoint conteneur : doit écouter toutes interfaces pour le healthcheck Docker et le reverse-proxy ; aucun secret exposé (statut OK uniquement).
     retries = 0
     while retries < 10:
         try:

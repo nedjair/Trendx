@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-import subprocess
+import shutil
+import subprocess  # nosec B404 -- seul usage : compute_git_hash avec argv fixe (voir nosec B603).
 import tempfile
 import uuid
 from pathlib import Path
@@ -263,17 +264,20 @@ class MLflowTracker:
 
     @staticmethod
     def compute_git_hash() -> str:
+        git_bin = shutil.which("git")
+        if git_bin is None:
+            return "unknown"
         try:
-            result = subprocess.run(
-                ["git", "rev-parse", "HEAD"],
+            result = subprocess.run(  # nosec B603 -- argv fixe ["git", "rev-parse", "HEAD"], shell=False, timeout borné, aucune entrée utilisateur.
+                [git_bin, "rev-parse", "HEAD"],
                 capture_output=True,
                 text=True,
                 timeout=10,
             )
             if result.returncode == 0:
                 return result.stdout.strip()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Hash git indisponible (ignoré) : {}", exc)
         return "unknown"
 
     @staticmethod
@@ -284,6 +288,6 @@ class MLflowTracker:
             if isinstance(df, pd.DataFrame):
                 raw = pd.util.hash_pandas_object(df).values
                 return hashlib.sha256(raw.tobytes()).hexdigest()[:16]
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("Hash dataframe indisponible, UUID de repli : {}", exc)
         return str(uuid.uuid4())[:16]

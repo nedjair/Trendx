@@ -1,17 +1,18 @@
 from __future__ import annotations
 
 import json
-import time
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 try:
     import redis as sync_redis
+
     HAS_REDIS = True
 except ImportError:
     HAS_REDIS = False
-    sync_redis = None
+    # Redis optionnel (profil minimal sans Redis) ; garde-fou HAS_REDIS à l'exécution.
+    sync_redis = None  # type: ignore[assignment]
 from loguru import logger
-
 from trendx.config import settings
 
 DEFAULT_TTL_BY_NAMESPACE: dict[str, int] = {
@@ -48,7 +49,7 @@ class CacheService:
         self._redis_url = redis_url or settings.redis_url
         self._default_ttl = default_ttl
         self._ttl_by_namespace = {**DEFAULT_TTL_BY_NAMESPACE, **(ttl_by_namespace or {})}
-        self._client: Optional[sync_redis.Redis] = None
+        self._client: sync_redis.Redis[Any] | None = None
         self._stats: dict[str, int] = {
             "hits": 0,
             "misses": 0,
@@ -56,7 +57,7 @@ class CacheService:
             "deletes": 0,
         }
 
-    def _connect(self) -> sync_redis.Redis:
+    def _connect(self) -> sync_redis.Redis[Any]:
         if self._client is None:
             self._client = sync_redis.from_url(
                 self._redis_url,
@@ -221,8 +222,8 @@ class CacheService:
         if self._client is not None:
             try:
                 self._client.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Erreur ignorée à la fermeture Redis : {}", exc)
             self._client = None
             logger.debug("Redis connection closed")
 

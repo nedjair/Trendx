@@ -778,7 +778,7 @@ async def get_telemetry(
                 conditions.append("ts < :end")
                 params["end"] = end_ts
             where = " AND ".join(conditions)
-            stmt = text(f"SELECT ts, dbl_v FROM ts_kv WHERE {where} ORDER BY ts LIMIT :limit")
+            stmt = text(f"SELECT ts, dbl_v FROM ts_kv WHERE {where} ORDER BY ts LIMIT :limit")  # nosec B608 -- {where} assemblé depuis fragments SQL fixes internes ; toutes les valeurs utilisateur passent en bind params (:eid, :key, :start, :end, :limit).
             rows = session.execute(stmt, params).fetchall()
             data = [{"ts": str(row[0]), "value": float(row[1])} for row in rows]
             return JSONResponse(content=data, status_code=200)
@@ -809,12 +809,12 @@ async def get_telemetry_stats(
                 conditions.append("ts < :end")
                 params["end"] = end_ts
             where = " AND ".join(conditions)
-            stmt = text(f"""
-                SELECT
-                    MIN(dbl_v), MAX(dbl_v), AVG(dbl_v), STDDEV(dbl_v),
-                    COUNT(*), SUM(CASE WHEN dbl_v IS NULL THEN 1 ELSE 0 END)
-                FROM ts_kv WHERE {where}
-            """)
+            stats_query = (
+                "SELECT MIN(dbl_v), MAX(dbl_v), AVG(dbl_v), STDDEV(dbl_v),"
+                " COUNT(*), SUM(CASE WHEN dbl_v IS NULL THEN 1 ELSE 0 END)"
+                f" FROM ts_kv WHERE {where}"  # nosec B608 -- {where} = fragments SQL fixes internes uniquement ; toutes les valeurs utilisateur passent en bind params.
+            )
+            stmt = text(stats_query)
             row = session.execute(stmt, params).fetchone()
             if row is None:
                 return JSONResponse(content=TelemetryStatsOut().model_dump(), status_code=200)
