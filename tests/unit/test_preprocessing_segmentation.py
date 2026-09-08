@@ -3,7 +3,6 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pytest
-
 from trendx.preprocessing.segmentation import Segmenter
 
 
@@ -52,7 +51,7 @@ def test_sliding_windows(segmenter, ts_df):
 def test_split_by_calendar(segmenter, ts_df):
     groups = segmenter.split_by_calendar(ts_df, period="D")
     assert len(groups) > 0
-    for key, group_df in groups.items():
+    for _key, group_df in groups.items():
         assert not group_df.empty
         assert "ts" in group_df.columns
 

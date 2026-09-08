@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from trendx.forecasting.arima import ArimaModel
 from trendx.forecasting.base import (
@@ -25,7 +25,7 @@ MODEL_REGISTRY: dict[str, type[ForecastModel]] = {
 
 def create_model(
     algorithm: str,
-    params: Optional[dict[str, Any]] = None,
+    params: dict[str, Any] | None = None,
 ) -> ForecastModel:
     """Factory function — instantiate a forecast model by name.
 

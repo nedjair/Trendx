@@ -3,9 +3,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pytest
-
 from trendx.forecasting.base import ForecastMetrics, Strategy
-from trendx.forecasting.selector import ModelSelector, CompetitionResult, BacktestWindowResult
+from trendx.forecasting.selector import BacktestWindowResult, CompetitionResult, ModelSelector
 
 
 @pytest.fixture
@@ -69,26 +68,34 @@ def test_select_champion(selector, simple_data):
         CompetitionResult(
             algorithm="LR",
             params={"feature_set": ["trend"]},
-            backtest_windows=[BacktestWindowResult(
-                window_order=i, train_start=pd.Timestamp("2024-01-01"),
-                train_end=pd.Timestamp("2024-01-02"),
-                forecast_start=pd.Timestamp("2024-01-03"),
-                forecast_end=pd.Timestamp("2024-01-04"),
-                metrics=ForecastMetrics(mae=0.5 + i * 0.1, smape=5.0 + i),
-            ) for i in range(3)],
+            backtest_windows=[
+                BacktestWindowResult(
+                    window_order=i,
+                    train_start=pd.Timestamp("2024-01-01"),
+                    train_end=pd.Timestamp("2024-01-02"),
+                    forecast_start=pd.Timestamp("2024-01-03"),
+                    forecast_end=pd.Timestamp("2024-01-04"),
+                    metrics=ForecastMetrics(mae=0.5 + i * 0.1, smape=5.0 + i),
+                )
+                for i in range(3)
+            ],
             aggregated_metrics=ForecastMetrics(mae=0.6, smape=6.0),
             stability_score=0.9,
         ),
         CompetitionResult(
             algorithm="ARIMA",
             params={},
-            backtest_windows=[BacktestWindowResult(
-                window_order=i, train_start=pd.Timestamp("2024-01-01"),
-                train_end=pd.Timestamp("2024-01-02"),
-                forecast_start=pd.Timestamp("2024-01-03"),
-                forecast_end=pd.Timestamp("2024-01-04"),
-                metrics=ForecastMetrics(mae=1.0 + i * 0.2, smape=10.0 + i),
-            ) for i in range(3)],
+            backtest_windows=[
+                BacktestWindowResult(
+                    window_order=i,
+                    train_start=pd.Timestamp("2024-01-01"),
+                    train_end=pd.Timestamp("2024-01-02"),
+                    forecast_start=pd.Timestamp("2024-01-03"),
+                    forecast_end=pd.Timestamp("2024-01-04"),
+                    metrics=ForecastMetrics(mae=1.0 + i * 0.2, smape=10.0 + i),
+                )
+                for i in range(3)
+            ],
             aggregated_metrics=ForecastMetrics(mae=1.2, smape=12.0),
             stability_score=0.8,
         ),
@@ -104,13 +111,16 @@ def test_promote_stability_check(selector):
         CompetitionResult(
             algorithm="LR",
             params={},
-            backtest_windows=[BacktestWindowResult(
-                window_order=0, train_start=pd.Timestamp("2024-01-01"),
-                train_end=pd.Timestamp("2024-01-02"),
-                forecast_start=pd.Timestamp("2024-01-03"),
-                forecast_end=pd.Timestamp("2024-01-04"),
-                metrics=ForecastMetrics(mae=0.5, smape=5.0),
-            )],
+            backtest_windows=[
+                BacktestWindowResult(
+                    window_order=0,
+                    train_start=pd.Timestamp("2024-01-01"),
+                    train_end=pd.Timestamp("2024-01-02"),
+                    forecast_start=pd.Timestamp("2024-01-03"),
+                    forecast_end=pd.Timestamp("2024-01-04"),
+                    metrics=ForecastMetrics(mae=0.5, smape=5.0),
+                )
+            ],
             aggregated_metrics=ForecastMetrics(mae=0.5, smape=5.0),
         ),
     ]
@@ -124,26 +134,34 @@ def test_marginal_gain_threshold(selector):
         CompetitionResult(
             algorithm="A",
             params={},
-            backtest_windows=[BacktestWindowResult(
-                window_order=i, train_start=pd.Timestamp("2024-01-01"),
-                train_end=pd.Timestamp("2024-01-02"),
-                forecast_start=pd.Timestamp("2024-01-03"),
-                forecast_end=pd.Timestamp("2024-01-04"),
-                metrics=ForecastMetrics(mae=1.0, smape=10.0),
-            ) for i in range(3)],
+            backtest_windows=[
+                BacktestWindowResult(
+                    window_order=i,
+                    train_start=pd.Timestamp("2024-01-01"),
+                    train_end=pd.Timestamp("2024-01-02"),
+                    forecast_start=pd.Timestamp("2024-01-03"),
+                    forecast_end=pd.Timestamp("2024-01-04"),
+                    metrics=ForecastMetrics(mae=1.0, smape=10.0),
+                )
+                for i in range(3)
+            ],
             aggregated_metrics=ForecastMetrics(mae=1.0, smape=10.0),
             stability_score=0.9,
         ),
         CompetitionResult(
             algorithm="B",
             params={},
-            backtest_windows=[BacktestWindowResult(
-                window_order=i, train_start=pd.Timestamp("2024-01-01"),
-                train_end=pd.Timestamp("2024-01-02"),
-                forecast_start=pd.Timestamp("2024-01-03"),
-                forecast_end=pd.Timestamp("2024-01-04"),
-                metrics=ForecastMetrics(mae=1.02, smape=10.2),
-            ) for i in range(3)],
+            backtest_windows=[
+                BacktestWindowResult(
+                    window_order=i,
+                    train_start=pd.Timestamp("2024-01-01"),
+                    train_end=pd.Timestamp("2024-01-02"),
+                    forecast_start=pd.Timestamp("2024-01-03"),
+                    forecast_end=pd.Timestamp("2024-01-04"),
+                    metrics=ForecastMetrics(mae=1.02, smape=10.2),
+                )
+                for i in range(3)
+            ],
             aggregated_metrics=ForecastMetrics(mae=1.02, smape=10.2),
             stability_score=0.9,
         ),

@@ -1,17 +1,14 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
-from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from datetime import datetime
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd
 from loguru import logger
 from scipy import stats as scipy_stats
 from sqlalchemy import text
-
 from trendx.database.connection import manager as db_manager
-from trendx.database.repositories import BusinessEntityRepository
 
 
 class DataQualityService:
@@ -226,9 +223,9 @@ class DataQualityService:
         for val in df[value_col].dropna():
             tname = type(val).__name__
             actual_types[tname] = actual_types.get(tname, 0) + 1
-            if expected_type == "float" and not isinstance(val, (int, float, np.floating)):
+            if expected_type == "float" and not isinstance(val, int | float | np.floating):
                 mismatch_count += 1
-            elif expected_type == "int" and not isinstance(val, (int, np.integer)):
+            elif expected_type == "int" and not isinstance(val, int | np.integer):
                 mismatch_count += 1
             elif expected_type == "str" and not isinstance(val, str):
                 mismatch_count += 1
@@ -248,7 +245,7 @@ class DataQualityService:
                 return col
         numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
         if numeric_cols:
-            return numeric_cols[0]
+            return cast(str, numeric_cols[0])
         return None
 
     @staticmethod
@@ -322,10 +319,18 @@ class DataQualityService:
             "duplicate_ratio": duplicates["duplicate_ratio"],
             "outlier_ratio": outliers["outlier_ratio"],
             "outlier_method": outliers["method"],
-            "mean_value": round(float(np.mean(numeric_values)), 4) if len(numeric_values) > 0 else None,
-            "stddev_value": round(float(np.std(numeric_values)), 4) if len(numeric_values) > 0 else None,
-            "min_value": round(float(np.min(numeric_values)), 4) if len(numeric_values) > 0 else None,
-            "max_value": round(float(np.max(numeric_values)), 4) if len(numeric_values) > 0 else None,
+            "mean_value": round(float(np.mean(numeric_values)), 4)
+            if len(numeric_values) > 0
+            else None,
+            "stddev_value": round(float(np.std(numeric_values)), 4)
+            if len(numeric_values) > 0
+            else None,
+            "min_value": round(float(np.min(numeric_values)), 4)
+            if len(numeric_values) > 0
+            else None,
+            "max_value": round(float(np.max(numeric_values)), 4)
+            if len(numeric_values) > 0
+            else None,
             "frequency": freq_check.get("detected_frequency"),
             "is_regular": freq_check.get("is_regular", False),
             "range_in_range_ratio": range_check["in_range_ratio"],
@@ -337,41 +342,83 @@ class DataQualityService:
 
         issues: list[dict[str, Any]] = []
         if nulls["null_ratio"] > 0.01:
-            issues.append(self._build_issue(
-                entity_id, metric_key, "null_values",
-                nulls["null_ratio"], "MEDIUM" if nulls["null_ratio"] > 0.05 else "LOW",
-                start_ts, end_ts, nulls["null_count"],
-            ))
+            issues.append(
+                self._build_issue(
+                    entity_id,
+                    metric_key,
+                    "null_values",
+                    nulls["null_ratio"],
+                    "MEDIUM" if nulls["null_ratio"] > 0.05 else "LOW",
+                    start_ts,
+                    end_ts,
+                    nulls["null_count"],
+                )
+            )
         if duplicates["duplicate_ratio"] > 0.0:
-            issues.append(self._build_issue(
-                entity_id, metric_key, "duplicate_timestamps",
-                duplicates["duplicate_ratio"], "LOW",
-                start_ts, end_ts, duplicates["duplicate_count"],
-            ))
+            issues.append(
+                self._build_issue(
+                    entity_id,
+                    metric_key,
+                    "duplicate_timestamps",
+                    duplicates["duplicate_ratio"],
+                    "LOW",
+                    start_ts,
+                    end_ts,
+                    duplicates["duplicate_count"],
+                )
+            )
         if outliers["outlier_ratio"] > 0.01:
-            issues.append(self._build_issue(
-                entity_id, metric_key, "statistical_outliers",
-                outliers["outlier_ratio"], "MEDIUM" if outliers["outlier_ratio"] > 0.05 else "LOW",
-                start_ts, end_ts, outliers["outlier_count"],
-            ))
+            issues.append(
+                self._build_issue(
+                    entity_id,
+                    metric_key,
+                    "statistical_outliers",
+                    outliers["outlier_ratio"],
+                    "MEDIUM" if outliers["outlier_ratio"] > 0.05 else "LOW",
+                    start_ts,
+                    end_ts,
+                    outliers["outlier_count"],
+                )
+            )
         if completeness["completeness_ratio"] < 0.95:
-            issues.append(self._build_issue(
-                entity_id, metric_key, "incomplete_data",
-                1.0 - completeness["completeness_ratio"], "HIGH" if completeness["completeness_ratio"] < 0.8 else "MEDIUM",
-                start_ts, end_ts, completeness["missing_points"],
-            ))
+            issues.append(
+                self._build_issue(
+                    entity_id,
+                    metric_key,
+                    "incomplete_data",
+                    1.0 - completeness["completeness_ratio"],
+                    "HIGH" if completeness["completeness_ratio"] < 0.8 else "MEDIUM",
+                    start_ts,
+                    end_ts,
+                    completeness["missing_points"],
+                )
+            )
         if range_check["in_range_ratio"] < 0.95:
-            issues.append(self._build_issue(
-                entity_id, metric_key, "out_of_range",
-                1.0 - range_check["in_range_ratio"], "HIGH",
-                start_ts, end_ts, range_check["below_min"] + range_check["above_max"],
-            ))
+            issues.append(
+                self._build_issue(
+                    entity_id,
+                    metric_key,
+                    "out_of_range",
+                    1.0 - range_check["in_range_ratio"],
+                    "HIGH",
+                    start_ts,
+                    end_ts,
+                    range_check["below_min"] + range_check["above_max"],
+                )
+            )
         if type_check["mismatch_ratio"] > 0.0:
-            issues.append(self._build_issue(
-                entity_id, metric_key, "type_mismatch",
-                type_check["mismatch_ratio"], "MEDIUM",
-                start_ts, end_ts, type_check["mismatch_count"],
-            ))
+            issues.append(
+                self._build_issue(
+                    entity_id,
+                    metric_key,
+                    "type_mismatch",
+                    type_check["mismatch_ratio"],
+                    "MEDIUM",
+                    start_ts,
+                    end_ts,
+                    type_check["mismatch_count"],
+                )
+            )
 
         for issue in issues:
             self._store_issue(issue, report_id=None)
@@ -405,7 +452,7 @@ class DataQualityService:
             "ts_end": ts_end,
             "affected_points": affected_points,
             "description": f"{issue_type}: {affected_points} points affected "
-                           f"({severity_ratio:.2%})",
+            f"({severity_ratio:.2%})",
             "resolution_status": "OPEN",
         }
 
@@ -450,9 +497,13 @@ class DataQualityService:
             "expected_points": report["total_points_expected"],
             "actual_points": report["total_points_actual"],
             "null_points": int(report.get("null_ratio", 0) * (report["total_points_actual"] or 0)),
-            "duplicate_points": int(report.get("duplicate_ratio", 0) * (report["total_points_actual"] or 0)),
+            "duplicate_points": int(
+                report.get("duplicate_ratio", 0) * (report["total_points_actual"] or 0)
+            ),
             "gap_points": report.get("gap_seconds", 0),
-            "outlier_points": int(report.get("outlier_ratio", 0) * (report["total_points_actual"] or 0)),
+            "outlier_points": int(
+                report.get("outlier_ratio", 0) * (report["total_points_actual"] or 0)
+            ),
             "completeness_ratio": report["completeness_ratio"],
             "min_v": report["min_value"],
             "max_v": report["max_value"],
@@ -463,7 +514,7 @@ class DataQualityService:
         try:
             with engine.begin() as conn:
                 result = conn.execute(stmt, params)
-                return result.rowcount
+                return cast(int | None, result.rowcount)
         except Exception as exc:
             logger.warning(
                 "Failed to store quality report for {eid}/{key}: {exc}",
@@ -510,7 +561,9 @@ class DataQualityService:
 
         null_method = cfg.get("null_fill_method", "interpolate")
         if null_method == "interpolate":
-            result[value_col] = result[value_col].interpolate(method="linear", limit=cfg.get("interpolate_limit", 3))
+            result[value_col] = result[value_col].interpolate(
+                method="linear", limit=cfg.get("interpolate_limit", 3)
+            )
         elif null_method == "ffill":
             result[value_col] = result[value_col].ffill(limit=cfg.get("fill_limit", 3))
         elif null_method == "bfill":

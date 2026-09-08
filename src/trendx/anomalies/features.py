@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Generator
-from typing import Any, Optional
+from typing import Any, ClassVar
 
 import numpy as np
 import pandas as pd
@@ -13,7 +13,7 @@ from sklearn.preprocessing import MinMaxScaler, RobustScaler, StandardScaler
 class FeatureExtractor:
     """Extract statistical features from time series windows for anomaly detection."""
 
-    SCALER_TYPES: dict[str, type] = {
+    SCALER_TYPES: ClassVar[dict[str, type]] = {
         "standard": StandardScaler,
         "robust": RobustScaler,
         "minmax": MinMaxScaler,
@@ -121,9 +121,7 @@ class FeatureExtractor:
 
         kurt_val = float(scipy_stats.kurtosis(finite, bias=False)) if len(finite) >= 4 else 0.0
         skew_val = float(scipy_stats.skew(finite, bias=False)) if len(finite) >= 3 else 0.0
-        q25, q50, q75 = (
-            float(v) for v in np.percentile(finite, [25, 50, 75])
-        )
+        q25, q50, q75 = (float(v) for v in np.percentile(finite, [25, 50, 75]))
 
         features["mean"] = mean_v
         features["std"] = std_v
@@ -192,7 +190,9 @@ class FeatureExtractor:
         df.index.name = "timestamp" if isinstance(series.index, pd.DatetimeIndex) else "index"
         logger.debug(
             "Extracted {n} windows with {features} features from series of length {len}",
-            n=len(df), features=len(df.columns) - 2, len=len(series),
+            n=len(df),
+            features=len(df.columns) - 2,
+            len=len(series),
         )
         return df
 
@@ -227,11 +227,15 @@ class FeatureExtractor:
             if len(series) < w:
                 logger.warning(
                     "Column '{col}' has {n} points (< {w}), skipping",
-                    col=col, n=len(series), w=w,
+                    col=col,
+                    n=len(series),
+                    w=w,
                 )
                 continue
             feat = self.extract_features(series, window_size=w)
-            feat = feat.rename(columns=lambda c, _col=col: f"{_col}_{c}" if not c.startswith("_") else c)
+            feat = feat.rename(
+                columns=lambda c, _col=col: f"{_col}_{c}" if not c.startswith("_") else c
+            )
             all_features.append(feat)
 
         if not all_features:
@@ -241,7 +245,8 @@ class FeatureExtractor:
         merged = pd.concat(all_features, axis=1)
         logger.info(
             "Extracted multivariate features: {rows} windows, {cols} columns",
-            rows=len(merged), cols=len(merged.columns),
+            rows=len(merged),
+            cols=len(merged.columns),
         )
         return merged
 
@@ -296,6 +301,8 @@ class FeatureExtractor:
 
         logger.info(
             "Normalized {n} windows, {c} features using {method}",
-            n=len(result), c=len(cols_to_scale), method=method,
+            n=len(result),
+            c=len(cols_to_scale),
+            method=method,
         )
         return result

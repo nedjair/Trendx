@@ -6,17 +6,14 @@ from dataclasses import dataclass
 from typing import Any
 
 from loguru import logger
-
 from trendx.config import settings
 from trendx.thingsboard.client import (
     AlarmData,
     EntityId,
-    PageData,
     ThingsBoardClient,
     ThingsBoardError,
     ThingsBoardNotFoundError,
 )
-
 
 SEVERITY_MAP: dict[str, str] = {
     "critical": "CRITICAL",
@@ -136,7 +133,10 @@ class AlarmService:
         if existing is not None:
             logger.info(
                 "Active alarm already exists for {etype}/{eid} type={atype} (id={aid}), skipping creation",
-                etype=originator_type, eid=originator_id, atype=alarm_type, aid=existing.id.id if existing.id else "?",
+                etype=originator_type,
+                eid=originator_id,
+                atype=alarm_type,
+                aid=existing.id.id if existing.id else "?",
             )
             return existing.model_dump()
 
@@ -163,7 +163,10 @@ class AlarmService:
             self._incidents[key] = incident
             logger.info(
                 "Created alarm type={atype} severity={sev} for {etype}/{eid}",
-                atype=alarm_type, sev=severity, etype=originator_type, eid=originator_id,
+                atype=alarm_type,
+                sev=severity,
+                etype=originator_type,
+                eid=originator_id,
             )
             return result
         except ThingsBoardError as exc:
@@ -226,8 +229,12 @@ class AlarmService:
             )
             return [AlarmData.model_validate(item) for item in result.data]
         except ThingsBoardError as exc:
-            logger.error("Failed to get active alarms for {etype}/{eid}: {exc}",
-                         etype=originator_type, eid=originator_id, exc=exc)
+            logger.error(
+                "Failed to get active alarms for {etype}/{eid}: {exc}",
+                etype=originator_type,
+                eid=originator_id,
+                exc=exc,
+            )
             return []
 
     async def evaluate_and_alert(
@@ -253,17 +260,22 @@ class AlarmService:
             if cooldown_remaining > 0:
                 logger.debug(
                     "Alarm cooldown active for {key}: {rem:.0f}s remaining",
-                    key=key, rem=cooldown_remaining,
+                    key=key,
+                    rem=cooldown_remaining,
                 )
                 return {"status": "cooldown", "remaining_seconds": cooldown_remaining}
 
         if incident and incident.active:
-            if score < config.close_threshold:
+            # close_threshold est normalisé à la construction (None -> open_threshold * 0.75) ;
+            # la garde None préserve le typage strict sans changer le comportement atteignable.
+            if config.close_threshold is not None and score < config.close_threshold:
                 if incident.alarm_id:
                     await self.clear_alarm(incident.alarm_id, incident_key=key)
                     logger.info(
                         "Alarm cleared for {key} (score {score:.3f} < close_threshold {thresh:.3f})",
-                        key=key, score=score, thresh=config.close_threshold,
+                        key=key,
+                        score=score,
+                        thresh=config.close_threshold,
                     )
                 return {"status": "cleared", "score": score}
 

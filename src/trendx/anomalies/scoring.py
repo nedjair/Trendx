@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 import numpy.typing as npt
@@ -102,7 +102,7 @@ class AnomalyScorer:
     ) -> float:
         """Compute the Anomaly Score Index (ASI).
 
-        ASI = intensity × duration, where intensity is the mean of the
+        ASI = intensity x duration, where intensity is the mean of the
         top-quartile scores within the episode.
 
         Parameters
@@ -136,7 +136,10 @@ class AnomalyScorer:
         asi = combined_intensity * (1.0 + duration_hours)
         logger.debug(
             "ASI={asi:.4f} (intensity={i:.4f}, peak={p:.4f}, dur_h={d:.2f})",
-            asi=asi, i=intensity, p=peak, d=duration_hours,
+            asi=asi,
+            i=intensity,
+            p=peak,
+            d=duration_hours,
         )
         return asi
 
@@ -236,7 +239,11 @@ class AnomalyScorer:
 
         labels = (scores >= threshold).astype(np.int_)
         return AnomalyScorer._labels_to_episodes(
-            labels, scores, timestamps, min_duration=0.0, cooldown=0.0,
+            labels,
+            scores,
+            timestamps,
+            min_duration=0.0,
+            cooldown=0.0,
         )
 
     @staticmethod
@@ -277,7 +284,9 @@ class AnomalyScorer:
                     prev = filtered[-1]
                     merged_indices = prev.indices + ep.indices
                     merged_ep = AnomalyScorer._build_episode(
-                        merged_indices, scores, timestamps,
+                        merged_indices,
+                        scores,
+                        timestamps,
                     )
                     if merged_ep.duration_seconds >= min_duration:
                         filtered[-1] = merged_ep
@@ -358,7 +367,9 @@ class AnomalyScorer:
                 prev = merged[-1]
                 merged_indices = prev.indices + ep.indices
                 merged_ep = AnomalyScorer._build_episode(
-                    merged_indices, scores, timestamps,
+                    merged_indices,
+                    scores,
+                    timestamps,
                 )
                 merged[-1] = merged_ep
             else:
@@ -371,7 +382,7 @@ class AnomalyScorer:
         cls,
         scores: npt.NDArray[np.float64],
         timestamps: npt.NDArray[np.datetime64],
-        config: Optional[dict[str, Any]] = None,
+        config: dict[str, Any] | None = None,
     ) -> list[AnomalyEpisode]:
         """End-to-end pipeline: scores → normalized → segmented → episodes.
 
@@ -401,23 +412,29 @@ class AnomalyScorer:
 
         if cfg.segment_grouping:
             hysteresis_labels = cls.apply_hysteresis(
-                normalized, open_threshold=effective_open, close_threshold=effective_close,
+                normalized,
+                open_threshold=effective_open,
+                close_threshold=effective_close,
             )
             episodes = cls._labels_to_episodes(
-                hysteresis_labels, normalized, timestamps,
+                hysteresis_labels,
+                normalized,
+                timestamps,
                 min_duration=cfg.min_duration_seconds,
                 cooldown=cfg.cooldown_seconds,
             )
         else:
             episodes = cls._labels_to_episodes(
                 (normalized >= effective_open).astype(np.int_),
-                normalized, timestamps,
+                normalized,
+                timestamps,
                 min_duration=cfg.min_duration_seconds,
                 cooldown=cfg.cooldown_seconds,
             )
 
         logger.info(
             "score_to_episodes: {n} episode(s) from {pts} points",
-            n=len(episodes), pts=len(normalized),
+            n=len(episodes),
+            pts=len(normalized),
         )
         return episodes

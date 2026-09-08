@@ -1,15 +1,12 @@
 from __future__ import annotations
 
-import tempfile
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
-import numpy.typing as npt
 import pandas as pd
 from loguru import logger
-
 from trendx.config import settings
 from trendx.forecasting.base import ForecastMetrics, ForecastModel, ForecastResult
 
@@ -43,15 +40,15 @@ class ProphetModel(ForecastModel):
 
     def __init__(
         self,
-        yearly_seasonality: bool | int = True,
-        weekly_seasonality: bool | int = True,
-        daily_seasonality: bool | int = False,
+        yearly_seasonality: bool | int = True,  # noqa: FBT002 -- API miroir de Prophet amont (bool|int|str acceptés) ; keyword-only casserait la compatibilité.
+        weekly_seasonality: bool | int = True,  # noqa: FBT002 -- voir yearly_seasonality ci-dessus.
+        daily_seasonality: bool | int = False,  # noqa: FBT002 -- voir yearly_seasonality ci-dessus.
         changepoint_prior_scale: float = 0.05,
         seasonality_prior_scale: float = 10.0,
         confidence_level: float = 0.80,
         cap: float | None = None,
         floor: float | None = None,
-        custom_regressors: Optional[list[dict[str, Any]]] = None,
+        custom_regressors: list[dict[str, Any]] | None = None,
         growth: str = "linear",
     ) -> None:
         self.yearly_seasonality = yearly_seasonality
@@ -65,7 +62,7 @@ class ProphetModel(ForecastModel):
         self.custom_regressors = custom_regressors or []
         self.growth = growth
         self._model: Any = None
-        self._last_df: Optional[pd.DataFrame] = None
+        self._last_df: pd.DataFrame | None = None
 
     def _build_model(self) -> Any:
         from prophet import Prophet
@@ -99,9 +96,7 @@ class ProphetModel(ForecastModel):
 
         return model
 
-    def fit(
-        self, data: Any, *, context: Optional[dict[str, Any]] = None
-    ) -> "ProphetModel":
+    def fit(self, data: Any, *, context: dict[str, Any] | None = None) -> ProphetModel:
         logger.info("ProphetModel.fit started")
         t_start = time.monotonic()
 
@@ -121,7 +116,7 @@ class ProphetModel(ForecastModel):
         return self
 
     def predict(
-        self, horizon: int = 24, *, context: Optional[dict[str, Any]] = None
+        self, horizon: int = 24, *, context: dict[str, Any] | None = None
     ) -> ForecastResult:
         if self._model is None:
             msg = "Model not fitted yet. Call fit() first."
@@ -198,7 +193,7 @@ class ProphetModel(ForecastModel):
         logger.info("ProphetModel saved to {}", path)
 
     @classmethod
-    def load(cls, path: str) -> "ProphetModel":
+    def load(cls, path: str) -> ProphetModel:
         import json
 
         from prophet.serialize import model_from_json

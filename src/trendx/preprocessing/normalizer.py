@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import numpy as np
 import pandas as pd
@@ -20,7 +20,7 @@ from sklearn.preprocessing import (
 
 
 class Normalizer:
-    SCALER_TYPES = {
+    SCALER_TYPES: ClassVar[dict[str, type]] = {
         "standard": SkStandardScaler,
         "robust": SkRobustScaler,
         "minmax": SkMinMaxScaler,

@@ -3,7 +3,6 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pytest
-
 from trendx.anomalies.features import FeatureExtractor
 
 
@@ -42,7 +41,19 @@ def test_create_windows_too_short():
 def test_extract_features_all(extractor, time_series):
     features = extractor.extract_features(time_series)
     assert not features.empty
-    expected = {"mean", "std", "min", "max", "slope", "amplitude", "spectral_energy", "diff_from_previous", "nan_ratio", "kurtosis", "skewness"}
+    expected = {
+        "mean",
+        "std",
+        "min",
+        "max",
+        "slope",
+        "amplitude",
+        "spectral_energy",
+        "diff_from_previous",
+        "nan_ratio",
+        "kurtosis",
+        "skewness",
+    }
     assert expected.issubset(set(features.columns))
 
 
@@ -52,10 +63,13 @@ def test_extract_features_multivariate():
     rng = np.random.default_rng(42)
     n = 50
     idx = pd.date_range("2024-01-01", periods=n, freq="1h")
-    df = pd.DataFrame({
-        "temp": 50 + 10 * np.sin(2 * np.pi * np.arange(n) / 24) + rng.normal(0, 1, n),
-        "humidity": 60 + 5 * np.cos(2 * np.pi * np.arange(n) / 24) + rng.normal(0, 0.5, n),
-    }, index=idx)
+    df = pd.DataFrame(
+        {
+            "temp": 50 + 10 * np.sin(2 * np.pi * np.arange(n) / 24) + rng.normal(0, 1, n),
+            "humidity": 60 + 5 * np.cos(2 * np.pi * np.arange(n) / 24) + rng.normal(0, 0.5, n),
+        },
+        index=idx,
+    )
     features = extractor.extract_features_multivariate(df)
     assert not features.empty
     assert any("temp_mean" in c or "temp_" in c for c in features.columns)

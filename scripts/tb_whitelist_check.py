@@ -6,6 +6,7 @@ Sort :
 - FAIL  sinon (code 1).
 Ne touche pas à ThingsBoard ; aucune écriture.
 """
+
 import asyncio
 import sys
 from pathlib import Path

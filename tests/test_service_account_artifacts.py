@@ -1,12 +1,11 @@
 from pathlib import Path
 
-
 ROOT = Path(__file__).parents[1]
 
 
 def test_bootstrap_is_opt_in_and_secret_safe():
     script = (ROOT / "scripts/bootstrap-service-accounts.sh").read_text()
-    assert 'TRENDX_CONFIRM_APPLY:-} == YES' in script
+    assert "TRENDX_CONFIRM_APPLY:-} == YES" in script
     assert "set -x" not in script
     assert ".secrets/" in (ROOT / ".gitignore").read_text()
     assert "DROP DATABASE" not in script
@@ -32,8 +31,8 @@ def test_sql_contains_default_revocations_and_read_only_grafana():
     sql = (ROOT / "migrations/000_service_accounts.sql").read_text()
     assert "REVOKE ALL ON DATABASE" in sql
     assert 'GRANT SELECT ON ALL TABLES IN SCHEMA public TO :"GRAFANA_DB_USER"' in sql
-    assert sql.count('GRANT CONNECT ON DATABASE') >= 3
-    assert sql.count('GRANT USAGE, CREATE ON SCHEMA public') >= 3
+    assert sql.count("GRANT CONNECT ON DATABASE") >= 3
+    assert sql.count("GRANT USAGE, CREATE ON SCHEMA public") >= 3
 
 
 def test_grafana_prevalidates_and_uses_versioned_folder_permission_method():

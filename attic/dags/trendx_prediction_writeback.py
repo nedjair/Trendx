@@ -1,18 +1,17 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from airflow.decorators import dag, task
 from loguru import logger
 from pendulum import duration
-
 from trendx.config import settings
 from trendx.services.inference import InferenceService
 
 
 @dag(
     schedule="30 * * * *",
-    start_date=datetime(2025, 1, 1, tzinfo=timezone.utc),
+    start_date=datetime(2025, 1, 1, tzinfo=UTC),
     catchup=False,
     default_args={
         "retries": 3,
@@ -53,10 +52,10 @@ def trendx_prediction_writeback() -> None:
         if not readiness.get("ready", False):
             return []
 
+        import numpy as np
+        from sqlalchemy import text
         from trendx.database.connection import manager as db_manager
         from trendx.database.repositories import PredictionModelRepository
-        from sqlalchemy import text
-        import numpy as np
 
         engine = db_manager.get_engine("analytics")
         valid_forecasts: list[dict] = []
@@ -85,19 +84,22 @@ def trendx_prediction_writeback() -> None:
                 continue
 
             has_nan = any(
-                row[1] is None or (isinstance(row[1], float) and np.isnan(row[1]))
-                for row in rows
+                row[1] is None or (isinstance(row[1], float) and np.isnan(row[1])) for row in rows
             )
             if has_nan:
-                logger.warning("Forecast for {eid}/{key} contains NaN, skipping", eid=eid[:12], key=key)
+                logger.warning(
+                    "Forecast for {eid}/{key} contains NaN, skipping", eid=eid[:12], key=key
+                )
                 continue
 
-            valid_forecasts.append({
-                "entity_id": eid,
-                "metric_key": key,
-                "points_count": len(rows),
-                "horizon": champion.horizon,
-            })
+            valid_forecasts.append(
+                {
+                    "entity_id": eid,
+                    "metric_key": key,
+                    "points_count": len(rows),
+                    "horizon": champion.horizon,
+                }
+            )
 
         logger.info(
             "Validated {n} forecasts ready for writeback",
@@ -118,11 +120,11 @@ def trendx_prediction_writeback() -> None:
         entity_id = forecast_info["entity_id"]
         metric_key = forecast_info["metric_key"]
 
-        from trendx.database.connection import manager as db_manager
-        from trendx.forecasting.base import ForecastResult
-        from sqlalchemy import text
         import numpy as np
         import pandas as pd
+        from sqlalchemy import text
+        from trendx.database.connection import manager as db_manager
+        from trendx.forecasting.base import ForecastResult
 
         engine = db_manager.get_engine("analytics")
         stmt = text("""
@@ -141,9 +143,15 @@ def trendx_prediction_writeback() -> None:
 
         forecast_result = ForecastResult(
             values=np.array([r[1] for r in rows], dtype=np.float64),
-            lower_bound=np.array([r[2] if r[2] is not None else r[1] for r in rows], dtype=np.float64),
-            upper_bound=np.array([r[3] if r[3] is not None else r[1] for r in rows], dtype=np.float64),
-            timestamps=np.array([pd.Timestamp(r[0]).to_pydatetime() for r in rows], dtype=np.datetime64),
+            lower_bound=np.array(
+                [r[2] if r[2] is not None else r[1] for r in rows], dtype=np.float64
+            ),
+            upper_bound=np.array(
+                [r[3] if r[3] is not None else r[1] for r in rows], dtype=np.float64
+            ),
+            timestamps=np.array(
+                [pd.Timestamp(r[0]).to_pydatetime() for r in rows], dtype=np.datetime64
+            ),
         )
 
         inference = InferenceService(dry_run=not settings.tb_writeback_enabled)
@@ -185,7 +193,11 @@ def trendx_prediction_writeback() -> None:
             pts=total_points,
         )
         if failed > 0:
-            failed_keys = [r["metric_key"] for r in writeback_results if r.get("status") in ("failed", "skipped")]
+            failed_keys = [
+                r["metric_key"]
+                for r in writeback_results
+                if r.get("status") in ("failed", "skipped")
+            ]
             logger.warning("Failed/skipped writebacks: {keys}", keys=failed_keys)
 
         return {

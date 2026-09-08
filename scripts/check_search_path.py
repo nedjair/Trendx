@@ -9,13 +9,13 @@ Règles :
 Sortie : SHOW search_path exécuté sur chaque connexion. Code de sortie != 0 en cas
 de violation. Ne journalise aucun secret.
 """
+
 import sys
 
 from loguru import logger
+from trendx.database.connection import manager
 
 logger.remove()
-
-from trendx.database.connection import manager
 
 TRENDX_SCHEMAS = ("trendx_catalog", "trendx_analytics")
 

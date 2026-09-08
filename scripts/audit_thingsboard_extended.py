@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """Audit complémentaire - version TB, clés du device MVP, données."""
-import urllib.request
+
 import json
 import ssl
 import sys
+import urllib.request
+from datetime import UTC
 
 
 def get_env_var(key, filepath=".env"):
-    with open(filepath, "r") as f:
+    with open(filepath) as f:
         for line in f:
             line = line.strip()
             if line and not line.startswith("#") and "=" in line:
@@ -18,19 +20,20 @@ def get_env_var(key, filepath=".env"):
 
 
 def main():
-    TB_BASE_URL = get_env_var("TB_BASE_URL") or "https://10.0.0.1:8081"
-    TB_USERNAME = get_env_var("TB_USERNAME") or ""
-    TB_PASSWORD = get_env_var("TB_PASSWORD") or ""
-    TARGET_DEVICE_ID = get_env_var("TB_DEVICE_ID")
+    tb_base_url = get_env_var("TB_BASE_URL") or "https://10.0.0.1:8081"
+    tb_username = get_env_var("TB_USERNAME") or ""
+    tb_password = get_env_var("TB_PASSWORD") or ""
+    target_device_id = get_env_var("TB_DEVICE_ID")
 
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
 
     def api_get(path, headers_extra=None, params=None):
-        url = f"{TB_BASE_URL.rstrip('/')}{path}"
+        url = f"{tb_base_url.rstrip('/')}{path}"
         if params:
             from urllib.parse import urlencode
+
             url += "?" + urlencode(params)
         h = {"Content-Type": "application/json"}
         if headers_extra:
@@ -40,9 +43,9 @@ def main():
             return json.loads(resp.read().decode())
 
     # Authentification
-    login_data = json.dumps({"username": TB_USERNAME, "password": TB_PASSWORD}).encode()
+    login_data = json.dumps({"username": tb_username, "password": tb_password}).encode()
     req = urllib.request.Request(
-        f"{TB_BASE_URL.rstrip('/')}/api/auth/login",
+        f"{tb_base_url.rstrip('/')}/api/auth/login",
         data=login_data,
         headers={"Content-Type": "application/json"},
     )
@@ -73,20 +76,22 @@ def main():
     print()
 
     # 2. Device MVP cible : toutes les clés
-    if TARGET_DEVICE_ID and TARGET_DEVICE_ID != "replace_me":
-        print(f"=== Clés télémétriques du device MVP ID={TARGET_DEVICE_ID[:12]}... ===")
+    if target_device_id and target_device_id != "replace_me":
+        print(f"=== Clés télémétriques du device MVP ID={target_device_id[:12]}... ===")
         try:
             # Infos sur le device
-            device_info = api_get(f"/api/device/{TARGET_DEVICE_ID}", headers_extra=auth_headers)
+            device_info = api_get(f"/api/device/{target_device_id}", headers_extra=auth_headers)
             print(f"Nom: {device_info.get('name','?')}")
             print(f"Type: {device_info.get('type','?')}")
-            label = device_info.get('label', '')
+            label = device_info.get("label", "")
             if label:
                 print(f"Label: {label}")
 
             # Clés timeseries
-            keys_ts = api_get(f"/api/plugins/telemetry/DEVICE/{TARGET_DEVICE_ID}/keys/timeseries",
-                              headers_extra=auth_headers)
+            keys_ts = api_get(
+                f"/api/plugins/telemetry/DEVICE/{target_device_id}/keys/timeseries",
+                headers_extra=auth_headers,
+            )
             print(f"\nClés timeseries ({len(keys_ts)}):")
             for k in sorted(keys_ts):
                 print(f"  - {k}")
@@ -94,8 +99,9 @@ def main():
             # Clés attributes
             for scope in ["SERVER_SCOPE", "CLIENT_SCOPE", "SHARED_SCOPE"]:
                 attrs = api_get(
-                    f"/api/plugins/telemetry/DEVICE/{TARGET_DEVICE_ID}/keys/attributes/{scope}",
-                    headers_extra=auth_headers)
+                    f"/api/plugins/telemetry/DEVICE/{target_device_id}/keys/attributes/{scope}",
+                    headers_extra=auth_headers,
+                )
                 if attrs:
                     print(f"\nAttributs {scope} ({len(attrs)}):")
                     for a in attrs:
@@ -103,13 +109,14 @@ def main():
 
             # 3. Données historiques sur 90j pour chaque clé numérique
             print("\n=== Données 90j pour chaque clé (présence + stats) ===")
-            from datetime import datetime, timedelta, timezone
-            now = datetime.now(timezone.utc)
+            from datetime import datetime, timedelta
+
+            now = datetime.now(UTC)
             start90 = now - timedelta(days=90)
 
             # Regrouper par lots de 10 clés max
             for i in range(0, min(len(keys_ts), 60), 10):
-                batch = keys_ts[i:i+10]
+                batch = keys_ts[i : i + 10]
                 params = {
                     "keys": ",".join(batch),
                     "startTs": int(start90.timestamp() * 1000),
@@ -118,7 +125,7 @@ def main():
                 }
                 try:
                     data = api_get(
-                        f"/api/plugins/telemetry/DEVICE/{TARGET_DEVICE_ID}/values/timeseries",
+                        f"/api/plugins/telemetry/DEVICE/{target_device_id}/values/timeseries",
                         headers_extra=auth_headers,
                         params=params,
                     )
@@ -133,7 +140,9 @@ def main():
                                 except Exception:
                                     pass
                             if numeric_vals:
-                                print(f"  {k}: {n} points | min={min(numeric_vals):.3f} | max={max(numeric_vals):.3f} | moy={sum(numeric_vals)/len(numeric_vals):.3f}")
+                                print(
+                                    f"  {k}: {n} points | min={min(numeric_vals):.3f} | max={max(numeric_vals):.3f} | moy={sum(numeric_vals)/len(numeric_vals):.3f}"
+                                )
                             else:
                                 print(f"  {k}: {n} points (non numériques)")
                         else:
@@ -151,8 +160,11 @@ def main():
     devices = []
     page = 0
     while True:
-        data = api_get("/api/tenant/devices", headers_extra=auth_headers,
-                       params={"pageSize": 100, "page": page})
+        data = api_get(
+            "/api/tenant/devices",
+            headers_extra=auth_headers,
+            params={"pageSize": 100, "page": page},
+        )
         devices.extend(data.get("data", []))
         if len(data.get("data", [])) < 100:
             break
@@ -162,9 +174,14 @@ def main():
         did = d["id"]["id"]
         dname = d.get("name", "?")
         try:
-            keys = api_get(f"/api/plugins/telemetry/DEVICE/{did}/keys/timeseries",
-                           headers_extra=auth_headers)
-            interesting = [k for k in keys if "battery" in k.lower() or "soc" in k.lower() or "level" in k.lower()]
+            keys = api_get(
+                f"/api/plugins/telemetry/DEVICE/{did}/keys/timeseries", headers_extra=auth_headers
+            )
+            interesting = [
+                k
+                for k in keys
+                if "battery" in k.lower() or "soc" in k.lower() or "level" in k.lower()
+            ]
             if interesting:
                 print(f"  * {dname} ({d['type']}): {interesting}")
         except Exception:

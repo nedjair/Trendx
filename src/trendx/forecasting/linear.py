@@ -1,23 +1,21 @@
 from __future__ import annotations
 
-import json
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import Any
 
 import numpy as np
 import numpy.typing as npt
 import pandas as pd
 from loguru import logger
-
 from trendx.config import settings
 from trendx.forecasting.base import ForecastMetrics, ForecastModel, ForecastResult
 
 
 def _engineer_features(
     df: pd.DataFrame,
-    feature_set: Optional[list[str]] = None,
+    feature_set: list[str] | None = None,
 ) -> pd.DataFrame:
     """Build a feature matrix from time-based features.
 
@@ -89,10 +87,14 @@ def _engineer_features(
         features["cos_hour"] = np.cos(2 * np.pi * ts.dt.hour.values / 24).astype(np.float64)
 
     if "sin_dayofweek" in selected:
-        features["sin_dayofweek"] = np.sin(2 * np.pi * ts.dt.dayofweek.values / 7).astype(np.float64)
+        features["sin_dayofweek"] = np.sin(2 * np.pi * ts.dt.dayofweek.values / 7).astype(
+            np.float64
+        )
 
     if "cos_dayofweek" in selected:
-        features["cos_dayofweek"] = np.cos(2 * np.pi * ts.dt.dayofweek.values / 7).astype(np.float64)
+        features["cos_dayofweek"] = np.cos(2 * np.pi * ts.dt.dayofweek.values / 7).astype(
+            np.float64
+        )
 
     if "sin_month" in selected:
         features["sin_month"] = np.sin(2 * np.pi * ts.dt.month.values / 12).astype(np.float64)
@@ -104,27 +106,27 @@ def _engineer_features(
 
 
 def _ols_prediction_intervals(
-    X: npt.NDArray[np.float64],
+    x: npt.NDArray[np.float64],
     y: npt.NDArray[np.float64],
-    X_pred: npt.NDArray[np.float64],
+    x_pred: npt.NDArray[np.float64],
     alpha: float = 0.2,
 ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
     """Compute prediction intervals for OLS using statsmodels."""
     from scipy import stats as scipy_stats
 
-    n, k = X.shape
+    n, k = x.shape
     dof = n - k
     if dof <= 0:
-        return np.full(X_pred.shape[0], np.nan), np.full(X_pred.shape[0], np.nan)
+        return np.full(x_pred.shape[0], np.nan), np.full(x_pred.shape[0], np.nan)
 
-    XtX_inv = np.linalg.pinv(X.T @ X)
-    y_pred = X_pred @ (np.linalg.pinv(X) @ y)
+    xtx_inv = np.linalg.pinv(x.T @ x)
+    y_pred = x_pred @ (np.linalg.pinv(x) @ y)
 
-    residuals = y - X @ (np.linalg.pinv(X) @ y)
+    residuals = y - x @ (np.linalg.pinv(x) @ y)
     sigma2 = np.sum(residuals**2) / dof
 
     t_val = scipy_stats.t.ppf(1 - alpha / 2, dof)
-    se = np.sqrt(sigma2 * (1 + np.sum(X_pred * (X_pred @ XtX_inv), axis=1)))
+    se = np.sqrt(sigma2 * (1 + np.sum(x_pred * (x_pred @ xtx_inv), axis=1)))
 
     lower = y_pred - t_val * se
     upper = y_pred + t_val * se
@@ -144,18 +146,16 @@ class LinearRegressionModel(ForecastModel):
 
     def __init__(
         self,
-        feature_set: Optional[list[str]] = None,
+        feature_set: list[str] | None = None,
         confidence_level: float = 0.80,
     ) -> None:
         self.feature_set = feature_set
         self.confidence_level = confidence_level
         self._model: Any = None
         self._feature_cols: list[str] = []
-        self._train_df: Optional[pd.DataFrame] = None
+        self._train_df: pd.DataFrame | None = None
 
-    def fit(
-        self, data: Any, *, context: Optional[dict[str, Any]] = None
-    ) -> "LinearRegressionModel":
+    def fit(self, data: Any, *, context: dict[str, Any] | None = None) -> LinearRegressionModel:
         from sklearn.linear_model import LinearRegression
 
         logger.info("LinearRegressionModel.fit started")
@@ -165,11 +165,11 @@ class LinearRegressionModel(ForecastModel):
         features = _engineer_features(df, self.feature_set)
         self._feature_cols = list(features.columns)
 
-        X = features.values.astype(np.float64)
+        x = features.values.astype(np.float64)
         y = df["y"].values.astype(np.float64)
 
         self._model = LinearRegression()
-        self._model.fit(X, y)
+        self._model.fit(x, y)
         self._train_df = df
 
         elapsed = time.monotonic() - t_start
@@ -177,7 +177,7 @@ class LinearRegressionModel(ForecastModel):
         return self
 
     def predict(
-        self, horizon: int = 24, *, context: Optional[dict[str, Any]] = None
+        self, horizon: int = 24, *, context: dict[str, Any] | None = None
     ) -> ForecastResult:
         if self._model is None or self._train_df is None:
             msg = "Model not fitted yet. Call fit() first."
@@ -192,17 +192,21 @@ class LinearRegressionModel(ForecastModel):
 
         future_df = pd.DataFrame({"ds": future_ts})
         future_features = _engineer_features(future_df, self.feature_set)
-        X_future = future_features.values.astype(np.float64)
+        x_future = future_features.values.astype(np.float64)
 
-        values = self._model.predict(X_future).astype(np.float64)
+        values = self._model.predict(x_future).astype(np.float64)
 
         alpha = 1.0 - self.confidence_level
-        n_features = X_future.shape[1]
+        n_features = x_future.shape[1]
         if n_features > 0:
             residuals = self._train_df["y"].values - self._model.predict(
                 _engineer_features(self._train_df, self.feature_set).values.astype(np.float64)
             )
-            std_resid = np.std(residuals, ddof=n_features) if len(residuals) > n_features else np.std(residuals)
+            std_resid = (
+                np.std(residuals, ddof=n_features)
+                if len(residuals) > n_features
+                else np.std(residuals)
+            )
             from scipy import stats as scipy_stats
 
             t_val = scipy_stats.t.ppf(1 - alpha / 2, max(1, len(residuals) - n_features))
@@ -249,7 +253,7 @@ class LinearRegressionModel(ForecastModel):
         logger.info("LinearRegressionModel saved to {}", path)
 
     @classmethod
-    def load(cls, path: str) -> "LinearRegressionModel":
+    def load(cls, path: str) -> LinearRegressionModel:
         import joblib
 
         path_obj = Path(path)
@@ -300,20 +304,18 @@ class OLSRegressionModel(ForecastModel):
 
     def __init__(
         self,
-        feature_set: Optional[list[str]] = None,
+        feature_set: list[str] | None = None,
         confidence_level: float = 0.80,
     ) -> None:
         self.feature_set = feature_set
         self.confidence_level = confidence_level
         self._model: Any = None
         self._feature_cols: list[str] = []
-        self._train_df: Optional[pd.DataFrame] = None
-        self._X_train: Optional[npt.NDArray[np.float64]] = None
-        self._y_train: Optional[npt.NDArray[np.float64]] = None
+        self._train_df: pd.DataFrame | None = None
+        self._X_train: npt.NDArray[np.float64] | None = None
+        self._y_train: npt.NDArray[np.float64] | None = None
 
-    def fit(
-        self, data: Any, *, context: Optional[dict[str, Any]] = None
-    ) -> "OLSRegressionModel":
+    def fit(self, data: Any, *, context: dict[str, Any] | None = None) -> OLSRegressionModel:
         import statsmodels.api as sm
 
         logger.info("OLSRegressionModel.fit started")
@@ -323,12 +325,12 @@ class OLSRegressionModel(ForecastModel):
         features = _engineer_features(df, self.feature_set)
         self._feature_cols = list(features.columns)
 
-        X = sm.add_constant(features.values.astype(np.float64))
+        x = sm.add_constant(features.values.astype(np.float64))
         y = df["y"].values.astype(np.float64)
 
-        self._model = sm.OLS(y, X).fit()
+        self._model = sm.OLS(y, x).fit()
         self._train_df = df
-        self._X_train = X
+        self._X_train = x
         self._y_train = y
 
         elapsed = time.monotonic() - t_start
@@ -336,7 +338,7 @@ class OLSRegressionModel(ForecastModel):
         return self
 
     def predict(
-        self, horizon: int = 24, *, context: Optional[dict[str, Any]] = None
+        self, horizon: int = 24, *, context: dict[str, Any] | None = None
     ) -> ForecastResult:
         if self._model is None or self._train_df is None:
             msg = "Model not fitted yet. Call fit() first."
@@ -354,9 +356,9 @@ class OLSRegressionModel(ForecastModel):
 
         import statsmodels.api as sm
 
-        X_future = sm.add_constant(future_features.values.astype(np.float64), has_constant="add")
+        x_future = sm.add_constant(future_features.values.astype(np.float64), has_constant="add")
 
-        pred = self._model.get_prediction(X_future)
+        pred = self._model.get_prediction(x_future)
         values = pred.predicted_mean.astype(np.float64)
 
         alpha = 1.0 - self.confidence_level
@@ -392,7 +394,9 @@ class OLSRegressionModel(ForecastModel):
             "confidence_level": self.confidence_level,
             "feature_cols": self._feature_cols,
             "params": self._model.params.to_dict(),
-            "cov_params": self._model.cov_params().to_dict() if hasattr(self._model, "cov_params") else None,
+            "cov_params": self._model.cov_params().to_dict()
+            if hasattr(self._model, "cov_params")
+            else None,
         }
         with tempfile.NamedTemporaryFile(suffix=".pkl", delete=False) as tmp:
             joblib.dump({"model": self._model, "params": payload}, tmp.name)
@@ -402,7 +406,7 @@ class OLSRegressionModel(ForecastModel):
         logger.info("OLSRegressionModel saved to {}", path)
 
     @classmethod
-    def load(cls, path: str) -> "OLSRegressionModel":
+    def load(cls, path: str) -> OLSRegressionModel:
         import joblib
 
         path_obj = Path(path)

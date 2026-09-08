@@ -169,6 +169,14 @@ cours = "cours"
 langage = "langage"
 explicatif = "explicatif"
 restauration = "restauration"
+# Prophet API : colonne de sortie yhat/yhat_upper (identifiant amont, intouchable).
+yhat = "yhat"
+# Français : verbe "avancer" dans les docstrings de scheduler_guards.
+avance = "avance"
+# Français : "moteur" (docstrings search_path), "amont" (commentaires), "Pont" (en-têtes de tests).
+moteur = "moteur"
+amont = "amont"
+Pont = "Pont"
 
 # Baseline technique préexistante (HEAD 050c0ae) : src/trendx/main.py contient 41
 # diagnostics "Untyped decorator" FastAPI en mode strict, non liés a Wave 3 et non

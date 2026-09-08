@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from airflow.decorators import dag, task
 from loguru import logger
@@ -9,7 +9,7 @@ from pendulum import duration
 
 @dag(
     schedule="0 */6 * * *",
-    start_date=datetime(2025, 1, 1, tzinfo=timezone.utc),
+    start_date=datetime(2025, 1, 1, tzinfo=UTC),
     catchup=False,
     default_args={
         "retries": 3,
@@ -27,8 +27,8 @@ def trendx_calculated_fields() -> None:
     )
     def get_active_fields() -> list[dict]:
         """Retrieve active calculated field definitions from the catalog database."""
-        from trendx.database.connection import manager as db_manager
         from sqlalchemy import text
+        from trendx.database.connection import manager as db_manager
 
         engine = db_manager.get_engine("catalog")
         stmt = text("""
@@ -41,16 +41,18 @@ def trendx_calculated_fields() -> None:
         with engine.connect() as conn:
             rows = conn.execute(stmt).fetchall()
             for row in rows:
-                fields.append({
-                    "id": str(row[0]),
-                    "name": row[1],
-                    "entity_type": row[2],
-                    "metric_key": row[3],
-                    "expression": row[4],
-                    "trigger_metric_keys": row[5] or [],
-                    "schedule": row[6],
-                    "params": row[7] or {},
-                })
+                fields.append(
+                    {
+                        "id": str(row[0]),
+                        "name": row[1],
+                        "entity_type": row[2],
+                        "metric_key": row[3],
+                        "expression": row[4],
+                        "trigger_metric_keys": row[5] or [],
+                        "schedule": row[6],
+                        "params": row[7] or {},
+                    }
+                )
         logger.info("Found {n} active calculated fields", n=len(fields))
         return fields
 
@@ -61,10 +63,10 @@ def trendx_calculated_fields() -> None:
     def compute_fields(field: dict) -> dict:
         """Compute a single calculated field by evaluating its expression
         against the source telemetry data."""
-        from trendx.database.connection import manager as db_manager
-        from sqlalchemy import text
-        import pandas as pd
         import numpy as np
+        import pandas as pd
+        from sqlalchemy import text
+        from trendx.database.connection import manager as db_manager
 
         engine = db_manager.get_engine("analytics")
         trigger_keys = field.get("trigger_metric_keys", [])
@@ -75,8 +77,7 @@ def trendx_calculated_fields() -> None:
             logger.warning("No trigger keys for field {name}, skipping", name=field["name"])
             return {"field_id": field["id"], "status": "skipped", "reason": "no_trigger_keys"}
 
-        end_ts = datetime.now(timezone.utc)
-        from trendx.config import settings
+        end_ts = datetime.now(UTC)
         start_ts = end_ts - __import__("datetime").timedelta(hours=24)
 
         series_map: dict[str, pd.Series] = {}
@@ -112,11 +113,19 @@ def trendx_calculated_fields() -> None:
             result = eval(expression, {"__builtins__": {}}, local_vars)
             if isinstance(result, pd.Series):
                 result = result.to_frame(name="value").reset_index()
-            elif isinstance(result, (int, float, np.number)):
+            elif isinstance(result, int | float | np.number):
                 pass
             else:
-                logger.warning("Unexpected result type {t} for field {name}", t=type(result).__name__, name=field["name"])
-                return {"field_id": field["id"], "status": "error", "reason": "unexpected_result_type"}
+                logger.warning(
+                    "Unexpected result type {t} for field {name}",
+                    t=type(result).__name__,
+                    name=field["name"],
+                )
+                return {
+                    "field_id": field["id"],
+                    "status": "error",
+                    "reason": "unexpected_result_type",
+                }
         except Exception as exc:
             logger.error("Evaluation failed for field {name}: {exc}", name=field["name"], exc=exc)
             return {"field_id": field["id"], "status": "error", "reason": str(exc)}

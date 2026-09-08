@@ -93,9 +93,7 @@ def test_process_one_task_success_calls_complete(fake_svc: _FakeTaskService) -> 
         tid, eid, "topology_discovery", json.dumps({"action": "full_discovery"})
     )
     handler = MagicMock(return_value={"ok": True})
-    with _patch_svc(fake_svc), patch.dict(
-        worker_mod.JOB_DISPATCH, {"topology_discovery": handler}
-    ):
+    with _patch_svc(fake_svc), patch.dict(worker_mod.JOB_DISPATCH, {"topology_discovery": handler}):
         done = worker_mod._process_one_task("w1")
 
     assert done is True
@@ -149,9 +147,7 @@ def test_process_one_task_handler_exception_fails(fake_svc: _FakeTaskService) ->
     eid = uuid.uuid4()
     fake_svc.claim_return = _FakeRequest(tid, eid, "topology_discovery", json.dumps({}))
     handler = MagicMock(side_effect=RuntimeError("boom"))
-    with _patch_svc(fake_svc), patch.dict(
-        worker_mod.JOB_DISPATCH, {"topology_discovery": handler}
-    ):
+    with _patch_svc(fake_svc), patch.dict(worker_mod.JOB_DISPATCH, {"topology_discovery": handler}):
         done = worker_mod._process_one_task("w1")
 
     assert done is True
@@ -189,11 +185,12 @@ def test_async_bridge_uses_asyncio_run_per_handler() -> None:
     svc_instance.full_sync = MagicMock(return_value=_fake_coro())
     svc_instance.update_catalog = MagicMock(return_value=_fake_coro())
 
-    with patch(
-        "trendx.services.worker.TopologyDiscoveryService", return_value=svc_instance
-    ), patch(
-        "trendx.services.worker.asyncio.run",
-        side_effect=lambda c: (captured.append(c) or {"ok": True}),
+    with (
+        patch("trendx.services.worker.TopologyDiscoveryService", return_value=svc_instance),
+        patch(
+            "trendx.services.worker.asyncio.run",
+            side_effect=lambda c: (captured.append(c) or {"ok": True}),
+        ),
     ):
         result = worker_mod._run_topology_discovery({}, "t", "e")
 
@@ -270,18 +267,18 @@ def test_worker_e2e_real_lifecycle_transitions_to_finished() -> None:
     svc = TaskService()
     handler = MagicMock(return_value={"ok": True})
 
-    with patch.object(svc, "_get_session_and_repo", return_value=cm), patch(
-        "trendx.services.worker.TaskService", return_value=svc
-    ), patch.dict(worker_mod.JOB_DISPATCH, {"topology_discovery": handler}):
+    with (
+        patch.object(svc, "_get_session_and_repo", return_value=cm),
+        patch("trendx.services.worker.TaskService", return_value=svc),
+        patch.dict(worker_mod.JOB_DISPATCH, {"topology_discovery": handler}),
+    ):
         done = worker_mod._process_one_task("w1")
 
     assert done is True
     execution = next(o for o in session._added if isinstance(o, TrendzTaskExecution))
     # PENDING request -> execution CREATED -> (RUNNING via progress) -> FINISHED
     assert execution.status == EXECUTION_STATUS_FINISHED
-    rec = next(
-        o for o in session._added if isinstance(o, TrendzTaskExecutionStateRecord)
-    )
+    rec = next(o for o in session._added if isinstance(o, TrendzTaskExecutionStateRecord))
     assert rec.state == STATE_RECORD_WORKING
     steps = [o for o in session._added if isinstance(o, TrendzTaskExecutionProgressStep)]
     assert len(steps) == 1
@@ -314,16 +311,16 @@ def test_worker_e2e_real_lifecycle_running_intermediate() -> None:
     svc = TaskService()
     handler = MagicMock(return_value={"ok": True})
 
-    with patch.object(svc, "_get_session_and_repo", return_value=cm), patch(
-        "trendx.services.worker.TaskService", return_value=svc
-    ), patch.dict(worker_mod.JOB_DISPATCH, {"topology_sync": handler}):
+    with (
+        patch.object(svc, "_get_session_and_repo", return_value=cm),
+        patch("trendx.services.worker.TaskService", return_value=svc),
+        patch.dict(worker_mod.JOB_DISPATCH, {"topology_sync": handler}),
+    ):
         execution = None
 
         def _capture_progress(task_id: str, progress: int, status: str | None = None) -> None:
             nonlocal execution
-            execution = next(
-                o for o in session._added if isinstance(o, TrendzTaskExecution)
-            )
+            execution = next(o for o in session._added if isinstance(o, TrendzTaskExecution))
             assert execution.status == EXECUTION_STATUS_RUNNING
 
         svc.update_progress = _capture_progress  # type: ignore[assignment]

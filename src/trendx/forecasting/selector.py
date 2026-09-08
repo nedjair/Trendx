@@ -1,15 +1,12 @@
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 import numpy as np
 import pandas as pd
 from loguru import logger
-
-from trendx.config import settings
 from trendx.forecasting.base import (
     ForecastMetrics,
     ForecastModel,
@@ -36,7 +33,7 @@ class CompetitionResult:
     aggregated_metrics: ForecastMetrics = field(default_factory=ForecastMetrics)
     stability_score: float = 1.0
     is_champion: bool = False
-    previous_champion_id: Optional[str] = None
+    previous_champion_id: str | None = None
 
 
 class ModelSelector:
@@ -73,10 +70,10 @@ class ModelSelector:
     def backtest(
         self,
         model_class: type[ForecastModel],
-        params: Optional[dict[str, Any]],
+        params: dict[str, Any] | None,
         data: pd.DataFrame,
-        n_windows: Optional[int] = None,
-        test_size: Optional[float] = None,
+        n_windows: int | None = None,
+        test_size: float | None = None,
     ) -> list[BacktestWindowResult]:
         """Walk-forward backtest on a single model configuration.
 
@@ -137,23 +134,27 @@ class ModelSelector:
 
                 y_true = test_df["y"].values[:min_len].astype(np.float64)
                 y_pred = result.values[:min_len]
-                y_lower = result.lower_bound[:min_len] if len(result.lower_bound) >= min_len else None
-                y_upper = result.upper_bound[:min_len] if len(result.upper_bound) >= min_len else None
+                y_lower = (
+                    result.lower_bound[:min_len] if len(result.lower_bound) >= min_len else None
+                )
+                y_upper = (
+                    result.upper_bound[:min_len] if len(result.upper_bound) >= min_len else None
+                )
 
                 metrics = compute_metrics(y_true, y_pred, y_lower, y_upper)
 
                 window_result = BacktestWindowResult(
                     window_order=i,
-                    train_start=train_df["ds"].min().to_pydatetime().replace(tzinfo=timezone.utc)
+                    train_start=train_df["ds"].min().to_pydatetime().replace(tzinfo=UTC)
                     if hasattr(train_df["ds"].min(), "to_pydatetime")
                     else train_df["ds"].min(),
-                    train_end=train_df["ds"].max().to_pydatetime().replace(tzinfo=timezone.utc)
+                    train_end=train_df["ds"].max().to_pydatetime().replace(tzinfo=UTC)
                     if hasattr(train_df["ds"].max(), "to_pydatetime")
                     else train_df["ds"].max(),
-                    forecast_start=test_df["ds"].iloc[0].to_pydatetime().replace(tzinfo=timezone.utc)
+                    forecast_start=test_df["ds"].iloc[0].to_pydatetime().replace(tzinfo=UTC)
                     if hasattr(test_df["ds"].iloc[0], "to_pydatetime")
                     else test_df["ds"].iloc[0],
-                    forecast_end=test_df["ds"].iloc[-1].to_pydatetime().replace(tzinfo=timezone.utc)
+                    forecast_end=test_df["ds"].iloc[-1].to_pydatetime().replace(tzinfo=UTC)
                     if hasattr(test_df["ds"].iloc[-1], "to_pydatetime")
                     else test_df["ds"].iloc[-1],
                     metrics=metrics,
@@ -174,9 +175,7 @@ class ModelSelector:
 
         return results
 
-    def _aggregate_metrics(
-        self, windows: list[BacktestWindowResult]
-    ) -> ForecastMetrics:
+    def _aggregate_metrics(self, windows: list[BacktestWindowResult]) -> ForecastMetrics:
         if not windows:
             return ForecastMetrics()
 
@@ -217,8 +216,8 @@ class ModelSelector:
         entity_id: str,
         metric_key: str,
         data: pd.DataFrame,
-        candidates: list[tuple[str, Optional[dict[str, Any]]]],
-        n_windows: Optional[int] = None,
+        candidates: list[tuple[str, dict[str, Any] | None]],
+        n_windows: int | None = None,
     ) -> list[CompetitionResult]:
         """Run a competition among several model configurations.
 
@@ -290,7 +289,7 @@ class ModelSelector:
         self,
         results: list[CompetitionResult],
         metric: str = "sMAPE",
-    ) -> Optional[CompetitionResult]:
+    ) -> CompetitionResult | None:
         """Select the best model from competition results.
 
         Applies stability and marginal-gain checks.
@@ -362,7 +361,7 @@ class ModelSelector:
         entity_id: str,
         metric_key: str,
         candidate_model: CompetitionResult,
-        previous_champion_id: Optional[str] = None,
+        previous_champion_id: str | None = None,
     ) -> None:
         """Log champion promotion.
 
@@ -395,8 +394,8 @@ class ModelSelector:
         entity_id: str,
         metric_key: str,
         data: pd.DataFrame,
-        candidates: list[tuple[str, Optional[dict[str, Any]]]],
-    ) -> Optional[CompetitionResult]:
+        candidates: list[tuple[str, dict[str, Any] | None]],
+    ) -> CompetitionResult | None:
         """Run AUTO strategy: compare PER_DEVICE and GLOBAL if applicable.
 
         For MVP purposes, this delegates to ``run_competition``.

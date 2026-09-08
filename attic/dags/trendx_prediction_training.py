@@ -1,19 +1,17 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from airflow.decorators import dag, task
 from loguru import logger
 from pendulum import duration
-
 from trendx.config import settings
 from trendx.services.training import TrainingService
-from trendx.forecasting.selector import CompetitionResult
 
 
 @dag(
     schedule="0 2 * * *",
-    start_date=datetime(2025, 1, 1, tzinfo=timezone.utc),
+    start_date=datetime(2025, 1, 1, tzinfo=UTC),
     catchup=False,
     default_args={
         "retries": 3,
@@ -31,8 +29,8 @@ def trendx_prediction_training() -> None:
     )
     def get_eligible_devices() -> list[dict]:
         """Find device/metric pairs with sufficient data for training."""
-        from trendx.database.connection import manager as db_manager
         from sqlalchemy import text
+        from trendx.database.connection import manager as db_manager
 
         engine = db_manager.get_engine("analytics")
         lookback = settings.training_lookback_days
@@ -52,11 +50,13 @@ def trendx_prediction_training() -> None:
                 {"lookback": lookback, "min_pts": min_points},
             ).fetchall()
             for row in rows:
-                pairs.append({
-                    "entity_id": row[0],
-                    "metric_key": row[1],
-                    "point_count": row[2],
-                })
+                pairs.append(
+                    {
+                        "entity_id": row[0],
+                        "metric_key": row[1],
+                        "point_count": row[2],
+                    }
+                )
         logger.info("Found {n} eligible device/metric pairs for training", n=len(pairs))
         return pairs
 
@@ -90,7 +90,11 @@ def trendx_prediction_training() -> None:
                     "success": True,
                     "model_id": str(model.id),
                 }
-            logger.warning("Retrain failed for {eid}/{key}, falling back to competition", eid=entity_id[:12], key=metric_key)
+            logger.warning(
+                "Retrain failed for {eid}/{key}, falling back to competition",
+                eid=entity_id[:12],
+                key=metric_key,
+            )
 
         logger.info("Running competition for {eid}/{key}", eid=entity_id[:12], key=metric_key)
         result = training.auto_select_strategy(entity_id, metric_key)
@@ -119,12 +123,14 @@ def trendx_prediction_training() -> None:
         registered: list[dict] = []
         for r in training_results:
             if r.get("success") and r.get("model_id"):
-                registered.append({
-                    "entity_id": r["entity_id"],
-                    "metric_key": r["metric_key"],
-                    "model_id": r["model_id"],
-                    "algorithm": r.get("algorithm"),
-                })
+                registered.append(
+                    {
+                        "entity_id": r["entity_id"],
+                        "metric_key": r["metric_key"],
+                        "model_id": r["model_id"],
+                        "algorithm": r.get("algorithm"),
+                    }
+                )
                 logger.info(
                     "Model registered for {eid}/{key}: id={mid} algo={algo}",
                     eid=r["entity_id"][:12],

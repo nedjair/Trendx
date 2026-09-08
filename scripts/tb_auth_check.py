@@ -7,6 +7,7 @@ Règle (post-signalement sécurité) :
 
 Ne jamais afficher ni le mot de passe ni le jeton JWT.
 """
+
 import json
 import os
 import ssl
@@ -17,7 +18,7 @@ from urllib.error import HTTPError, URLError
 
 def get_env_var(key, filepath=".env"):
     try:
-        with open(filepath, "r") as f:
+        with open(filepath) as f:
             for line in f:
                 line = line.strip()
                 if line and not line.startswith("#") and "=" in line:
@@ -37,12 +38,13 @@ def main() -> int:
     # Fallback coffre si .env incomplet
     if not username or not password:
         username = get_env_var("TB_SERVICE_USER_EMAIL", ".secrets/service-accounts.env") or username
-        password = get_env_var("TB_SERVICE_USER_PASSWORD", ".secrets/service-accounts.env") or password
+        password = (
+            get_env_var("TB_SERVICE_USER_PASSWORD", ".secrets/service-accounts.env") or password
+        )
 
     auth_configured = (
-        (get_env_var("TB_AUTH_CONFIGURED") or os.environ.get("TB_AUTH_CONFIGURED", "") or "")
-        .lower() in ("true", "1", "yes")
-    )
+        get_env_var("TB_AUTH_CONFIGURED") or os.environ.get("TB_AUTH_CONFIGURED", "") or ""
+    ).lower() in ("true", "1", "yes")
 
     if not auth_configured:
         print("SKIP — TB_AUTH_CONFIGURED non activé ; authentification ThingsBoard non vérifiée")
