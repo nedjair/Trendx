@@ -22,11 +22,14 @@ ENV DEBIAN_FRONTEND=noninteractive \
     POETRY_VERSION=1.8.3
 
 # Paquets système essentiels (ssl, tzdata, build outils minimaux, psql client, curl healthcheck)
+# Versions épinglées observées le 2026-09-08 dans python:3.11.14-slim-bookworm (DL3008).
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-        ca-certificates curl gnupg lsb-release tzdata locales \
-        build-essential libpq-dev python3-dev libopenblas-dev liblapack-dev \
-        postgresql-client netcat-openbsd dumb-init procps \
+        ca-certificates=20250419~deb12u1 curl=7.88.1-10+deb12u15 gnupg=2.2.40-1.1+deb12u2 \
+        lsb-release=12.0-1 tzdata=2026b-0+deb12u1 locales=2.36-9+deb12u14 \
+        build-essential=12.9 libpq-dev=15.19-0+deb12u1 python3-dev=3.11.2-1+b1 \
+        libopenblas-dev=0.3.21+ds-4 liblapack-dev=3.11.0-2 \
+        postgresql-client=15+248+deb12u1 netcat-openbsd=1.219-1 dumb-init=1.2.5-2 procps=2:4.0.2-3 \
  && rm -rf /var/lib/apt/lists/* \
  && update-ca-certificates \
  && echo "UTC" > /etc/timezone && dpkg-reconfigure -f noninteractive tzdata
@@ -39,8 +42,9 @@ WORKDIR $APP_HOME
 COPY constraints.txt ./constraints.txt
 COPY pyproject.toml ./pyproject.toml
 # MAJ pip/wheel, setuptools <68 (pkg_resources needed by mlflow removed in 68+)
-RUN python3 -m pip install --upgrade pip wheel \
- && python3 -m pip install --no-cache-dir "setuptools>=65,<68" \
+# -c constraints.txt : setuptools borné par setuptools<81 (compatible >=65,<68) ; DL3013 satisfait via constraints.
+RUN python3 -m pip install --upgrade -c ./constraints.txt pip wheel \
+ && python3 -m pip install --no-cache-dir -c ./constraints.txt "setuptools>=65,<68" \
  && python3 -m pip install --no-cache-dir -c constraints.txt \
         "fastapi>=0.110" \
         "uvicorn>=0.29" \
@@ -68,9 +72,11 @@ RUN python3 -m pip install --upgrade pip wheel \
         "mlflow>=2.12" \
         "matplotlib>=3.8" \
         "orjson>=3.9" \
- && python3 -m pip install --no-cache-dir \
+ && python3 -m pip install --no-cache-dir -c ./constraints.txt \
         "uvicorn[standard]" \
         "psycopg[binary]"
+# NOTE : uvicorn épinglé via constraints.txt (uvicorn==0.29.0) ; psycopg[binary] (v3)
+# sans pin projet — flotte sur la dernière v3 (documenté, inchangé vs avant).
 
 # ——— Code projet (monté en volume local, COPY ici pour image autonome) ———
 COPY ./src $APP_HOME/src
@@ -80,7 +86,7 @@ COPY ./tests $APP_HOME/tests
 
 # Installer trendx en mode editable (depuis pyproject.toml src layout)
 RUN python3 -m pip install --no-cache-dir --no-deps -c constraints.txt -e . \
- && python3 -c "import trendx; print('trendx import OK:', trendx.__name__ if hasattr(trendx,'__name__') else 'OK')" 2>/dev/null || true
+ && python3 -c "import trendx; print('trendx import OK:', trendx.__name__ if hasattr(trendx,'__name__') else 'OK')" 2>/dev/null; true
 
 # ——— Exposition ———
 EXPOSE 8000

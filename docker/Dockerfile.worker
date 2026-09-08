@@ -21,9 +21,12 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-        ca-certificates curl gnupg tzdata locales \
-        build-essential libpq-dev python3-dev libopenblas-dev liblapack-dev gfortran \
-        postgresql-client netcat-openbsd dumb-init procps libgomp1 \
+        ca-certificates=20250419~deb12u1 curl=7.88.1-10+deb12u15 gnupg=2.2.40-1.1+deb12u2 \
+        tzdata=2026b-0+deb12u1 locales=2.36-9+deb12u14 \
+        build-essential=12.9 libpq-dev=15.19-0+deb12u1 python3-dev=3.11.2-1+b1 \
+        libopenblas-dev=0.3.21+ds-4 liblapack-dev=3.11.0-2 gfortran=4:12.2.0-3 \
+        postgresql-client=15+248+deb12u1 netcat-openbsd=1.219-1 dumb-init=1.2.5-2 \
+        procps=2:4.0.2-3 libgomp1=12.2.0-14+deb12u1 \
  && rm -rf /var/lib/apt/lists/* \
  && update-ca-certificates \
  && echo "UTC" > /etc/timezone && dpkg-reconfigure -f noninteractive tzdata
@@ -60,7 +63,7 @@ RUN /opt/venv/bin/python -m pip install --no-cache-dir -c /app/constraints.txt \
 
 # ——— Installer le package trendx SANS celery/redis (worker APScheduler process) ———
 RUN /opt/venv/bin/python -m pip install --no-cache-dir --no-deps -c /app/constraints.txt -e . \
-  && /opt/venv/bin/python -c "import trendx; print('trendx import OK')" 2>/dev/null || true
+  && /opt/venv/bin/python -c "import trendx; print('trendx import OK')" 2>/dev/null; true
 
 # ——— User non-root identique Trendz python-executor ———
 RUN groupadd -r -g 1000 python-executor \
@@ -75,7 +78,7 @@ COPY pyproject.toml /app/pyproject.toml
 
 RUN chown -R python-executor:python-executor /app
 
-USER python-executor
+USER 1000
 WORKDIR /usr/share/python-executor
 ENV SERVER_PORT=8181 \
     SCRIPT_ENGINE_RUNTIME_TIMEOUT=10000 \

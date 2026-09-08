@@ -9,15 +9,16 @@ LABEL org.opencontainers.image.title="Trendx Airflow Scheduler + Web" \
       org.opencontainers.image.description="Apache Airflow 2.9.0 with Trendx ML dependencies" \
       org.opencontainers.image.version="0.1.0"
 
-USER root
+USER 0
 
 # Paquets système minimaux + psycopg2 build deps + OpenBLAS (Prophet)
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-        build-essential libpq-dev python3-dev \
-        libopenblas-dev liblapack-dev gfortran libgomp1 \
-        curl dumb-init procps postgresql-client git \
+        build-essential=12.9 libpq-dev=18.6-1.pgdg12+2 python3-dev=3.11.2-1+b1 \
+        libopenblas-dev=0.3.21+ds-4 liblapack-dev=3.11.0-2 gfortran=4:12.2.0-3 \
+        libgomp1=12.2.0-14+deb12u1 curl=7.88.1-10+deb12u15 dumb-init=1.2.5-2 \
+        procps=2:4.0.2-3 postgresql-client=18+293.pgdg12+1 git=1:2.39.5-0+deb12u3 \
  && rm -rf /var/lib/apt/lists/*
 
 # ——— Constraints épinglées ———
@@ -26,14 +27,14 @@ COPY pyproject.toml /opt/airflow/pyproject.toml
 COPY ./src /opt/airflow/src
 
 # Installation deps ML + projet trendx (Airflow pip dans venv airflow)
-USER airflow
+USER 50000
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PYTHONPATH="/opt/airflow/src:/opt/airflow/dags:${PYTHONPATH:-}"
 
-RUN pip install --upgrade pip setuptools wheel \
+RUN pip install --upgrade --constraint /opt/airflow/constraints.txt pip setuptools wheel \
  && pip install --no-cache-dir \
         --constraint /opt/airflow/constraints.txt \
         "numpy==1.26.4" \
@@ -65,8 +66,9 @@ RUN pip install --no-cache-dir "SQLAlchemy==1.4.52" \
  && python -c "import sqlalchemy; print(f'SQLAlchemy {sqlalchemy.__version__} OK')"
 
 # Installer trendx editable src
-RUN cd /opt/airflow && pip install --no-deps --no-cache-dir -e . 2>/dev/null || true \
- && python -c "import sys; sys.path.insert(0, '/opt/airflow/src'); import trendx; print('trendx import OK (airflow image)')" 2>/dev/null || true
+WORKDIR /opt/airflow
+RUN pip install --no-deps --no-cache-dir -e . 2>/dev/null; true \
+ && python -c "import sys; sys.path.insert(0, '/opt/airflow/src'); import trendx; print('trendx import OK (airflow image)')" 2>/dev/null; true
 
 ENTRYPOINT ["/usr/bin/dumb-init", "--"]
 CMD ["bash", "-c", "airflow version"]
