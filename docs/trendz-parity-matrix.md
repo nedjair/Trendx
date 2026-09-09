@@ -47,9 +47,9 @@
 | 2.1 | Business Entity (BE) par profil | [thingsboard.io/docs/trendz/concepts/business-entities/](https://thingsboard.io/docs/trendz/concepts/business-entities/) | Un BE = groupe Devices/Assets de même type | 1 ligne `entity_profiles` → BE unique | `catalog` DB | non commencé | 1 BE par profil device créé après discovery | — | Non | — |
 | 2.2 | Champs BE (nom, owner, attributs, télémétries) | id. | Chaque BE expose Entity Name, Owner, Attribute, Telemetry | Table `entity_attributes` + `telemetry_keys` liées au profil | non commencé | Tous les champs apparaissent dans Metric Explorer | — | Non | — |
 | 2.3 | Relations entre BE (uniques par profil) | id. | **1 seul type de relation autorisé entre 2 profils** (pour jointure stable) | Table `entity_relations` + contrainte d'unicité per profil | non commencé | 2 relations actives entre mêmes 2 profils → message utilisateur | Trendz impose exactement 1, Trendx alertera | Non | — |
-| 2.4 | Jointures par relation | id. | Agrégation multi-niveaux (Building → Apartment → Meter → Somme télémetries | `BusinessQueryEngine` avec relation path | non commencé | Test 3-niveau SUM/agg correct | — | Non | N niveaux |
-| 2.5 | Filtres par BE | id. | Filtrer par BE entier | API / UI filtres dynamiques | Web UI filters | non commencé | Filtre = 1 Building → résultat correct | — | Non | — |
-| 2.6 | Regroupements par BE (profil, customer, attribut) | id. | GroupBy profil/customer/attribut arbitraire | API groupBy dimensions | non commencé | GroupBy customer → 1 ligne par customer | — | Non | — |
+| 2.4 | Jointures par relation | id. | Agrégation multi-niveaux (Building → Apartment → Meter → Somme télémetries | `BusinessQueryEngine` avec relation path | partiel avancé | path b1→aA→mA + SUM 2 dev (720bfa9, 20 tests) | PROUVÉ TRENDX ≠ parité Trendz | Non | moteur in-memory, jointure DB/UI restantes |
+| 2.5 | Filtres par BE | id. | Filtrer par BE entier | API / UI filtres dynamiques | Web UI filters | partiel avancé | filtres attr eq/gt/in-set + télémétrie (720bfa9) | PROUVÉ TRENDX ≠ parité Trendz | Non | UI restante |
+| 2.6 | Regroupements par BE (profil, customer, attribut) | id. | GroupBy profil/customer/attribut arbitraire | API groupBy dimensions | non commencé | GroupBy customer → 1 ligne par customer | moteur entity/metric/time prouvé (720bfa9) ; profil/customer DB non prouvés | Non | dimensions DB restantes |
 | 2.7 | Drill-down | id. | Clic sur agrégat → détail | UI drill-down interactif | Web UI + API detail | non commencé | Clic agrégat → filtre appliqué | — | Non | — |
 | 2.8 | Comparaison inter-devices | id. | Comparer plusieurs devices similaires | Série multiple + UI select devices | Web UI charts | non commencé | Superposer 5 devices même profil OK | — | Non | — |
 
@@ -61,7 +61,7 @@
 |---|------------------------|----------------|------------------------|-------------------|------------|--------|---------------------|---------------------|------------|---------|
 | 3.1 | Sélection entités + métriques multiples | [thingsboard.io/docs/trendz/metric/overview/](https://thingsboard.io/docs/trendz/metric/overview/) | Sélection 1→N entités + 1→N métriques | Vue Metric Explorer | Web UI Explorer | non commencé | Sélection multi-device/multi-metric OK | — | Non | — |
 | 3.2 | Disponibilité / période couverte | id. | Plage de données disponibles | API stats + UI info-bulle | API catalog ingestion | non commencé | Min/max timestamp par série | — | Non | — |
-| 3.3 | Nombre de points + mini/maxi/moy/std/écart/somme | id. | Statistiques descriptives immédiates | API stats agrégées SQL TimescaleDB | non commencé | Toutes stats exactes vs pandas | — | Non | — |
+| 3.3 | Nombre de points + mini/maxi/moy/std/écart/somme | id. | Statistiques descriptives immédiates | API stats agrégées SQL TimescaleDB | partiel avancé | describe_series vs pandas (720bfa9, 352/6/7) | PROUVÉ TRENDX ≠ parité Trendz | Non | SQL Timescale + UI restants |
 | 3.4 | Détection données manquantes | id. | Visualiser écarts et taux NaN | Quality service + UI gaps indicator | preprocessing.quality | non commencé | Taux remplissage affiché | — | Non | — |
 | 3.5 | Distribution (histogramme) | id. | Distribution des valeurs | Histogramme view | Web UI charts | non commencé | Distribution cohérente avec données | — | Non | — |
 | 3.6 | Tendances temporelles | id. | Vue temporelle rapide | Line chart by default | Web UI Line | non commencé | Affichage chronologique | — | Non | — |
@@ -104,14 +104,14 @@
 
 | # | Fonctionnalité Trendz | Doc officielle | Comportement documenté | Équivalent Trendx | Composants | Statut | Tests d'acceptation | Différences connues | Dép. TB PE | Limites |
 |---|------------------------|----------------|------------------------|-------------------|------------|--------|---------------------|---------------------|------------|---------|
-| 5.1 | Filtrage par attributs / plage | Trendz filter docs | Conditions multiples | Filter builder | API filter parser | non commencé | — | Non | — |
-| 5.2 | Filtrage par télémétrie | id. | Filtre sur valeurs ts | Query WHERE clause | API + TimescaleDB | non commencé | — | Non | — |
-| 5.3 | Agrégations MIN/MAX/SUM/AVG/COUNT/UNIQ/MEDIAN/P90/P95/P99 | Trendz data grouping | Liste agrégations supportées | Mapping SQL + fonctions TimescaleDB | non commencé | Chaque agrégation vérifiée | — | Non | — |
-| 5.4 | GroupBy temporel (heure/jour/sem/mois/année) | id. | Buckets de temps | Time_bucket TimescaleDB hyperfunctions | non commencé | Chaque unité OK | — | Non | — |
-| 5.5 | GroupBy entité /profil /customer /attribut | id. | Dimensions arbitraires | GROUP BY dimensions | API query | non commencé | — | Non | — |
+| 5.1 | Filtrage par attributs / plage | Trendz filter docs | Conditions multiples | Filter builder | API filter parser | partiel avancé | eq/ne/gt/gte/lt/lte/in-set + combos (720bfa9) | PROUVÉ TRENDX ≠ parité Trendz | Non | parser SQL restant |
+| 5.2 | Filtrage par télémétrie | id. | Filtre sur valeurs ts | Query WHERE clause | API + TimescaleDB | partiel avancé | gt/gte/lt/lte/eq + bornes UTC (720bfa9) | PROUVÉ TRENDX ≠ parité Trendz | Non | clause SQL restante |
+| 5.3 | Agrégations MIN/MAX/SUM/AVG/COUNT/UNIQ/MEDIAN/P90/P95/P99 | Trendz data grouping | Liste agrégations supportées | Mapping SQL + fonctions TimescaleDB | partiel avancé | MIN/MAX/SUM/AVG/COUNT/MEDIAN/P90 + Pn vs oracle (720bfa9) | PROUVÉ TRENDX ≠ parité Trendz | Non | UNIQ/P95/P99/SQL restants |
+| 5.4 | GroupBy temporel (heure/jour/sem/mois/année) | id. | Buckets de temps | Time_bucket TimescaleDB hyperfunctions | partiel avancé | buckets 1H/1D UTC + rejet invalide (720bfa9) | PROUVÉ TRENDX ≠ parité Trendz | Non | sem/mois/année/SQL restants |
+| 5.5 | GroupBy entité /profil /customer /attribut | id. | Dimensions arbitraires | GROUP BY dimensions | API query | partiel avancé | entity/metric/time prouvés (720bfa9) | PROUVÉ TRENDX ≠ parité Trendz | Non | profil/customer/attribut DB restants |
 | 5.6 | Séries multiples | Line series slot | 1 ligne par entité/série | UI series slot + multi-series | non commencé | — | Non | — |
-| 5.7 | Alias des séries (alias champ) | Trendz viz docs | Renommer colonnes/séries | Alias mapper UI | non commencé | — | Non | — |
-| 5.8 | Fuseaux horaires | id. | Sélection TZ par vue | TZ config vue → at Time zone | non commencé | Conversions vérifiées | Non | — |
+| 5.7 | Alias des séries (alias champ) | Trendz viz docs | Renommer colonnes/séries | Alias mapper UI | partiel avancé | alias métrique/agrégation stables (720bfa9) | PROUVÉ TRENDX ≠ parité Trendz | Non | mapper UI restant |
+| 5.8 | Fuseaux horaires | id. | Sélection TZ par vue | TZ config vue → at Time zone | partiel avancé | UTC stockage + Paris affichage + DST (720bfa9) | PROUVÉ TRENDX ≠ parité Trendz | Non | sélecteur UI restant |
 
 ---
 
