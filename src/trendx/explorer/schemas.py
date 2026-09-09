@@ -81,7 +81,7 @@ class QueryIn(BaseModel):
     @classmethod
     def _check_group_by(cls, v: list[str]) -> list[str]:
         for dim in v:
-            if dim not in ("entity", "metric", "time"):
+            if dim not in ("entity", "metric", "time", "profile", "customer"):
                 raise ValueError(f"Unknown group_by dimension: {dim}")
         return v
 
@@ -108,3 +108,32 @@ class QueryOut(BaseModel):
     columns: list[str]
     rows: list[dict[str, Any]]
     n_rows: int = 0
+
+
+class DrilldownOut(BaseModel):
+    entity_id: str
+    depth: int
+    descendants: list[str]
+
+
+class CompareSide(BaseModel):
+    entity_ids: list[str] = Field(default_factory=list)
+    profile: str | None = None
+    customer: str | None = None
+
+
+class CompareIn(BaseModel):
+    left: CompareSide
+    right: CompareSide
+    metric: str = Field(min_length=1)
+    start: str | None = None
+    end: str | None = None
+    aggregation: str = "AVG"
+    bucket: str = "1D"
+
+
+class CompareOut(BaseModel):
+    metric: str
+    aggregation: str
+    left: list[dict[str, Any]]
+    right: list[dict[str, Any]]

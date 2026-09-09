@@ -42,3 +42,25 @@ def post_query(req: schemas.QueryIn) -> schemas.QueryOut:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/drilldown", response_model=schemas.DrilldownOut)
+def get_drilldown(
+    entity_id: str = Query(...), depth: int = Query(default=3)
+) -> schemas.DrilldownOut:
+    try:
+        return service.drilldown(entity_id, depth)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/compare", response_model=schemas.CompareOut)
+def post_compare(req: schemas.CompareIn) -> schemas.CompareOut:
+    try:
+        return service.compare(req)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc

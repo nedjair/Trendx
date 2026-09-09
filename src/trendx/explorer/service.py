@@ -157,3 +157,68 @@ def query(req: schemas.QueryIn) -> schemas.QueryOut:
                     item[col] = val
         rows.append(item)
     return schemas.QueryOut(columns=list(df.columns), rows=rows, n_rows=len(rows))
+
+
+def drilldown(entity_id: str, depth: int = 3) -> schemas.DrilldownOut:
+    if not isinstance(depth, int) or isinstance(depth, bool) or depth < 1 or depth > 6:
+        raise ValueError(f"Invalid depth: {depth!r}. Expected int in 1..6")
+    eng = get_engine()
+    ensure_schema(eng)
+    from trendx.query.sql import resolve_descendants_cte
+
+    descendants = resolve_descendants_cte(eng, entity_id, max_depth=depth)
+    return schemas.DrilldownOut(entity_id=entity_id, depth=depth, descendants=descendants)
+
+
+def _selector_ids(conn: Any, side: schemas.CompareSide) -> list[str]:
+    from sqlalchemy import text as _text
+
+    ids = list(side.entity_ids)
+    if side.profile is not None:
+        rows = conn.execute(
+            _text("SELECT id FROM qsql_entity WHERE profile = :p ORDER BY 1"), {"p": side.profile}
+        ).fetchall()
+        ids.extend(r[0] for r in rows)
+    if side.customer is not None:
+        rows = conn.execute(
+            _text("SELECT id FROM qsql_entity WHERE customer = :c ORDER BY 1"), {"c": side.customer}
+        ).fetchall()
+        ids.extend(r[0] for r in rows)
+    return sorted(set(ids))
+
+
+def compare(req: schemas.CompareIn) -> schemas.CompareOut:
+    from trendx.query.sql import SqlQueryEngine
+
+    agg = str(req.aggregation).upper()
+    if agg not in schemas.AGGREGATIONS and not (
+        agg.startswith("P") and agg[1:].replace(".", "", 1).isdigit()
+    ):
+        raise ValueError(f"Unknown aggregation: {req.aggregation}")
+    eng = get_engine()
+    ensure_schema(eng)
+    with eng.connect() as conn:
+        left_ids = _selector_ids(conn, req.left)
+        right_ids = _selector_ids(conn, req.right)
+
+    def _side(ids: list[str]) -> list[dict[str, object]]:
+        if not ids:
+            return []
+        bq = BusinessQuery(
+            entity_ids=ids,
+            metric=req.metric,
+            start=pd.Timestamp(req.start) if req.start else None,
+            end=pd.Timestamp(req.end) if req.end else None,
+            group_by=("entity",),
+            aggregations=(agg,),
+            bucket=req.bucket,
+        )
+        df = SqlQueryEngine(eng).run(bq)
+        return [
+            {"entity": row["entity"], "value": float(row["value"])}
+            for _, row in df.sort_values(by=["entity"]).iterrows()
+        ]
+
+    return schemas.CompareOut(
+        metric=req.metric, aggregation=agg, left=_side(left_ids), right=_side(right_ids)
+    )
