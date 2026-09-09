@@ -122,6 +122,36 @@ def _resolve_entities(
     return out
 
 
+_DIMENSIONS_SQL: dict[str, str] = {
+    "profile": "e.profile",
+    "customer": "e.customer",
+}
+
+
+def resolve_descendants_cte(engine: Engine, start_id: str, max_depth: int = 6) -> list[str]:
+    """Deterministic descendant resolution via recursive CTE.
+
+    Cycle-safe (visited path array), depth-bounded, sorted output.
+    Values bound; depth validated as positive int.
+    """
+    if not isinstance(max_depth, int) or isinstance(max_depth, bool) or max_depth < 1:
+        raise ValueError(f"Invalid max_depth: {max_depth!r}")
+    sql = """
+        WITH RECURSIVE tree(id, depth, path) AS (
+            SELECT :start AS id, 0 AS depth, ARRAY[:start] AS path
+            UNION
+            SELECT r.to_id, tree.depth + 1, tree.path || r.to_id
+            FROM qsql_relation r
+            JOIN tree ON tree.id = r.from_id
+            WHERE tree.depth < :max_depth AND NOT (r.to_id = ANY(tree.path))
+        )
+        SELECT DISTINCT id FROM tree WHERE depth > 0 ORDER BY 1
+    """
+    with engine.connect() as conn:
+        rows = conn.execute(text(sql), {"start": start_id, "max_depth": max_depth}).fetchall()
+    return [r[0] for r in rows]
+
+
 class SqlQueryEngine:
     """Execute BusinessQuery against ephemeral PostgreSQL."""
 
@@ -182,6 +212,10 @@ class SqlQueryEngine:
             if "metric" in query.group_by:
                 select.append("t.metric AS metric")
                 group.append("t.metric")
+            for dim in ("profile", "customer"):
+                if dim in query.group_by:
+                    select.append(f"{_DIMENSIONS_SQL[dim]} AS {dim}")
+                    group.append(_DIMENSIONS_SQL[dim])
             bucketed = False
             if "time" in query.group_by:
                 select.append(f"date_trunc('{BUCKETS_SQL[query.bucket]}', t.ts) AS bucket")
@@ -194,7 +228,11 @@ class SqlQueryEngine:
                     expr = f"percentile_cont({q}) WITHIN GROUP (ORDER BY t.value)"
                 label = (query.agg_aliases or {}).get(agg, agg)
                 select.append(f"{expr} AS {agg.lower()}_v")
-            sql = f"SELECT {', '.join(select)} FROM qsql_telemetry t WHERE {' AND '.join(where)}"  # nosec B608 -- identifiers from fixed whitelists; values bound
+            from_clause = "qsql_telemetry t"
+            dims = [d for d in ("profile", "customer") if d in query.group_by]
+            if dims:
+                from_clause += " JOIN qsql_entity e ON e.id = t.entity_id"
+            sql = f"SELECT {', '.join(select)} FROM {from_clause} WHERE {' AND '.join(where)}"  # nosec B608 -- identifiers from fixed whitelists; values bound
             if group:
                 sql += f" GROUP BY {', '.join(group)}"
             rows = conn.execute(text(sql), params).fetchall()
@@ -207,6 +245,10 @@ class SqlQueryEngine:
                     base["entity"] = mapping["entity"]
                 if "metric" in mapping:
                     base["metric"] = mapping["metric"]
+                if "profile" in mapping:
+                    base["profile"] = mapping["profile"]
+                if "customer" in mapping:
+                    base["customer"] = mapping["customer"]
                 if "bucket" in mapping:
                     base["bucket"] = mapping["bucket"]
                 for agg in aggs:
@@ -227,7 +269,18 @@ class SqlQueryEngine:
                 out["bucket"] = pd.to_datetime(out["bucket"], utc=True).dt.tz_convert(tz)
             cols = [
                 c
-                for c in (["entity", "metric", "bucket", "metric_label", "agg", "value"])
+                for c in (
+                    [
+                        "entity",
+                        "metric",
+                        "profile",
+                        "customer",
+                        "bucket",
+                        "metric_label",
+                        "agg",
+                        "value",
+                    ]
+                )
                 if c in out.columns
             ]
             return out[cols].sort_values(by=cols).reset_index(drop=True)
