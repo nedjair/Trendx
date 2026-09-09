@@ -154,7 +154,7 @@
 
 ## 8. Prédiction / Forecasting
 
-> **Note de section :** modules codés et couverts par des tests unitaires (`forecasting/*`, `preprocessing.normalizer`, `mlops`). Statut `partiel` : l'orchestration worker/scheduler et les tests de parité Trendz (≥ 2 devices) sont manquants. Voir §20.
+> **Note de section :** modules codés et validés en exécution P0 (85 passed/3 xfailed forecast ; worker `trendx_train/forecast` dispatch dynamique e153d2e ; MLflow filesystem réel + PG16 éphémère §8.17/8.20). Statut `partiel avancé` : PROUVÉ DANS TRENDX, parité Trendz quantitative non démontrée. Voir §20.
 
 | # | Fonctionnalité Trendz | Doc officielle | Comportement documenté | Équivalent Trendx | Composants | Statut | Tests d'acceptation | Différences connues | Dép. TB PE | Limites |
 |---|------------------------|----------------|------------------------|-------------------|------------|--------|---------------------|---------------------|------------|---------|
@@ -174,17 +174,17 @@
 | 8.14 | Confidence Level + Band | id. | Intervalle confiance | Conf interval percentiles | UI bandes | non commencé | — | — | Non | — |
 | 8.15 | Tâches d'entraînement périodiques | id. + Background Jobs | Daily retrain | Airflow DAG training | non commencé | — | — | Non | — |
 | 8.16 | Tâches de prédiction périodiques | id. | Hourly forecast | Airflow DAG generation | non commencé | — | — | Non | — |
-| 8.17 | Versionnement + rollback modèle | id. + MLflow | versions + champion/challenger | MLflow registry | partiel | — | — | Non | — |
+| 8.17 | Versionnement + rollback modèle | id. + MLflow | versions + champion/challenger | MLflow registry | partiel avancé | register/champion/promote/rollback/history PG16 éphémère (e153d2e, run 2026-09-09) | PROUVÉ TRENDX ≠ parité Trendz | Non | DB jetable, pas prod |
 | 8.18 | Writeback prévisions dans TB `_EPD_<metric>` | §6.7 + prompt | Save TB as telemetry | TB API writeback + prefix `_EPD_` | non commencé | Désactivé par défaut | — | Non | — |
-| 8.19 | Stratégie PER_DEVICE/PER_PROFILE/GLOBAL/AUTO | §6.7 prompt | Comparaison auto stratégies | Forecasting selector | partiel | — | — | Non | — |
-| 8.20 | Sélection meilleur modèle + compétition | Prompt requis | Sélection meilleur | Model selector | partiel | — | — | Non | — |
-| 8.21 | Métriques MAE/RMSE/sMAPE/MAPE (conditions)/coverage/largeur/biais | Prompt §10.3 +§11.12 | Store in MLflow metrics | ML tracking metrics mlops | partiel | Toutes calc. vs TB PE | Non | — |
+| 8.19 | Stratégie PER_DEVICE/PER_PROFILE/GLOBAL/AUTO | §6.7 prompt | Comparaison auto stratégies | Forecasting selector | partiel avancé | 4 stratégies exécutées suite P0 (e153d2e) | sémantique exacte Trendz non démontrée | Non | — |
+| 8.20 | Sélection meilleur modèle + compétition | Prompt requis | Sélection meilleur | Model selector | partiel avancé | compétition/champion + E2E DB éphémère (e153d2e) | critère exact Trendz non démontré | Non | — |
+| 8.21 | Métriques MAE/RMSE/sMAPE/MAPE (conditions)/coverage/largeur/biais | Prompt §10.3 +§11.12 | Store in MLflow metrics | ML tracking metrics mlops | partiel avancé | MAE/RMSE/sMAPE/MAPE exécutés 2 dev×2 métriques (e153d2e) | équivalence quantitative Trendz non démontrée | Non | réf. interne sklearn/statsmodels |
 
 ---
 
 ## 9. Détection d'anomalies
 
-> **Note de section :** modules codés et couverts par des tests unitaires (`anomalies/*`, `preprocessing.quality`, `alerting.py`). Statut `partiel` : l'orchestration worker/scheduler et les tests de parité Trendz (≥ 2 devices) sont manquants. Voir §20.
+> **Note de section :** modules validés P0 (41 passed/2 skipped/2 xfailed + E2E 2-dev : 10 fenêtres, 16 features, 2 épisodes, ASI 4.747 + scan mocké 2×2, 0 alarme/writeback). Statut `partiel avancé` : PROUVÉ DANS TRENDX ≠ parité Trendz. Scheduler productif restant. Voir §20.
 
 | # | Fonctionnalité Trendz | Doc officielle | Comportement documenté | Équivalent Trendx | Composants | Statut | Tests d'acceptation | Différences connues | Dép. TB PE | Limites |
 |---|------------------------|----------------|------------------------|-------------------|------------|--------|---------------------|---------------------|------------|---------|
@@ -192,22 +192,22 @@
 | 9.2 | Sélection entités + métriques | id. | 1→N devices / 1→N metrics | Model definition table | non commencé | — | — | Non | — |
 | 9.3 | Période d'apprentissage config | id. | Plage référence | training_period | non commencé | — | — | Non | — |
 | 9.4 | Segmentation fenêtres | id. | Fenêtres taille configurable | Segmentation features | features | non commencé | — | — | Non | — |
-| 9.5 | Extraction features (moy, écart, min/max, pente, amplitude, énergie spectrale, diff fenêtre précédente, taux NaN) | §11 Prompt features minimales | 9 features+ minimales | anomalies.features.py | partiel | Toutes features exactes | — | Non | — |
+| 9.5 | Extraction features (moy, écart, min/max, pente, amplitude, énergie spectrale, diff fenêtre précédente, taux NaN) | §11 Prompt features minimales | 9 features+ minimales | anomalies.features.py | partiel avancé | E2E 2-dev 10 fenêtres/16 features (2026-09-09) | PROUVÉ TRENDX ≠ parité Trendz | Non | — |
 | 9.6 | Entraînement périodique | id. + jobs | Retrain régulier | Airflow anomaly_training DAG | non commencé | — | — | Non | — |
-| 9.7 | Scoring + Anomaly Score (intensité déviation) | id. + §6.8 prompt | Score normalisé | anomalies.scoring.score() | partiel | — | — | Non | — |
-| 9.8 | Anomaly Score Index = intensité × durée | §6.8 Prompt spec | Score cumul | anomalies.scoring.asi() | partiel | — | — | Non | — |
+| 9.7 | Scoring + Anomaly Score (intensité déviation) | id. + §6.8 prompt | Score normalisé | anomalies.scoring.score() | partiel avancé | score minmax E2E 2-dev (2026-09-09) | PROUVÉ TRENDX ≠ parité Trendz | Non | — |
+| 9.8 | Anomaly Score Index = intensité × durée | §6.8 Prompt spec | Score cumul | anomalies.scoring.asi() | partiel avancé | ASI 4.747 E2E 2-dev (2026-09-09) | PROUVÉ TRENDX ≠ parité Trendz | Non | — |
 | 9.9 | Revue des résultats | Trendz Anomaly viz | UI visual | UI anomaly review | non commencé | — | — | Non | — |
 | 9.10 | Scan historique rétroactif | id. + jobs | Rétroscan | DAG anomaly_scan backfill | non commencé | — | — | Non | — |
 | 9.11 | Scan périodique horaire | id. | Scan continu | Airflow anomaly_scan_hourly DAG | non commencé | — | — | Non | — |
 | 9.12 | Mise à jour modèle | id. + Versioning | Nouvelles versions | anomaly_model_definitions + versions | non commencé | — | — | Non | — |
 | 9.13 | Sauvegarde scores dans TB télémetrie | [pke-iot.expert/docs/trendz/anomaly/anomaly-score-save-to-thingsboard/](https://www.pke-iot.expert/docs/trendz/anomaly/anomaly-score-save-to-thingsboard/) | save anom score telemetry | writeback scores TB | non commencé | Désactivé défaut | — | Non | — |
 | 9.14 | Création alarmes ThingsBoard | id. + §6.8 Prompt alarms | Alarme TB | Alarm API TB CUSTOM_USER | Désactivé défaut | non commencé | — | — | Non | — |
-| 9.15 | Isolation Forest | Prompt §6.8 modèles minimaux | Modèle 1 | detectors.isolation_forest | anomalies.detectors.py | partiel | — | — | Non | — |
-| 9.16 | PyOD modèles (LOF, kNN, etc.) | id. | Modèles famille PyOD | detectors.pyod() | partiel | — | — | Non | — |
-| 9.17 | KMeans / DBSCAN clustering | id. | Modèle 3 | detectors.cluster_based | partiel | — | — | Non | — |
+| 9.15 | Isolation Forest | Prompt §6.8 modèles minimaux | Modèle 1 | detectors.isolation_forest | anomalies.detectors.py | partiel avancé | fit/score E2E 2-dev (2026-09-09) | PROUVÉ TRENDX ≠ parité Trendz | Non | xfail intact |
+| 9.16 | PyOD modèles (LOF, kNN, etc.) | id. | Modèles famille PyOD | detectors.pyod() | partiel avancé | suite 41 passed (skips env) | PROUVÉ TRENDX ≠ parité Trendz | Non | — |
+| 9.17 | KMeans / DBSCAN clustering | id. | Modèle 3 | detectors.cluster_based | partiel avancé | suite 41 passed | PROUVÉ TRENDX ≠ parité Trendz | Non | xfail intact |
 | 9.18 | Sensibilité + contamination + window size | id. + §6.8 | Configurable | Config UI + DB | non commencé | — | — | Non | — |
-| 9.19 | Hystérésis + seuil ouverture/fermeture | §6.8 prompt spec | Anti-flapping | scoring hysteresis module | partiel | — | — | Non | — |
-| 9.20 | Cooldown + durée minimale + anti-duplication alarms | id. + §9.3 | Alarms cool | alerting.py | partiel | — | — | Non | — |
+| 9.19 | Hystérésis + seuil ouverture/fermeture | §6.8 prompt spec | Anti-flapping | scoring hysteresis module | partiel avancé | hysteresis 0.6/0.3 E2E (2026-09-09) | PROUVÉ TRENDX ≠ parité Trendz | Non | — |
+| 9.20 | Cooldown + durée minimale + anti-duplication alarms | id. + §9.3 | Alarms cool | alerting.py | partiel avancé | cooldown/min-duration suite + E2E, 0 alarme | scheduler prod restant | Non | — |
 
 ---
 
@@ -308,17 +308,17 @@
 | # | Fonctionnalité Trendz | Doc officielle | Comportement documenté | Équivalent Trendx | Composants | Statut | Tests d'acceptation | Différences connues | Dép. TB PE | Limites |
 |---|------------------------|----------------|------------------------|-------------------|------------|--------|---------------------|---------------------|------------|---------|
 | 16.1 | Ingestion dynamique tous devices | §4 + §9 Prompt | Sans device codé | IngestAll devices | services.ingestion.dynamic | non commencé | — | — | Non | — |
-| 16.2 | Ingestion idempotente (upsert) | §9.1 Prompt AGENTS.md | Pas dedup | Unique constraint + upsert | sensor_data hypertable | non commencé | — | — | Non | — |
-| 16.3 | Checkpoints indépendants device×métrique | §4 +§9 | Reprise | ingestion_checkpoints table | non commencé | — | Non | — |
+| 16.2 | Ingestion idempotente (upsert) | §9.1 Prompt AGENTS.md | Pas dedup | Unique constraint + upsert | sensor_data hypertable | partiel avancé | PG16 éphémère 48+24→72, 0 doublon, ON CONFLICT (2026-09-09) | E2E TB réel non exécuté | Non | DB jetable |
+| 16.3 | Checkpoints indépendants device×métrique | §4 +§9 | Reprise | ingestion_checkpoints table | partiel avancé | checkpoint 2024-01-12T23:00Z PG16 éphémère | E2E TB réel non exécuté | Non | DB jetable |
 | 16.4 | Traitement lots tenant/profil/device/métrique/fenêtre | §9 Prompt lots | Lots pas mémoire constante | Batch processing | non commencé | — | Non | — |
 | 16.5 | Contrôle qualité NaN/doublons/fréquence/domaines métier | §10 AGENTS quality rules | QC avant ML | preprocessing.quality + dead-letter | partiel | — | Non | — |
-| 16.6 | Dead-letter / table d'erreurs | id. | Isolation erreurs | Table errors | non commencé | — | Non | — |
+| 16.6 | Dead-letter / table d'erreurs | id. | Isolation erreurs | Table errors | partiel avancé | dead-letter B 1 ligne, A 72 intact (2026-09-09) | E2E TB réel non exécuté | Non | DB jetable |
 | 16.7 | Reprise après échec | id. | Rejouer | non commencé | — | Non | — |
-| 16.8 | UTC normalisation de tous ts | §9.2 AGENTS UTC | Sans timezone mix | non commencé | — | Non | — |
+| 16.8 | UTC normalisation de tous ts | §9.2 AGENTS UTC | Sans timezone mix | partiel avancé | — | séries UTC E2E + overlap | — | Non | — |
 | 16.9 | Canal 1: API ThingsBoard pour topologie + métadonnées writeback | §5 Prompt | API | client thingsboard | non commencé | — | Non | — |
 | 16.10 | Canal 2 : PostgreSQL TB lecture-seulement pour haute volumétrie télémétrie haute performance | §5 Prompt SQL read | Haute perf TB PG read-only | PG read-only | connector | partiel | Port 5432 refusé → nécessite action infra 10.0.0.1 pare-feu ou tunnel SSH/réplica | — | OUI Blocage | — |
 | 16.11 | Fallback API ThingsBoard télémétrie si SQL indisponible | §5.3 Prompt priorité | Fallback automatique | Fallback si SQL off | partiel | API utilisée par défaut | — | Non | Moins performant |
-| 16.12 | Tolérance périmétrique par device (1 casse pas les autres | §4.4 Prompt isolation | Isolation erreur | non commencé | — | Non | — |
+| 16.12 | Tolérance périmétrique par device (1 casse pas les autres | §4.4 Prompt isolation | Isolation erreur | partiel avancé | — | B isolé, A intact PG16 éphémère | — | Non | — |
 
 ---
 
