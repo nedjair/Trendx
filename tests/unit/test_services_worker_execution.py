@@ -186,9 +186,11 @@ def test_async_bridge_uses_asyncio_run_per_handler() -> None:
     svc_instance.update_catalog = MagicMock(return_value=_fake_coro())
 
     with (
-        patch("trendx.services.worker.TopologyDiscoveryService", return_value=svc_instance),
+        # Les handlers P0 vivent désormais dans trendx.scheduler.handlers
+        # (extraction, comportement inchangé) : le seam asyncio/service suit.
+        patch("trendx.scheduler.handlers.TopologyDiscoveryService", return_value=svc_instance),
         patch(
-            "trendx.services.worker.asyncio.run",
+            "trendx.scheduler.handlers.asyncio.run",
             side_effect=lambda c: (captured.append(c) or {"ok": True}),
         ),
     ):

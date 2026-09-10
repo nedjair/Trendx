@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import sys
@@ -13,9 +12,7 @@ from typing import Any, cast
 
 from loguru import logger
 from trendx.config import settings
-from trendx.services.ingestion import IngestionService
 from trendx.services.tasks import TaskService
-from trendx.thingsboard.discovery import TopologyDiscoveryService
 
 EXECUTOR_PORT = int(os.environ.get("SERVER_PORT", settings.trendx_python_executor_port))
 
@@ -103,203 +100,17 @@ def task_forecast_dryrun(device_id: str, metric_name: str, horizon: int = 24) ->
 # Worker execution loop : claim -> dispatch -> run -> progress -> complete/fail
 # Découplé du BackgroundScheduler de maintenance (voir bloc APScheduler ci-dessous).
 # ————————————————————————————————————————————————
-
-
-def _run_topology_discovery(
-    json_job: dict[str, Any], task_id: str, execution_id: str
-) -> dict[str, Any]:
-    """Découverte topologique complète + persistance du catalog."""
-    svc = TopologyDiscoveryService()
-    asyncio.run(svc.full_sync())
-    asyncio.run(svc.update_catalog())
-    return {"job_type": "topology_discovery", "status": "ok"}
-
-
-def _run_topology_sync(json_job: dict[str, Any], task_id: str, execution_id: str) -> dict[str, Any]:
-    """Synchro topologique incrémentale + persistance du catalog."""
-    svc = TopologyDiscoveryService()
-    asyncio.run(svc.incremental_sync())
-    asyncio.run(svc.update_catalog())
-    return {"job_type": "topology_sync", "status": "ok"}
-
-
-def _run_ingestion(json_job: dict[str, Any], task_id: str, execution_id: str) -> dict[str, Any]:
-    """Ingestion incrémentale (auto-découvre devices/metrics)."""
-    svc = IngestionService()
-    results = asyncio.run(svc.run_incremental_ingest())
-    return {"job_type": "ingestion", "status": "ok", "tasks": len(results) if results else 0}
-
-
-def _require_forecast_keys(json_job: dict[str, Any], required: list[str]) -> None:
-    """Valide les paramètres minimaux d'un job forecast/train.
-
-    Lève ValueError si une clé requise est absente ou vide. L'appelant
-    (_process_one_task) convertit l'exception en fail_task isolé par
-    device/métrique/fenêtre, sans impacter les autres tâches.
-    """
-    missing = [k for k in required if not json_job.get(k)]
-    if missing:
-        msg = f"Missing required job params: {', '.join(missing)}"
-        raise ValueError(msg)
-
-
-def _parse_strategy(raw: Any) -> Any:
-    """Parse la stratégie PER_DEVICE/PER_PROFILE/GLOBAL/AUTO (défaut PER_DEVICE).
-
-    Accepté en string insensible à la casse ou en membre Strategy. Lève
-    ValueError si inconnue. Import local pour éviter tout cycle.
-    """
-    from trendx.forecasting.base import Strategy
-
-    if raw is None or raw == "":
-        return Strategy.PER_DEVICE
-    if isinstance(raw, Strategy):
-        return raw
-    try:
-        return Strategy[str(raw).upper()]
-    except KeyError as exc:
-        msg = f"Unknown strategy: {raw!r}. Expected PER_DEVICE/PER_PROFILE/GLOBAL/AUTO"
-        raise ValueError(msg) from exc
-
-
-def _run_trendx_train(json_job: dict[str, Any], task_id: str, execution_id: str) -> dict[str, Any]:
-    """Job trendx_train : entraînement idempotent, reprenable, isolé par device/métrique.
-
-    Paramètres minimaux (tous requis sauf défauts indiqués) :
-      tenant_id, entity_type, entity_id, metric_name,
-      strategy (défaut PER_DEVICE : PER_DEVICE/PER_PROFILE/GLOBAL/AUTO),
-      lookback_days (défaut settings.training_lookback_days),
-      frequency (défaut settings.forecast_frequency),
-      horizon (défaut settings.forecast_horizon),
-      algorithm (défaut Prophet), params/model_params (défaut None),
-      min_val/max_val (défaut None, clipping métier).
-
-    Contraintes : dispatch dynamique via JOB_DISPATCH (aucun job statique par
-    device), timestamps UTC, lectures DB bornées par fenêtre + LIMIT côté
-    TrainingService, erreur isolée (exception -> fail_task de cette tâche
-    uniquement), writeback jamais invoqué ici.
-    """
-    _require_forecast_keys(json_job, ["tenant_id", "entity_type", "entity_id", "metric_name"])
-    tenant_id = str(json_job["tenant_id"])
-    entity_type = str(json_job["entity_type"])
-    entity_id = str(json_job["entity_id"])
-    metric_name = str(json_job["metric_name"])
-    strategy = _parse_strategy(json_job.get("strategy", "PER_DEVICE"))
-    lookback_days = json_job.get("lookback_days")
-    frequency = str(json_job.get("frequency") or settings.forecast_frequency)
-    horizon = json_job.get("horizon") or settings.forecast_horizon
-    algorithm = str(json_job.get("algorithm") or "Prophet")
-    params = json_job.get("params", json_job.get("model_params"))
-    min_val = json_job.get("min_val")
-    max_val = json_job.get("max_val")
-
-    from trendx.services.training import TrainingService
-
-    svc = TrainingService()
-    # AUTO : compétition + sélection champion ; autres stratégies : entraînement
-    # ciblé (PER_DEVICE/PER_PROFILE/GLOBAL routés via le même service, la
-    # segmentation fine par profil/global étant portée par ModelSelector).
-    if strategy.name == "AUTO":
-        champion = svc.auto_select_strategy(entity_id, metric_name)
-        model_id = str(getattr(champion, "id", "") or "") if champion is not None else None
-        status = "ok" if champion is not None else "no_data"
-        return {
-            "job_type": "trendx_train",
-            "status": status,
-            "tenant_id": tenant_id,
-            "entity_type": entity_type,
-            "entity_id": entity_id,
-            "metric_name": metric_name,
-            "strategy": strategy.name,
-            "model_id": model_id,
-            "generated_at": datetime.now(UTC).isoformat(),
-        }
-    model = svc.train_model(
-        entity_id=entity_id,
-        metric_key=metric_name,
-        algorithm=algorithm,
-        params=params,
-        lookback_days=lookback_days,
-        frequency=frequency,
-        horizon=int(horizon),
-        min_val=min_val,
-        max_val=max_val,
-    )
-    if model is None:
-        return {
-            "job_type": "trendx_train",
-            "status": "no_data",
-            "tenant_id": tenant_id,
-            "entity_type": entity_type,
-            "entity_id": entity_id,
-            "metric_name": metric_name,
-            "strategy": strategy.name,
-            "model_id": None,
-            "generated_at": datetime.now(UTC).isoformat(),
-        }
-    return {
-        "job_type": "trendx_train",
-        "status": "ok",
-        "tenant_id": tenant_id,
-        "entity_type": entity_type,
-        "entity_id": entity_id,
-        "metric_name": metric_name,
-        "strategy": strategy.name,
-        "model_id": str(getattr(model, "id", "")),
-        "generated_at": datetime.now(UTC).isoformat(),
-    }
-
-
-def _run_trendx_forecast(
-    json_job: dict[str, Any], task_id: str, execution_id: str
-) -> dict[str, Any]:
-    """Job trendx_forecast : prévision idempotente, isolée, sans writeback TB.
-
-    Paramètres minimaux :
-      tenant_id, entity_type, entity_id, metric_name,
-      horizon (défaut settings.forecast_horizon),
-      strategy (défaut PER_DEVICE).
-
-    Utilise le modèle/version champion via InferenceService, calcule les
-    métriques lorsque la vérité est disponible (côté TrainingService), persiste
-    via save_forecast_results (upsert idempotent sur PK composite). Aucun
-    writeback TB par défaut : writeback_forecast/post_telemetry ne sont jamais
-    appelés ici ; dry_run forcé à True.
-    """
-    _require_forecast_keys(json_job, ["tenant_id", "entity_type", "entity_id", "metric_name"])
-    tenant_id = str(json_job["tenant_id"])
-    entity_type = str(json_job["entity_type"])
-    entity_id = str(json_job["entity_id"])
-    metric_name = str(json_job["metric_name"])
-    horizon = int(json_job.get("horizon") or settings.forecast_horizon)
-    strategy = _parse_strategy(json_job.get("strategy", "PER_DEVICE"))
-
-    from trendx.services.inference import InferenceService
-
-    svc = InferenceService(dry_run=True)
-    # Garde-fou : même si la config autorisait le writeback, ce job reste
-    # sans écriture TB (séparation stricte persistance locale vs writeback).
-    svc.dry_run = True
-    forecast = svc.generate_forecast(entity_id, metric_name, horizon=horizon)
-    if forecast is None:
-        msg = f"No forecast for {entity_id[:12]}/{metric_name} (no champion or no data)"
-        raise RuntimeError(msg)
-    saved = svc.save_forecast_results(entity_id, metric_name, forecast)
-    return {
-        "job_type": "trendx_forecast",
-        "status": "ok",
-        "tenant_id": tenant_id,
-        "entity_type": entity_type,
-        "entity_id": entity_id,
-        "metric_name": metric_name,
-        "strategy": strategy.name,
-        "horizon": horizon,
-        "points": len(forecast.values),
-        "saved": saved,
-        "writeback": "disabled",
-        "generated_at": datetime.now(UTC).isoformat(),
-    }
-
+# Handlers P0 extraits vers trendx.scheduler.handlers (source de vérité unique,
+# partageable avec le futur service scheduler dédié, sans import de ce module).
+# Les noms préfixés sont ré-exportés ici : le contrat exécuteur (JOB_DISPATCH,
+# attributs de module _run_*, __name__ assertés par les tests) reste inchangé.
+from trendx.scheduler.handlers import (  # noqa: E402  -- imports métier en tête de bloc
+    _run_ingestion,
+    _run_topology_discovery,
+    _run_topology_sync,
+    _run_trendx_forecast,
+    _run_trendx_train,
+)
 
 # Registre explicite job_type -> exécuteur. Aucun fallback silencieux : un
 # job_type absent conduit à fail_task() (voir _process_one_task).
