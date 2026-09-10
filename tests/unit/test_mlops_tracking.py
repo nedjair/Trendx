@@ -81,6 +81,10 @@ def test_log_params_metrics(tracker):
 
 @pytest.mark.unit
 def test_log_model(tracker):
+    import numpy as np
+    import pandas as pd
+    from trendx.forecasting.linear import LinearRegressionModel
+
     mock_run = MagicMock(spec=Run)
     mock_run.info.run_id = "run-123"
     tracker._client.create_run.return_value = mock_run
@@ -88,6 +92,15 @@ def test_log_model(tracker):
     with patch("trendx.mlops.tracking.mlflow.start_run", return_value=mock_run):
         tracker.start_run("test-exp")
 
+    model = LinearRegressionModel()
+    model.fit(
+        pd.DataFrame(
+            {
+                "ds": pd.date_range("2026-01-01", periods=24, freq="1h"),
+                "y": np.arange(24, dtype=float),
+            }
+        )
+    )
     cm = MagicMock()
     cm.__enter__.return_value = mock_run
     with (
@@ -95,7 +108,7 @@ def test_log_model(tracker):
         patch("mlflow.pyfunc.log_model"),
         patch("mlflow.register_model"),
     ):
-        model_uri = tracker.log_model(MagicMock(), "test-model", model_name="test-model-name")
+        model_uri = tracker.log_model(model, "test-model", model_name="test-model-name")
 
     assert "runs:/run-123/test-model" in model_uri
 
