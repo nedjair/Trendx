@@ -299,7 +299,7 @@ class IngestionService:
             return 0
 
         engine = self._db.get_engine("analytics")
-        records = []
+        records: list[dict[str, Any]] = []
         for _, row in df.iterrows():
             ts_val = row["ts"]
             value = row.get("value")
@@ -352,10 +352,19 @@ class IngestionService:
                 result = conn.execute(stmt)
                 inserted += result.rowcount
 
+                # ts_kv_latest n'a qu'UNE ligne par (entity_id, metric_key) : ne
+                # retenir que le point le plus récent du batch (un ON CONFLICT
+                # multi-lignes sur la même clé est rejeté par PostgreSQL).
+                latest_rec = max(batch, key=lambda r: r["ts"])
+                latest_row = (
+                    f"({self._lit_uuid(str(latest_rec['entity_id']))}, "
+                    f"{self._lit(latest_rec['metric_key'])}, {self._lit(latest_rec['ts'])}, "
+                    f"{self._lit(latest_rec['dbl_v'])}, {self._lit(latest_rec['source'])})"
+                )
                 try:
                     insert_ts_kv_latest = (
                         "INSERT INTO ts_kv_latest (entity_id, metric_key, ts, dbl_v, source)"
-                        f" VALUES {values_clause}"  # nosec B608 -- clause assemblée exclusivement via _lit/_lit_uuid (échappement quotes, cast ::uuid).
+                        f" VALUES {latest_row}"  # nosec B608 -- clause assemblée exclusivement via _lit/_lit_uuid (échappement quotes, cast ::uuid).
                         " ON CONFLICT (entity_id, metric_key)"
                         " DO UPDATE SET ts = EXCLUDED.ts, dbl_v = EXCLUDED.dbl_v,"
                         " source = EXCLUDED.source, updated_at = NOW()"

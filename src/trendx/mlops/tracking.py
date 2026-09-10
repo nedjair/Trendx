@@ -169,7 +169,11 @@ class MLflowTracker:
         self.log_params({"data_version": version_hash})
 
     def log_tags(self, tags: dict[str, str]) -> None:
-        self._client.set_tags(self._get_run_id(), tags)
+        # MlflowClient.set_tags n'existe pas en MLflow 2.14.3 : écrire tag par
+        # tag via set_tag (contenu métier inchangé, ordre trié déterministe).
+        run_id = self._get_run_id()
+        for key in sorted(tags):
+            self._client.set_tag(run_id, key, tags[key])
 
     # ── Search & selection ─────────────────────────────────────────────
 
