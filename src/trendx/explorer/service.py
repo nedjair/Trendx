@@ -15,11 +15,15 @@ from trendx.query.engine import BusinessQuery
 from trendx.query.sql import SqlQueryEngine, ensure_schema
 
 _CONFIGURED: Engine | None = None
+_BACKEND: str = "qsql"
 
 
-def configure(engine: Engine | None) -> None:
-    global _CONFIGURED
+def configure(engine: Engine | None, backend: str = "qsql") -> None:
+    global _CONFIGURED, _BACKEND
+    if backend not in ("qsql", "tskv"):
+        raise ValueError(f"Unknown backend: {backend}")
     _CONFIGURED = engine
+    _BACKEND = backend
 
 
 def get_engine() -> Engine:
@@ -30,6 +34,11 @@ def get_engine() -> Engine:
 
 def catalog() -> schemas.CatalogOut:
     eng = get_engine()
+    if _BACKEND == "tskv":
+        from trendx.explorer.tskv import TskvBackend, ensure_tskv_schema
+
+        ensure_tskv_schema(eng)
+        return TskvBackend(eng).catalog()
     ensure_schema(eng)
     with eng.connect() as conn:
         entities = [
@@ -72,6 +81,11 @@ def catalog() -> schemas.CatalogOut:
 
 def availability(entity_id: str, metric: str) -> schemas.AvailabilityOut:
     eng = get_engine()
+    if _BACKEND == "tskv":
+        from trendx.explorer.tskv import TskvBackend, ensure_tskv_schema
+
+        ensure_tskv_schema(eng)
+        return TskvBackend(eng).availability(entity_id, metric)
     ensure_schema(eng)
     with eng.connect() as conn:
         row = conn.execute(
@@ -93,6 +107,11 @@ def availability(entity_id: str, metric: str) -> schemas.AvailabilityOut:
 
 def stats(entity_id: str, metric: str) -> schemas.StatsOut:
     eng = get_engine()
+    if _BACKEND == "tskv":
+        from trendx.explorer.tskv import TskvBackend, ensure_tskv_schema
+
+        ensure_tskv_schema(eng)
+        return TskvBackend(eng).stats(entity_id, metric)
     ensure_schema(eng)
     with eng.connect() as conn:
         vals = [
@@ -138,6 +157,11 @@ def _to_business_query(req: schemas.QueryIn) -> BusinessQuery:
 
 def query(req: schemas.QueryIn) -> schemas.QueryOut:
     eng = get_engine()
+    if _BACKEND == "tskv":
+        from trendx.explorer.tskv import TskvBackend, ensure_tskv_schema
+
+        ensure_tskv_schema(eng)
+        return TskvBackend(eng).query(_to_business_query(req))
     ensure_schema(eng)
     bq = _to_business_query(req)
     df = SqlQueryEngine(eng).run(bq)
