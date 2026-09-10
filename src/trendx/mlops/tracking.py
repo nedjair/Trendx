@@ -24,6 +24,16 @@ from loguru import logger
 from trendx.config import settings
 
 
+def _algorithm_for_model(model: Any) -> str:
+    """Nom de registre exact du type du modèle (fail-closed si inconnu)."""
+    from trendx.forecasting import MODEL_REGISTRY
+
+    for name, cls in MODEL_REGISTRY.items():
+        if type(model) is cls:
+            return name
+    raise ValueError(f"Type de modèle non enregistré dans MODEL_REGISTRY : {type(model).__name__}")
+
+
 class MLflowTracker:
     """MLflow experiment tracking wrapper for Trendx.
 
@@ -136,10 +146,24 @@ class MLflowTracker:
     ) -> str:
         run_id = self._get_run_id()
         with mlflow.start_run(run_id=run_id, nested=True):
-            mlflow.pyfunc.log_model(
-                artifact_path=artifact_path,
-                python_model=model,
+            from trendx.mlops.forecast_pyfunc import (
+                ARTIFACT_NAME,
+                HISTORY_NAME,
+                ForecastPyfuncWrapper,
+                export_history,
             )
+
+            algorithm = _algorithm_for_model(model)
+            with tempfile.TemporaryDirectory(prefix="forecast_model_") as tmpdir:
+                saved = str(Path(tmpdir) / "model.joblib")
+                model.save(saved)
+                history = str(Path(tmpdir) / "train_history.csv")
+                export_history(model, history)
+                mlflow.pyfunc.log_model(
+                    artifact_path=artifact_path,
+                    python_model=ForecastPyfuncWrapper(algorithm=algorithm),
+                    artifacts={ARTIFACT_NAME: saved, HISTORY_NAME: history},
+                )
         model_uri = f"runs:/{run_id}/{artifact_path}"
         logger.info("Logged model to '{}'", model_uri)
         if model_name is not None:
