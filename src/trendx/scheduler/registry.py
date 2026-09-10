@@ -1,7 +1,13 @@
-"""Mock scheduler registry: registration, dispatch, idempotency, isolation.
+"""Scheduler registry: registration, dispatch, idempotency, isolation.
 
 All timestamps UTC. Run IDs are synthetic UUIDs. No real waiting,
 no threads, no production side effects.
+
+Isolation contract (dispatch-isolation fix): the job catalogue is either
+injected explicitly via ``specs`` or resolved from ``P0_JOBS`` at
+construction time -- never via a stale import-time binding. A job without
+an explicitly registered handler fails closed (RuntimeError): this module
+never imports ``trendx.services.worker`` and never falls back to a stub.
 """
 
 from __future__ import annotations
@@ -36,53 +42,34 @@ class TriggerRecord:
 
 @dataclass
 class SchedulerRegistry:
-    """Wiring between P0 schedules and existing workers (injectable)."""
+    """Wiring between P0 schedules and injected handlers (explicit dispatch)."""
 
     _handlers: dict[str, Handler] = field(default_factory=dict)
     _records: list[TriggerRecord] = field(default_factory=list)
     _idempotency: dict[str, dict[str, Any]] = field(default_factory=dict)
+    specs: tuple[JobSpec, ...] | None = None
+    _specs: tuple[JobSpec, ...] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        # Resolved at construction time (module-global read): patching
+        # trendx.scheduler.registry.P0_JOBS before constructing a registry
+        # takes effect; an explicitly passed `specs` always wins.
+        self._specs = self.specs if self.specs is not None else P0_JOBS
         seen: set[str] = set()
-        for spec in P0_JOBS:
+        for spec in self._specs:
             if spec.job_id in seen:
                 raise ValueError(f"Duplicate job id: {spec.job_id}")
             seen.add(spec.job_id)
 
     @property
     def jobs(self) -> list[JobDefinition]:
-        return [JobDefinition(s.job_id, s.job_type, s.interval, s.description) for s in P0_JOBS]
+        return [JobDefinition(s.job_id, s.job_type, s.interval, s.description) for s in self._specs]
 
     def schedules(self) -> dict[str, str]:
-        return {s.job_id: s.interval for s in P0_JOBS}
+        return {s.job_id: s.interval for s in self._specs}
 
     def register_handler(self, job_type: str, handler: Handler) -> None:
         self._handlers[job_type] = handler
-
-    def _default_handler(self, job_type: str) -> Handler:
-        from trendx.services import worker as worker_module
-
-        dispatch = worker_module.JOB_DISPATCH
-        if job_type == "anomaly_scan":
-            from trendx.anomalies.detectors import IsolationForestDetector
-
-            def _scan(payload: dict[str, Any]) -> dict[str, Any]:
-                IsolationForestDetector(contamination=0.05)
-                return {"job_type": job_type, "status": "ok"}
-
-            return _scan
-        if job_type not in dispatch:
-            raise KeyError(f"No worker for job type: {job_type}")
-
-        func = dispatch[job_type]
-
-        def _call(payload: dict[str, Any]) -> dict[str, Any]:
-            result = func(dict(payload), f"mock-task-{uuid4().hex[:8]}", f"exec-{uuid4().hex[:8]}")
-            if isinstance(result, dict):
-                return result
-            return {"job_type": job_type, "status": "ok", "result": result}
-
-        return _call
 
     def trigger(
         self,
@@ -90,7 +77,7 @@ class SchedulerRegistry:
         payload: dict[str, Any] | None = None,
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
-        spec: JobSpec | None = next((s for s in P0_JOBS if s.job_id == job_id), None)
+        spec: JobSpec | None = next((s for s in self._specs if s.job_id == job_id), None)
         if spec is None:
             raise KeyError(f"Unknown job id: {job_id}")
         if idempotency_key is not None:
@@ -99,7 +86,14 @@ class SchedulerRegistry:
                 cached = dict(self._idempotency[cache_key])
                 cached["deduplicated"] = True
                 return cached
-        handler = self._handlers.get(spec.job_type) or self._default_handler(spec.job_type)
+        handler = self._handlers.get(spec.job_type)
+        if handler is None:
+            # Fail closed: no implicit fallback, no services.worker import,
+            # no silent stub. Register an explicit handler instead.
+            raise RuntimeError(
+                f"No handler registered for job_type {spec.job_type!r} "
+                f"(job_id {job_id!r}): explicit dispatch required"
+            )
         run_id = str(uuid4())
         try:
             result = handler(dict(payload or {}))
