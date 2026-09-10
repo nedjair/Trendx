@@ -1,15 +1,31 @@
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime
 from typing import Any
 
 from loguru import logger
 from trendx.database.connection import manager as db_manager
-from trendx.database.models import PredictionModel
+from trendx.database.models import BusinessEntity, PredictionModel
 from trendx.database.repositories import PredictionModelRepository
 
 CHAMPION_STATUS = "champion"
 CHALLENGER_STATUS = "challenger"
+
+
+def _require_uuid(value: str, field: str) -> uuid.UUID:
+    try:
+        return uuid.UUID(str(value))
+    except (ValueError, AttributeError, TypeError) as exc:
+        raise ValueError(
+            f"Invalid UUID for {field}: {value!r} (empty/fictitious UUIDs refused)"
+        ) from exc
+
+
+def _optional_uuid(value: str | None) -> uuid.UUID | None:
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return None
+    return _require_uuid(value, "business_entity_field_id")
 
 
 class ModelRegistry:
@@ -49,20 +65,49 @@ class ModelRegistry:
         name: str | None = None,
         tenant_id: str | None = None,
         customer_id: str | None = None,
+        *,
+        promote: bool = True,
     ) -> PredictionModel:
+        """Persist a trained model and (by default) promote it to champion.
+
+        UUID contract (fail-closed, no migration): every UUID NOT NULL column
+        receives a real UUID. ``business_entity_id`` is required. Field ids
+        default to the business entity itself (device-level model) unless
+        explicitly provided. ``tenant_id`` defaults to the owning business
+        entity's tenant (read from context, never invented). Empty strings
+        are rejected before reaching PostgreSQL.
+
+        Lifecycle: the row is created as challenger, then promoted through
+        :meth:`promote_to_champion` (history recorded), so ``get_champion()``
+        resolves it. Pass ``promote=False`` to keep a plain challenger.
+        """
+        entity_uuid = _require_uuid(business_entity_id, "business_entity_id")
+        field_uuid = _optional_uuid(business_entity_field_id) or entity_uuid
+        if customer_id is None or (isinstance(customer_id, str) and not customer_id.strip()):
+            # Contrat 001 : customer_id UUID NOT NULL, sans provenance dans le
+            # contexte d'entraînement PER_DEVICE (ni train, ni entité, ni
+            # métrique ne portent de customer). Échec ferme et identifiable
+            # plutôt que valeur fictive : la résolution relève d'une décision
+            # produit (contexte customer) ou d'une migration (NULL autorisé).
+            raise RuntimeError(
+                "Cannot register model: customer_id is required by the "
+                "prediction_model contract but absent from the training context"
+            )
+        customer_uuid = _require_uuid(customer_id, "customer_id")
         with db_manager.get_session("catalog") as session:
             repo = PredictionModelRepository(session)
+            resolved_tenant = tenant_id or self._tenant_for_entity(session, entity_uuid)
             model = repo.create(
                 name=name or f"{model_type}_{tb_telemetry_key}",
-                tenant_id=tenant_id,
-                customer_id=customer_id,
+                tenant_id=resolved_tenant,
+                customer_id=str(customer_uuid),
                 created_ts=int(datetime.now(UTC).timestamp() * 1000),
                 updated_ts=int(datetime.now(UTC).timestamp() * 1000),
                 enabled=True,
                 partial_fit_enabled=False,
-                status="active",
+                status=CHALLENGER_STATUS,
                 type=model_type,
-                associated_entity_field_id=business_entity_field_id,
+                associated_entity_field_id=str(field_uuid),
                 tb_telemetry_key=tb_telemetry_key,
                 model_uri=model_uri or None,
                 model_parameters=model_parameters,
@@ -70,8 +115,8 @@ class ModelRegistry:
                 method_parameters=method_parameters,
                 item_state_map=item_state_map,
                 trained_item_set=trained_item_set,
-                business_entity_id=business_entity_id,
-                business_entity_field_id=business_entity_field_id,
+                business_entity_id=str(entity_uuid),
+                business_entity_field_id=str(field_uuid),
                 avoid_disabling=False,
             )
             session.commit()
@@ -79,10 +124,31 @@ class ModelRegistry:
                 "Registered model {} for entity={} field={} type={}",
                 model.id,
                 business_entity_id,
-                business_entity_field_id,
+                field_uuid,
                 model_type,
             )
-            return model
+        if promote:
+            promoted = self.promote_to_champion(str(entity_uuid), tb_telemetry_key, model)
+            if promoted is None:
+                raise RuntimeError(
+                    f"Register succeeded but promotion failed for {entity_uuid}/{tb_telemetry_key}"
+                )
+            return promoted
+        return model
+
+    @staticmethod
+    def _tenant_for_entity(session: Any, entity_uuid: uuid.UUID) -> str:
+        entity = session.get(BusinessEntity, entity_uuid)
+        if entity is None:
+            raise RuntimeError(
+                f"Cannot register model: business entity {entity_uuid} unknown "
+                "(tenant cannot be resolved, refusing fictitious UUID)"
+            )
+        if entity.tenant_id is None:
+            raise RuntimeError(
+                f"Cannot register model: business entity {entity_uuid} has no tenant"
+            )
+        return str(entity.tenant_id)
 
     def get_champion(
         self,
