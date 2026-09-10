@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -19,6 +20,22 @@ from trendx.mlops.tracking import MLflowTracker
 from trendx.preprocessing.normalizer import Normalizer
 from trendx.preprocessing.quality import DataQualityService
 from trendx.preprocessing.resampling import Resampler
+
+
+def resolve_customer_scope(customer_id: str | None = None) -> str:
+    """Résout le customer explicite du training (OPTION A approuvée).
+
+    Priorité : paramètre explicite, puis ``TRENDX_DEFAULT_CUSTOMER_ID``.
+    Fail-closed : absent ou invalide -> ValueError. Aucune dérivation
+    tenant -> customer, aucun UUID inventé.
+    """
+    raw = (customer_id or settings.trendx_default_customer_id or "").strip()
+    if not raw:
+        raise ValueError("customer_id explicite requis (paramètre ou TRENDX_DEFAULT_CUSTOMER_ID)")
+    try:
+        return str(uuid.UUID(raw))
+    except (ValueError, AttributeError, TypeError) as exc:
+        raise ValueError(f"customer_id invalide (UUID attendu) : {raw!r}") from exc
 
 
 class TrainingService:
@@ -121,8 +138,10 @@ class TrainingService:
         horizon: int | None = None,
         min_val: float | None = None,
         max_val: float | None = None,
+        customer_id: str | None = None,
     ) -> PredictionModel | None:
         horizon = horizon or settings.forecast_horizon
+        resolved_customer = resolve_customer_scope(customer_id)
         logger.info(
             "Training model: {}/{} algorithm={} horizon={}",
             entity_id[:12],
@@ -232,6 +251,7 @@ class TrainingService:
                 tb_telemetry_key=metric_key,
                 model_type=algorithm,
                 model_uri=model_uri,
+                customer_id=resolved_customer,
             )
             return champion
         except Exception as exc:
