@@ -101,18 +101,20 @@ def test_train_model_registers_with_current_contract(
         algorithm="Prophet",
         frequency="1h",
         horizon=4,
+        customer_id="11111111-1111-1111-1111-111111111111",
     )
 
     # register() appelé exactement une fois.
     training_service._registry.register.assert_called_once()
     call_kwargs = training_service._registry.register.call_args.kwargs
 
-    # Contrat courant (schéma/ORM réel).
+    # Contrat courant (schéma/ORM réel) + customer explicite (OPTION A).
     assert call_kwargs == {
         "business_entity_id": "dev-001",
         "tb_telemetry_key": "temperature",
         "model_type": "Prophet",
         "model_uri": "runs:/run-x/model",
+        "customer_id": "11111111-1111-1111-1111-111111111111",
     }
     # Aucun kwarg WIP ne doit fuiter vers register().
     assert _WIP_KWARGS.isdisjoint(call_kwargs.keys())

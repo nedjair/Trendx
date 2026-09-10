@@ -154,13 +154,17 @@ class ModelRegistry:
         self,
         entity_id: str,
         metric_key: str,
+        customer_id: str | None = None,
     ) -> PredictionModel | None:
         with db_manager.get_session("catalog") as session:
             repo = PredictionModelRepository(session)
+            wanted = str(_require_uuid(customer_id, "customer_id")) if customer_id else None
             candidates = [
                 model
                 for model in repo.find_by_business_entity(entity_id)
-                if model.tb_telemetry_key == metric_key and model.status == CHAMPION_STATUS
+                if model.tb_telemetry_key == metric_key
+                and model.status == CHAMPION_STATUS
+                and (wanted is None or str(model.customer_id) == wanted)
             ]
             if not candidates:
                 return None
