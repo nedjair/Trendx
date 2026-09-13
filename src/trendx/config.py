@@ -117,6 +117,23 @@ class Settings(BaseSettings):
 
     trendx_retention_days: int = Field(default=180, alias="TRENDX_RETENTION_DAYS")
 
+    # Scheduler B1 (MR-3 : leader election / heartbeat). Tout est OFF par
+    # défaut : TRENDX_SCHEDULER_ENABLED=false interdit toute planification
+    # en production. La validation fail-closed vit dans LeaderElection
+    # (entiers > 0, stale > heartbeat, lock/instance non vides).
+    trendx_scheduler_enabled: bool = Field(default=False, alias="TRENDX_SCHEDULER_ENABLED")
+    trendx_scheduler_instance_id: str = Field(default="", alias="TRENDX_SCHEDULER_INSTANCE_ID")
+    trendx_scheduler_heartbeat_seconds: int = Field(
+        default=15, alias="TRENDX_SCHEDULER_HEARTBEAT_SECONDS"
+    )
+    trendx_scheduler_stale_seconds: int = Field(default=60, alias="TRENDX_SCHEDULER_STALE_SECONDS")
+    trendx_scheduler_acquire_timeout_seconds: int = Field(
+        default=5, alias="TRENDX_SCHEDULER_ACQUIRE_TIMEOUT_SECONDS"
+    )
+    trendx_scheduler_leader_lock: str = Field(
+        default="trendx_scheduler_leader", alias="TRENDX_SCHEDULER_LEADER_LOCK"
+    )
+
     forecast_frequency: str = Field(default="1h", alias="FORECAST_FREQUENCY")
     forecast_horizon: int = Field(default=24, alias="FORECAST_HORIZON")
     training_lookback_days: int = Field(default=90, alias="TRAINING_LOOKBACK_DAYS")
