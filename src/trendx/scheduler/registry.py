@@ -19,6 +19,7 @@ from typing import Any
 from uuid import uuid4
 
 from trendx.scheduler.jobs import P0_JOBS, JobSpec
+from trendx.scheduler.persistence import RunStore, default_instance_id, resolve_run_mode
 
 Handler = Callable[[dict[str, Any]], dict[str, Any]]
 
@@ -48,7 +49,10 @@ class SchedulerRegistry:
     _records: list[TriggerRecord] = field(default_factory=list)
     _idempotency: dict[str, dict[str, Any]] = field(default_factory=dict)
     specs: tuple[JobSpec, ...] | None = None
+    run_store: RunStore | None = None
+    instance_id: str | None = None
     _specs: tuple[JobSpec, ...] = field(init=False, repr=False)
+    _instance_id: str = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         # Resolved at construction time (module-global read): patching
@@ -60,6 +64,9 @@ class SchedulerRegistry:
             if spec.job_id in seen:
                 raise ValueError(f"Duplicate job id: {spec.job_id}")
             seen.add(spec.job_id)
+        # Identifiant d'instance stable pour la persistance des runs
+        # (heartbeat/leader MR-3). Sans run_store, purement informatif.
+        self._instance_id = self.instance_id or default_instance_id()
 
     @property
     def jobs(self) -> list[JobDefinition]:
@@ -95,6 +102,24 @@ class SchedulerRegistry:
                 f"(job_id {job_id!r}): explicit dispatch required"
             )
         run_id = str(uuid4())
+        # Mode d'exécution (défaut direct, fail-closed) : validé AVANT toute
+        # persistance. Clé namespacée `scheduler_mode` : la clé métier `mode`
+        # appartient aux payloads (ex. discovery "initial"/"incremental") et
+        # doit traverser intacte. Sans run_store, le comportement historique
+        # est inchangé.
+        data = dict(payload or {})
+        mode = resolve_run_mode(data.get("scheduler_mode", "direct"))
+        payload_task_id = data.get("task_id")
+        task_id = str(payload_task_id) if payload_task_id is not None else None
+        if self.run_store is not None:
+            self.run_store.begin_run(
+                run_id=run_id,
+                job_id=job_id,
+                job_type=spec.job_type,
+                instance_id=self._instance_id,
+                mode=mode,
+                task_id=task_id,
+            )
         try:
             result = handler(dict(payload or {}))
             if not isinstance(result, dict):
@@ -107,8 +132,20 @@ class SchedulerRegistry:
                     run_id, job_id, datetime.now(UTC), "fail", f"{type(exc).__name__}: {exc}"
                 )
             )
+            if self.run_store is not None:
+                self.run_store.finish_run(
+                    run_id=run_id, status="failed", error=f"{type(exc).__name__}: {exc}"
+                )
             raise
         else:
+            if self.run_store is not None:
+                status = str(outcome.get("status") or "ok")
+                task_out = outcome.get("task_id")
+                self.run_store.finish_run(
+                    run_id=run_id,
+                    status=status,
+                    task_id=str(task_out) if task_out is not None else None,
+                )
             if idempotency_key is not None:
                 self._idempotency[f"{job_id}:{idempotency_key}"] = dict(outcome)
             return outcome

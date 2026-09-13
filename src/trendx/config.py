@@ -115,6 +115,8 @@ class Settings(BaseSettings):
     trendx_default_customer_id: str = Field(default="", alias="TRENDX_DEFAULT_CUSTOMER_ID")
     trendx_default_user_id: str = Field(default="", alias="TRENDX_DEFAULT_USER_ID")
 
+    trendx_retention_days: int = Field(default=180, alias="TRENDX_RETENTION_DAYS")
+
     forecast_frequency: str = Field(default="1h", alias="FORECAST_FREQUENCY")
     forecast_horizon: int = Field(default=24, alias="FORECAST_HORIZON")
     training_lookback_days: int = Field(default=90, alias="TRAINING_LOOKBACK_DAYS")

@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from typing import Any, Generic, TypeVar, cast
 
 from loguru import logger
-from sqlalchemy import Integer, Table, func, select, text
+from sqlalchemy import Integer, Table, delete, func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session
@@ -19,6 +19,8 @@ from trendx.database.models import (
     Prediction,
     PredictionModel,
     PredictionModelStatusHistory,
+    SchedulerHeartbeat,
+    SchedulerRun,
     TrendzTask,
     ViewConfig,
 )
@@ -726,3 +728,150 @@ class ViewConfigRepository(BaseRepository[ViewConfig]):
 
     def find_favourite(self) -> Sequence[ViewConfig]:
         return self.find_favorite()
+
+
+TERMINAL_RUN_STATUSES = ("ok", "failed")
+
+
+def normalize_terminal_status(status: str) -> str:
+    """Normalise le statut terminal interne du registre vers le contrat DB.
+
+    "fail" (TriggerRecord) -> "failed", "ok" inchangé. Tout autre statut lève
+    ValueError : aucun nouvel état n'est inventé.
+    """
+    if status == "ok":
+        return "ok"
+    if status in ("fail", "failed"):
+        return "failed"
+    raise ValueError(f"Unknown terminal run status: {status!r} (expected 'ok' or 'failed')")
+
+
+class SchedulerRunRepository(BaseRepository[SchedulerRun]):
+    """Persistance des runs scheduler P0 (migration 014, base trendx uniquement).
+
+    Les commits restent au niveau appelant (pattern existant) ; chaque méthode
+    flush. Aucun couplage ThingsBoard, aucun effet scheduler implicite.
+    """
+
+    def __init__(self, session: Session) -> None:
+        super().__init__(session, SchedulerRun)
+
+    def create_run(
+        self,
+        *,
+        run_id: str | uuid.UUID,
+        job_id: str,
+        job_type: str,
+        instance_id: str,
+        mode: str = "direct",
+        task_id: str | uuid.UUID | None = None,
+        triggered_at: datetime | None = None,
+    ) -> SchedulerRun:
+        """Crée une ligne running. finished_at reste NULL (invariant)."""
+        row = self.create(
+            run_id=uuid.UUID(str(run_id)),
+            job_id=job_id,
+            job_type=job_type,
+            status="running",
+            triggered_at=triggered_at or datetime.now(UTC),
+            finished_at=None,
+            error=None,
+            instance_id=instance_id,
+            mode=mode,
+            task_id=uuid.UUID(str(task_id)) if task_id is not None else None,
+        )
+        return row
+
+    def mark_terminal(
+        self,
+        run_id: str | uuid.UUID,
+        status: str,
+        error: str | None = None,
+        finished_at: datetime | None = None,
+    ) -> SchedulerRun:
+        """running -> ok | failed ("fail" normalisé en "failed").
+
+        Lève KeyError si la ligne est inconnue, ValueError si elle n'est plus
+        running (pas de double transition terminale) ou si le statut est
+        inconnu. finished_at par défaut : maintenant UTC.
+        """
+        row = self.get(uuid.UUID(str(run_id)))
+        if row is None:
+            raise KeyError(f"Unknown scheduler run: {run_id}")
+        if row.status != "running":
+            raise ValueError(
+                f"Refusing terminal transition for run {run_id}: status is {row.status!r}"
+            )
+        row.status = normalize_terminal_status(status)
+        row.error = error
+        row.finished_at = finished_at or datetime.now(UTC)
+        self._session.flush()
+        return row
+
+    def record_heartbeat(
+        self,
+        *,
+        instance_id: str,
+        leader: bool,
+        version: str = "",
+        host: str = "",
+    ) -> SchedulerHeartbeat:
+        """Upsert du heartbeat par instance_id (heartbeat_ts = maintenant UTC)."""
+        stmt = (
+            pg_insert(SchedulerHeartbeat)
+            .values(
+                instance_id=instance_id,
+                leader=leader,
+                heartbeat_ts=datetime.now(UTC),
+                version=version,
+                host=host,
+            )
+            .on_conflict_do_update(
+                index_elements=["instance_id"],
+                set_={
+                    "leader": leader,
+                    "heartbeat_ts": datetime.now(UTC),
+                    "version": version,
+                    "host": host,
+                },
+            )
+        )
+        self._session.execute(stmt)
+        self._session.flush()
+        row = self._session.get(SchedulerHeartbeat, instance_id)
+        if row is None:  # pragma: no cover - upsert ci-dessus garantit la ligne
+            raise RuntimeError(f"Heartbeat upsert failed for instance {instance_id!r}")
+        return row
+
+    def purge_before(self, cutoff: datetime) -> int:
+        """Supprime les runs terminaux (ok/failed) antérieurs au cutoff.
+
+        Ne touche jamais aux lignes running (reprise crash + tâches enqueue
+        en attente). Retourne le nombre de lignes supprimées.
+        """
+        result = self._session.execute(
+            delete(SchedulerRun).where(
+                SchedulerRun.status.in_(TERMINAL_RUN_STATUSES),
+                SchedulerRun.triggered_at < cutoff,
+            )
+        )
+        self._session.flush()
+        return int(result.rowcount or 0)
+
+    def list_stale_running(
+        self,
+        older_than: datetime,
+        modes: tuple[str, ...] = ("direct",),
+    ) -> Sequence[SchedulerRun]:
+        """Lignes running + anciennes, limitées aux modes donnés.
+
+        Par défaut seuls les runs `direct` sont éligibles : une ligne
+        `enqueue` running correspond à une tâche en attente d'exécution
+        (worker claim), pas à un crash — elle ne doit pas être reprise ici.
+        """
+        return self.list(
+            SchedulerRun.status == "running",
+            SchedulerRun.triggered_at < older_than,
+            SchedulerRun.mode.in_(modes),
+            order_by=SchedulerRun.triggered_at,
+        )

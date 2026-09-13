@@ -4,8 +4,8 @@ Exercises the runner end-to-end against a REAL disposable PostgreSQL:
 
   * --check performs no write (no ledger created, no schema change) ;
   * --apply refuses without / with invalid TRENDX_CONFIRM_APPLY ;
-  * --apply with TRENDX_CONFIRM_APPLY=YES applies the full 000->012 chain ;
-  * strict numeric order 000..012 ;
+  * --apply with TRENDX_CONFIRM_APPLY=YES applies the full 000->014 chain ;
+  * strict numeric order 000..014 ;
   * stop-on-error: a failing migration aborts the run and is not recorded ;
   * idempotence / SKIP: re-applying records nothing new and prints [skip] ;
   * no secret (password / PGPASSWORD / DSN) ever appears in the runner output.
@@ -109,7 +109,7 @@ def test_runner_apply_refuses_invalid_confirmation():
 
 
 @INTEGRATION
-def test_runner_apply_full_chain_000_to_012(provisioned_postgres):
+def test_runner_apply_full_chain_000_to_014(provisioned_postgres):
     params = provisioned_postgres
     r = _run_runner(params, "--apply", confirm="YES")
     assert r.returncode == 0, f"apply failed:\n{r.stderr}"
@@ -118,7 +118,7 @@ def test_runner_apply_full_chain_000_to_012(provisioned_postgres):
     assert set(names) == set(EXPECTED_CHAIN), f"chain mismatch:\n{names}"
     # Strict order: first and last.
     assert names[0] == "000_service_accounts.sql"
-    assert names[-1] == "013_forecast_alerting_and_model_enrichment.sql"
+    assert names[-1] == "014_scheduler_runs.sql"
 
     # 000 created both schemas.
     assert pg_query(params, "SELECT 1 FROM pg_namespace WHERE nspname='trendx_catalog'")

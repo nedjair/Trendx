@@ -371,6 +371,30 @@ if HAS_APSCHEDULER:
         except Exception as exc:
             logger.error(f"[scheduler] ingestion_hourly échec: {exc}")
 
+    def _job_scheduler_runs_retention() -> None:
+        """Purge des runs scheduler terminaux (ok/failed) au-delà de
+        TRENDX_RETENTION_DAYS. Ne supprime jamais les lignes running
+        (reprise crash + tâches enqueue en attente). DML simple via le
+        repository, aucun DDL depuis Python.
+        """
+        try:
+            from trendx.database.connection import manager as db_manager
+            from trendx.database.repositories import SchedulerRunRepository
+
+            cutoff = datetime.now(UTC) - timedelta(days=settings.trendx_retention_days)
+            with db_manager.get_session("catalog") as session:
+                deleted = SchedulerRunRepository(session).purge_before(cutoff)
+                session.commit()
+            logger.info(
+                "[scheduler] scheduler_runs_retention -> runs supprimés={deleted} "
+                "(cutoff={cutoff}, jours={days})",
+                deleted=deleted,
+                cutoff=cutoff.isoformat(),
+                days=settings.trendx_retention_days,
+            )
+        except Exception as exc:
+            logger.error(f"[scheduler] scheduler_runs_retention échec: {exc}")
+
     def _start_scheduler() -> BackgroundScheduler:
         sched = BackgroundScheduler(timezone=settings.trendx_timezone)
         sched.add_job(
@@ -438,11 +462,23 @@ if HAS_APSCHEDULER:
             max_instances=1,
             coalesce=True,
         )
+        # Purge mensuelle des runs scheduler terminaux (migration 014).
+        # Cadence distincte des jobs partitions (jour 1-2) ; ne touche jamais
+        # les lignes running.
+        sched.add_job(
+            _job_scheduler_runs_retention,
+            CronTrigger(day="3", hour=1, minute=30),
+            id="scheduler_runs_retention_monthly",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=3600,
+        )
         sched.start()
         logger.info(
             "trendx-worker APScheduler démarré (jobs: partitions_monthly,"
             " partitions_retention_monthly, aggregate_hourly, aggregate_daily,"
-            " aggregate_weekly, ingestion_hourly, partitions_boot_check)"
+            " aggregate_weekly, ingestion_hourly, partitions_boot_check,"
+            " scheduler_runs_retention_monthly)"
         )
         return sched
 
