@@ -1,8 +1,8 @@
 # Plan de déploiement Docker — Trendx sur 10.0.0.1
 
-**Version :** 1.1 — Phase 2 (corrections post-validation)  
-**Date :** 2026-08-02  
-**Profil par défaut :** `TRENDX_PROFILE=minimal`  
+**Version :** 1.1 — Phase 2 (corrections post-validation)
+**Date :** 2026-08-02
+**Profil par défaut :** `TRENDX_PROFILE=minimal`
 **Décisions applicables :** B1, B2, B3, B4, B5, B6, validations Phase 2 conditionnelles
 
 ---
@@ -33,7 +33,7 @@ networks:
     name: mobili_dahsboard_default
 ```
 
-**B2 :** Connexion Canal 2 par nom de conteneur PostgreSQL TB (`mobili_dahsboard-postgres-1:5432`).  
+**B2 :** Connexion Canal 2 par nom de conteneur PostgreSQL TB (`mobili_dahsboard-postgres-1:5432`).
 REFUSÉ exposition hôte 5433 et tunnel SSH.
 
 ---
@@ -204,7 +204,7 @@ Chaque service déclare `cpus`, `memory`, `pids_limit` et `logging max-size/max-
 
 ## 5. Ports et conflits
 
-**B6 : AUCUN port ouvert** sur l'hôte pour les services Trendx.  
+**B6 : AUCUN port ouvert** sur l'hôte pour les services Trendx.
 Un seul point d'entrée : reverse-proxy Trendx HTTP 8443 sur `127.0.0.1` uniquement.
 TLS reporté à une phase ultérieure — tant qu'il est absent, ne jamais publier ce
 port ailleurs que sur `127.0.0.1` (chiffrement délégué au tunnel SSH).
@@ -303,6 +303,24 @@ port ailleurs que sur `127.0.0.1` (chiffrement délégué au tunnel SSH).
 - Pas de Redis nécessaire pour la planification
 - Les jobs sont gérés en mémoire avec persistance dans `trendx_catalog.trendz_task`
 - Justification : simplifier l'infrastructure en Phase 2, éviter dépendance externe
+
+### 9bis. Scheduler B1 dédié (MR-4, profil `scheduler`, OFF par défaut)
+
+- Service `scheduler` (`docker/Dockerfile.scheduler`, `python -m trendx.scheduler.service`),
+  activé uniquement via `docker compose --profile scheduler` (gate d'activation MR-5 séparé).
+- Sans le profil : `docker compose config --services` = `api`, `reverse-proxy`, `worker`
+  (stack inchangée) ; avec le profil : + `scheduler`.
+- Variables : `TRENDX_SCHEDULER_ENABLED` (défaut `false`), `INSTANCE_ID`,
+  `HEARTBEAT_SECONDS=15`, `STALE_SECONDS=60`, `ACQUIRE_TIMEOUT_SECONDS=5`,
+  `LEADER_LOCK`, `METRICS_PORT=9109` (placeholders `.env.example`).
+- Healthcheck conteneur : socket `127.0.0.1:9109` ; endpoints `/healthz`
+  (`disabled|leader|standby|degraded`) et `/metrics` (texte Prometheus).
+- Limites : `cpus 0.25`, `mem 384m`, `pids 50`, logs `10m×3` ; réseaux
+  `trendx_internal` + TB (lecture seule, flags OFF, guards fail-closed).
+- Rollback : `docker compose --profile scheduler down` (ou `docker stop
+  trendx_scheduler`) ; le worker reprend seul (file de tâches DB intacte).
+- **Aucune activation production dans MR-4** : le service n'est ni démarré ni
+  exposé par ce changement (profil OFF, flags OFF).
 
 ---
 

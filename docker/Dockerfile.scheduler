@@ -1,0 +1,101 @@
+# ============================================================
+# Trendx — Scheduler B1 dédié (planificateur P0 : discovery, ingestion,
+# train/forecast/anomaly)
+# Même base Python 3.11 que le worker, user python-executor non-root,
+# venv /opt/venv. Les dépendances Python sont celles partagées de
+# l'application (aucune couche script-engine/executor ici : pas de
+# variables EXECUTOR_*, pas d'exécution de code utilisateur).
+# Le service démarre EXCLUSIVEMENT : python -m trendx.scheduler.service
+# (OFF par défaut via TRENDX_SCHEDULER_ENABLED=false).
+# ============================================================
+FROM python:3.11.14-slim-bookworm AS base
+
+LABEL org.opencontainers.image.title="Trendx Scheduler B1" \
+      org.opencontainers.image.description="Dedicated P0 scheduler: leader election, heartbeat, run persistence, health/metrics" \
+      org.opencontainers.image.version="0.1.0" \
+      com.trendx.project="trendx"
+
+# ——— Système ———
+ENV DEBIAN_FRONTEND=noninteractive \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        ca-certificates=20250419~deb12u1 curl=7.88.1-10+deb12u15 gnupg=2.2.40-1.1+deb12u2 \
+        tzdata=2026b-0+deb12u1 locales=2.36-9+deb12u14 \
+        build-essential=12.9 libpq-dev=15.19-0+deb12u1 python3-dev=3.11.2-1+b1 \
+        libopenblas-dev=0.3.21+ds-4 liblapack-dev=3.11.0-2 gfortran=4:12.2.0-3 \
+        postgresql-client=15+248+deb12u1 netcat-openbsd=1.219-1 dumb-init=1.2.5-2 \
+        procps=2:4.0.2-3 libgomp1=12.2.0-14+deb12u1 \
+ && rm -rf /var/lib/apt/lists/* \
+ && update-ca-certificates \
+ && echo "UTC" > /etc/timezone && dpkg-reconfigure -f noninteractive tzdata
+
+# ——— VEN global /opt/venv ——— (même layout que le worker)
+ENV VIRTUAL_ENV=/opt/venv \
+    PATH=/opt/venv/bin:${PATH} \
+    PYTHON_EXECUTABLE_PATH=/opt/venv/bin/python3 \
+    PYTHONPATH=/opt/venv/lib/python3.11/site-packages:/app/src:/app
+
+RUN python3 -m venv /opt/venv \
+ && /opt/venv/bin/python -m pip install --upgrade pip wheel \
+ && /opt/venv/bin/python -m pip install --no-cache-dir "setuptools>=65,<68"
+
+WORKDIR /app
+COPY constraints.txt /app/constraints.txt
+
+# ——— Dépendances Python partagées (épinglées via constraints.txt) ———
+# Identiques au worker : les handlers directs (topology, ingestion) utilisent
+# les mêmes services. Aucune dépendance d'exécution de code utilisateur.
+RUN /opt/venv/bin/python -m pip install --no-cache-dir -c /app/constraints.txt \
+        numpy==1.26.4 \
+        pandas==2.2.2 \
+        scipy==1.12.0 \
+        SQLAlchemy==2.0.29 \
+        psycopg2-binary==2.9.9 \
+        httpx==0.27.0 \
+        tenacity==8.2.3 \
+        pendulum==3.0.0 \
+        loguru==0.7.2 \
+        orjson==3.10.1 \
+        pydantic==2.6.4 \
+        pydantic-settings==2.2.1 \
+        python-dotenv==1.0.1 \
+        APScheduler==3.10.4
+
+# ——— Installer le package trendx (même mécanisme que le worker) ———
+RUN /opt/venv/bin/python -m pip install --no-cache-dir --no-deps -c /app/constraints.txt -e . \
+  && /opt/venv/bin/python -c "import trendx; print('trendx import OK')" 2>/dev/null; true
+
+# ——— User non-root ———
+RUN groupadd -r -g 1000 python-executor \
+ && useradd -r -u 1000 -g 1000 -s /bin/bash -m -d /home/python-executor python-executor \
+ && chown -R python-executor:python-executor /app \
+ && mkdir -p /usr/share/python-executor /data \
+ && chown python-executor:python-executor /usr/share/python-executor /data
+
+COPY ./src /app/src
+COPY ./scripts /app/scripts
+COPY pyproject.toml /app/pyproject.toml
+
+RUN chown -R python-executor:python-executor /app
+
+USER 1000
+WORKDIR /usr/share/python-executor
+ENV TRENDX_SCHEDULER_ENABLED=false \
+    TRENDX_SCHEDULER_HEARTBEAT_SECONDS=15 \
+    TRENDX_SCHEDULER_STALE_SECONDS=60 \
+    TRENDX_SCHEDULER_ACQUIRE_TIMEOUT_SECONDS=5 \
+    TRENDX_SCHEDULER_LEADER_LOCK=trendx_scheduler_leader \
+    TRENDX_SCHEDULER_METRICS_PORT=9109
+
+# Port metrics interne uniquement (jamais publié sur l'hôte par Compose).
+EXPOSE 9109
+
+ENTRYPOINT ["/usr/bin/dumb-init", "--"]
+CMD ["python3", "-m", "trendx.scheduler.service"]

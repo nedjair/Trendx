@@ -1,19 +1,19 @@
 # Architecture Trendx
 
-**Version :** 1.1 — Phase 2 (corrections post-validation)  
-**Date :** 2026-08-02  
+**Version :** 1.1 — Phase 2 (corrections post-validation)
+**Date :** 2026-08-02
 **Conformité :** AGENTS.md §1–22, prompt.md §7, décisions Phase 1 → Phase 2, validations Phase 2 conditionnelles
 
 ---
 
 ## 1. Principe d'installation
 
-Trendx s'installe **à côté** de ThingsBoard sur le serveur unique `10.0.0.1`.  
-Aucun service Trendx ne s'exécute dans les conteneurs ThingsBoard existants.  
+Trendx s'installe **à côté** de ThingsBoard sur le serveur unique `10.0.0.1`.
+Aucun service Trendx ne s'exécute dans les conteneurs ThingsBoard existants.
 Fichier Compose séparé, images propres, volumes propres sous `/opt/trendx/data`.
 
-**Correction A — UNE SEULE BASE :** La base `trendx` regroupe tous les schémas Trendx.  
-`trendx_catalog` et `trendx_analytics` deviennent des schémas dans `trendx`.  
+**Correction A — UNE SEULE BASE :** La base `trendx` regroupe tous les schémas Trendx.
+`trendx_catalog` et `trendx_analytics` deviennent des schémas dans `trendx`.
 `trendx_airflow` et `trendx_mlflow` ne sont pas créés en Phase 2.
 
 ---
@@ -86,6 +86,20 @@ ThingsBoard CE   TB PostgreSQL   Trendx
 - Airflow (reporté)
 - MLflow (fichier local, puis conteneur)
 - Grafana (optionnel)
+- trendx-scheduler (MR-4, profil `scheduler`, OFF par défaut — voir §3bis)
+
+---
+
+### 3bis. Scheduler B1 dédié `trendx-scheduler` (MR-4, inactif par défaut)
+
+- **Rôle** : planifier les jobs P0 (catalogue `P0_JOBS`) au lieu du worker, avec élection de leader, heartbeat, persistance des runs et fencing. Entrée : `python -m trendx.scheduler.service`.
+- **Relation avec worker** : le worker reste l'exécuteur (file de tâches `trendz_task`, claim atomique) et conserve la maintenance infrastructure (partitions, rétention, agrégats) ainsi que `ingestion_hourly` jusqu'à MR-5. Le scheduler ne l'importe jamais (contrat MR-18) ; les jobs lourds (`trendx_train`, `trendx_forecast`, `anomaly_scan`) sont en mode `enqueue` (tâche créée, exécutée par le worker), les autres en `direct`.
+- **Profil Compose** : service `scheduler` derrière `profiles: ["scheduler"]` — la stack minimal (`reverse-proxy`/`api`/`worker`) est inchangée sans ce profil. Activation = gate MR-5 séparé ; rollback = arrêt du conteneur.
+- **Activation contrôlée** : `TRENDX_SCHEDULER_ENABLED=false` par défaut (aucune planification) ; guards refusant le démarrage si `TB_WRITEBACK_ENABLED`/`TB_ALARMS_ENABLED` ; leadership requis (`require_leadership=True`, standby sans planification, step-down gelant l'ordonnancement).
+- **Healthcheck** : HTTP `127.0.0.1:9109` (interne uniquement) — `/healthz` (`disabled|leader|standby|degraded`, standby jamais reporté leader) et `/metrics` (texte Prometheus : `scheduler_up`, `scheduler_enabled`, `scheduler_leader`).
+- **Leadership** : advisory lock PostgreSQL sur connexion dédiée (`TRENDX_SCHEDULER_LEADER_LOCK`), heartbeat toutes `TRENDX_SCHEDULER_HEARTBEAT_SECONDS=15`, stale `TRENDX_SCHEDULER_STALE_SECONDS=60` ; incertitude ⇒ non-leader.
+- **Arrêt** : `SIGTERM`/`SIGINT` → gel planification → `release()` (publish `leader=false` best-effort, unlock, close) → fermeture HTTP ; idempotent, sans traceback.
+- **Prérequis** : base `trendx` migrée 000→014 (tables `scheduler_run`, `scheduler_heartbeat`), flags TB OFF, `TRENDX_SCHEDULER_ENABLED=true` + instance explicite pour activation (gate séparé).
 
 ---
 
@@ -226,7 +240,7 @@ ThingsBoard CE   TB PostgreSQL   Trendx
 
 ## 13. Stockage et disque
 
-**Correction B — Partage volume PostgreSQL :** Les bases Trendx partagent le volume PostgreSQL existant de ThingsBoard (`tb-postgres-data`).  
+**Correction B — Partage volume PostgreSQL :** Les bases Trendx partagent le volume PostgreSQL existant de ThingsBoard (`tb-postgres-data`).
 **Risque :** ts_kv TB occupe ~25–30 GB. Toute dégradation de performance ou d'espace sur ce volume impacte directement ThingsBoard.
 
 **Protections :**
@@ -246,8 +260,8 @@ ThingsBoard CE   TB PostgreSQL   Trendx
 
 ## 15. Migrations et traçabilité schéma
 
-**Mécanisme officiel :** `public.schema_version` dans la base `trendx`.  
-Chaque migration SQL est enregistrée avec son nom, checksum, durée et statut.  
+**Mécanisme officiel :** `public.schema_version` dans la base `trendx`.
+Chaque migration SQL est enregistrée avec son nom, checksum, durée et statut.
 Procédure :
 1. Déposer le fichier SQL dans `migrations/`
 2. L'appliquer via `make migrate` ou `psql`
