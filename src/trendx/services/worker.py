@@ -123,6 +123,20 @@ JOB_DISPATCH: dict[str, Callable[[dict[str, Any], str, str], Any]] = {
 }
 
 
+def is_single_planner_config(*, worker_ingestion_enabled: bool, scheduler_enabled: bool) -> bool:
+    """Contrat de déduplication MR-5 (XOR planificateurs d'ingestion).
+
+    Retourne True sauf si le worker ET le scheduler B1 dédié planifieraient
+    l'ingestion simultanément — configuration interdite (double exécution).
+    Les deux inactifs (fenêtre transitoire de la séquence d'activation)
+    restent autorisés : le recouvrement checkpoints (1h) absorbe le gap au
+    retour d'un planificateur. Fonction pure : sans effet de bord, testée en
+    CI (le test XOR DOIT échouer si la double planification redevient
+    possible).
+    """
+    return not (worker_ingestion_enabled and scheduler_enabled)
+
+
 def _parse_json_job(raw: Any) -> dict[str, Any]:
     """Parse le json_job de la requête. Retourne {} si None/"".
     Lève json.JSONDecodeError si le contenu n'est pas du JSON valide.
@@ -445,14 +459,25 @@ if HAS_APSCHEDULER:
         )
         # Ingestion incrémentale horaire (Phase 3). Réutilise _job_ingestion ->
         # JOB_DISPATCH['ingestion']; aucun job existant n'est modifié.
-        sched.add_job(
-            _job_ingestion,
-            IntervalTrigger(hours=1),
-            id="ingestion_hourly",
-            max_instances=1,
-            coalesce=True,
-            misfire_grace_time=600,
-        )
+        # MR-5 (déduplication, contrat XOR) : enregistrement conditionné par
+        # TRENDX_WORKER_INGESTION_ENABLED. false quand le scheduler B1 dédié
+        # assure la planification (profil scheduler actif) — jamais les deux
+        # planificateurs simultanément. Rollback : true + restart worker.
+        if settings.trendx_worker_ingestion_enabled:
+            sched.add_job(
+                _job_ingestion,
+                IntervalTrigger(hours=1),
+                id="ingestion_hourly",
+                max_instances=1,
+                coalesce=True,
+                misfire_grace_time=600,
+            )
+        else:
+            logger.info(
+                "[scheduler] ingestion_hourly désactivé "
+                "(TRENDX_WORKER_INGESTION_ENABLED=false) : planification "
+                "assurée par le scheduler B1 dédié"
+            )
         # Vérification d'amorçage : contrôle immédiat de la couverture partitions
         sched.add_job(
             _job_partitions,
@@ -474,11 +499,15 @@ if HAS_APSCHEDULER:
             misfire_grace_time=3600,
         )
         sched.start()
+        # Log fidèle à l'enregistrement réel (ingestion_hourly conditionné
+        # par TRENDX_WORKER_INGESTION_ENABLED — contrat XOR MR-5).
+        ingestion_suffix = " ingestion_hourly," if settings.trendx_worker_ingestion_enabled else ""
         logger.info(
             "trendx-worker APScheduler démarré (jobs: partitions_monthly,"
             " partitions_retention_monthly, aggregate_hourly, aggregate_daily,"
-            " aggregate_weekly, ingestion_hourly, partitions_boot_check,"
-            " scheduler_runs_retention_monthly)"
+            " aggregate_weekly,{} partitions_boot_check,"
+            " scheduler_runs_retention_monthly)",
+            ingestion_suffix,
         )
         return sched
 

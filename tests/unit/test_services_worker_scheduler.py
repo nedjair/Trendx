@@ -41,7 +41,9 @@ def test_start_scheduler_registers_expected_jobs() -> None:
         sched.shutdown(wait=False)
 
 
-def test_ingestion_hourly_job_registered() -> None:
+def test_ingestion_hourly_job_registered(monkeypatch) -> None:
+    # Défaut / flag=true : comportement historique inchangé.
+    monkeypatch.setattr(worker.settings, "trendx_worker_ingestion_enabled", True)
     sched = worker._start_scheduler()
     try:
         job = sched.get_job("ingestion_hourly")
@@ -53,6 +55,36 @@ def test_ingestion_hourly_job_registered() -> None:
 
         assert isinstance(job.trigger, IntervalTrigger)
         assert job.trigger.interval == timedelta(hours=1)
+    finally:
+        sched.shutdown(wait=False)
+
+
+def test_ingestion_hourly_absent_when_flag_false(monkeypatch) -> None:
+    # MR-5 : flag=false → le worker ne planifie plus ingestion_hourly
+    # (planification assurée par le scheduler B1 dédié).
+    monkeypatch.setattr(worker.settings, "trendx_worker_ingestion_enabled", False)
+    sched = worker._start_scheduler()
+    try:
+        assert sched.get_job("ingestion_hourly") is None
+    finally:
+        sched.shutdown(wait=False)
+
+
+def test_other_jobs_unchanged_when_flag_false(monkeypatch) -> None:
+    # MR-5 : flag=false → les 7 autres jobs restent présents et inchangés.
+    monkeypatch.setattr(worker.settings, "trendx_worker_ingestion_enabled", False)
+    sched = worker._start_scheduler()
+    try:
+        expected = {
+            "partitions_monthly",
+            "partitions_retention_monthly",
+            "aggregate_hourly",
+            "aggregate_daily",
+            "aggregate_weekly",
+            "partitions_boot_check",
+            "scheduler_runs_retention_monthly",
+        }
+        assert expected == {job.id for job in sched.get_jobs()}
     finally:
         sched.shutdown(wait=False)
 

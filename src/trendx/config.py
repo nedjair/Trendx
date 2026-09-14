@@ -134,6 +134,16 @@ class Settings(BaseSettings):
         default="trendx_scheduler_leader", alias="TRENDX_SCHEDULER_LEADER_LOCK"
     )
 
+    # Planification ingestion côté worker (MR-5 : déduplication). true par
+    # défaut = comportement historique (le worker planifie ingestion_hourly).
+    # Passer à false quand le scheduler B1 dédié assure la planification
+    # (profil scheduler actif) : garantit un seul planificateur actif pour
+    # l'ingestion (contrat XOR : jamais worker + scheduler simultanément).
+    # Rollback : true + restart worker.
+    trendx_worker_ingestion_enabled: bool = Field(
+        default=True, alias="TRENDX_WORKER_INGESTION_ENABLED"
+    )
+
     forecast_frequency: str = Field(default="1h", alias="FORECAST_FREQUENCY")
     forecast_horizon: int = Field(default=24, alias="FORECAST_HORIZON")
     training_lookback_days: int = Field(default=90, alias="TRAINING_LOOKBACK_DAYS")
