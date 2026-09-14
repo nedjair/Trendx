@@ -494,7 +494,7 @@ correction n'a pas été approuvée.
 
 ## 13. Migrations
 
-- Mécanisme officiel : `public.schema_version` dans la base `trendx`
+- Mécanisme officiel : `trendx_catalog.schema_version` dans la base `trendx` (durcissement : schéma `public` absent en production)
 - Chaque migration SQL est tracée par nom, checksum, durée et statut
 - Rôle `trendx_migration` pour le DDL, `trendx_app` pour le DML
 - Pas d'outil de migration tiers en Phase 2
