@@ -260,11 +260,11 @@ ThingsBoard CE   TB PostgreSQL   Trendx
 
 ## 15. Migrations et traçabilité schéma
 
-**Mécanisme officiel :** `public.schema_version` dans la base `trendx`.
+**Mécanisme officiel :** `trendx_catalog.schema_version` dans la base `trendx` (durcissement : schéma `public` absent en production).
 Chaque migration SQL est enregistrée avec son nom, checksum, durée et statut.
 Procédure :
 1. Déposer le fichier SQL dans `migrations/`
 2. L'appliquer via `make migrate` ou `psql`
-3. Insérer une ligne dans `public.schema_version`
+3. Insérer une ligne dans `trendx_catalog.schema_version`
 
 Aucun outil de migration tiers n'est utilisé en Phase 2.

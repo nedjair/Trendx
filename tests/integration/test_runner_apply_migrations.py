@@ -58,7 +58,7 @@ def _ledger_names(params):
     try:
         return pg_query(
             params,
-            "SELECT migration_name FROM public.schema_version WHERE status='OK' "
+            "SELECT migration_name FROM trendx_catalog.schema_version WHERE status='OK' "
             "ORDER BY applied_at",
         )
     except Exception:
