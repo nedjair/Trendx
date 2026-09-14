@@ -322,6 +322,27 @@ port ailleurs que sur `127.0.0.1` (chiffrement délégué au tunnel SSH).
 - **Aucune activation production dans MR-4** : le service n'est ni démarré ni
   exposé par ce changement (profil OFF, flags OFF).
 
+### 9ter. MR-5 — transfert ingestion_hourly + mini-runbook (informatif, sans effet)
+
+- **Mécanisme** : `TRENDX_WORKER_INGESTION_ENABLED=true` (défaut) = le worker
+  planifie `ingestion_hourly` (historique). `false` = le worker ne l'enregistre
+  plus ; la planification est assurée par le scheduler B1 (`ingestion-run`,
+  mode `direct`). Contrat XOR : jamais les deux simultanément
+  (`is_single_planner_config`, test CI `test_scheduler_worker_xor.py`).
+- **Séquence d'activation** (NEVER simultaneous) : 1) PRECHECK (CI verte,
+  flags TB OFF, `.env` sauvegardé) → 2) worker `false` + restart →
+  3) vérif worker (job absent, checkpoints continus) → 4) scheduler ON
+  (profil + `TRENDX_SCHEDULER_ENABLED=true` + instance explicite) →
+  5) vérif leader (`/healthz=leader`, heartbeat frais) → 6) vérif ingestion
+  (lignes `scheduler_run` ok, checkpoints avancent) → 7) monitor. Échec à
+  toute étape : STOP + rollback, jamais de poursuite.
+- **Rollback** : stop/disable scheduler → vérif arrêt → worker `true` +
+  restart → vérif worker. Runs et checkpoints intacts (zéro migration MR-5).
+- **Fail-closed** : standby + worker-OFF = gap accepté (recouvrement
+  checkpoints 1h au retour) ; aucune bascule automatique worker.
+- **Hors périmètre** : writeback/alarmes restent OFF (guards refusent le
+  start sinon) ; aucune autre activation.
+
 ---
 
 ## 10. Procédure de déploiement (post-approbation Phase 2)
