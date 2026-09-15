@@ -20,4 +20,7 @@ P0_JOBS: tuple[JobSpec, ...] = (
     JobSpec("forecast-train", "trendx_train", "1d", "Periodic model training"),
     JobSpec("forecast-run", "trendx_forecast", "1h", "Periodic forecasting"),
     JobSpec("anomaly-scan", "anomaly_scan", "1h", "Periodic anomaly scan"),
+    JobSpec(
+        "reconcile-runs", "reconcile_runs", "5m", "Reconcile worker executions into scheduler runs"
+    ),
 )
