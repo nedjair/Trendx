@@ -122,6 +122,14 @@ class Settings(BaseSettings):
     # en production. La validation fail-closed vit dans LeaderElection
     # (entiers > 0, stale > heartbeat, lock/instance non vides).
     trendx_scheduler_enabled: bool = Field(default=False, alias="TRENDX_SCHEDULER_ENABLED")
+    # Forecast B1 : jamais fonctionnel en production (pas de fan-out par device,
+    # payloads incomplets -> échecs horaires + runs orphelins). false par défaut =
+    # forecast-train/forecast-run non planifiés ; ingestion/discovery inchangés.
+    # Option A (fan-out + réconciliation + catalogue provisionné) reste un
+    # chantier ultérieur distinct.
+    trendx_scheduler_forecast_enabled: bool = Field(
+        default=False, alias="TRENDX_SCHEDULER_FORECAST_ENABLED"
+    )
     trendx_scheduler_instance_id: str = Field(default="", alias="TRENDX_SCHEDULER_INSTANCE_ID")
     trendx_scheduler_heartbeat_seconds: int = Field(
         default=15, alias="TRENDX_SCHEDULER_HEARTBEAT_SECONDS"
