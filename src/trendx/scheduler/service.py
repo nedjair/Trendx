@@ -83,7 +83,16 @@ class SchedulerService:
             instance_id=self._instance_id,
         )
         for job_type, fn in self._p0_handlers().items():
-            mode = "enqueue" if job_type in ENQUEUE_JOB_TYPES else "direct"
+            from trendx.scheduler.fanout import FORECAST_PLAN_JOB_TYPES
+
+            if job_type in FORECAST_PLAN_JOB_TYPES:
+                # Forecast planning goes through the scheduler-side fan-out
+                # driver (direct mode): it builds complete per-pair payloads
+                # and enqueues typed tasks itself. The generic enqueue adapter
+                # would otherwise fire bare payloads with an implicit type.
+                mode = "direct"
+            else:
+                mode = "enqueue" if job_type in ENQUEUE_JOB_TYPES else "direct"
             self._registry.register_handler(job_type, adapt_p0_handler(fn, mode=mode))
         self._election = (
             election
@@ -125,7 +134,56 @@ class SchedulerService:
     def _p0_handlers(self) -> dict[str, Any]:
         if self._handlers_override is not None:
             return dict(self._handlers_override)
-        return dict(JOB_HANDLERS)
+        from trendx.scheduler.fanout import (
+            FORECAST_PLAN_JOB_TYPES,
+            reconcile_runs_job,
+        )
+
+        handlers = dict(JOB_HANDLERS)
+        for job_type in FORECAST_PLAN_JOB_TYPES:
+            handlers[job_type] = self._fanout_driver(job_type)
+        handlers["reconcile_runs"] = reconcile_runs_job
+        return handlers
+
+    def _fanout_driver(self, job_type: str) -> Any:
+        """Scheduler-side fan-out for forecast planning (direct mode).
+
+        Resolves the P0 job_id from the catalogue (no hardcoded mapping),
+        then fans the trigger payload out into per-pair typed tasks. Raises
+        fail-closed when no run store is available.
+        """
+        from trendx.scheduler.fanout import fanout_enqueue_forecast_jobs
+        from trendx.scheduler.jobs import P0_JOBS
+
+        try:
+            job_id = next(s.job_id for s in P0_JOBS if s.job_type == job_type)
+        except StopIteration:
+            raise ValueError(f"no P0 job id for job_type {job_type!r}") from None
+
+        def _drive(
+            json_job: dict[str, Any] | None,
+            task_id: str | None,
+            execution_id: str | None,
+        ) -> dict[str, Any]:
+            from trendx.database.connection import manager as db_manager
+            from trendx.services.tasks import TaskService
+
+            run_store = self._registry.run_store
+            if run_store is None:
+                raise RuntimeError("forecast fan-out requires a run store (fail-closed)")
+            data = dict(json_job or {})
+            return fanout_enqueue_forecast_jobs(
+                run_store=run_store,
+                create_task=TaskService().create_task,
+                session_factory=lambda: db_manager.get_session("catalog"),
+                instance_id=self._instance_id,
+                job_id=job_id,
+                job_type=job_type,
+                parent_run_id=data.get("run_id"),
+                overrides=None,
+            )
+
+        return _drive
 
     def _registry_heartbeat_writer(self) -> HeartbeatWriter:
         store = DbRunStore()

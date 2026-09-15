@@ -18,7 +18,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from trendx.scheduler.leader import LeaderElection
 from trendx.scheduler.registry import SchedulerRegistry
 
-_INTERVAL_MINUTES: dict[str, float] = {"15m": 15.0, "1h": 60.0, "1d": 1440.0}
+_INTERVAL_MINUTES: dict[str, float] = {"5m": 5.0, "15m": 15.0, "1h": 60.0, "1d": 1440.0}
 
 
 def _trigger_for_interval(interval: str, now: datetime) -> DateTrigger | IntervalTrigger:

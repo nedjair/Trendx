@@ -76,7 +76,8 @@ def test_c_schedules_declared():
     assert schedules["ingestion-run"] == "1h"
     assert schedules["forecast-train"] == "1d"
     assert schedules["discovery-sync-initial"] == "once"
-    assert len(schedules) == 6
+    assert schedules["reconcile-runs"] == "5m"
+    assert len(schedules) == 7
 
 
 # D. idempotence

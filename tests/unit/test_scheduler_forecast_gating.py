@@ -11,7 +11,10 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
 from trendx.scheduler.service import SchedulerService
+
+pytestmark = pytest.mark.unit
 
 
 def _settings(**overrides: Any) -> SimpleNamespace:
