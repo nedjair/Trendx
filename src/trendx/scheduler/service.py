@@ -41,6 +41,13 @@ ENQUEUE_JOB_TYPES = frozenset({"trendx_train", "trendx_forecast", "anomaly_scan"
 # failing fire): today only anomaly_scan has no JOB_HANDLERS entry.
 UNSCHEDULED_JOB_TYPES = frozenset({"anomaly_scan"})
 
+# P0 forecast jobs gated behind TRENDX_SCHEDULER_FORECAST_ENABLED (default
+# false). Forecast B1 never worked in production (no per-device fan-out :
+# hourly fires produced bare payloads -> worker fail-fast + orphan running
+# rows). Gating stops the noise without touching ingestion/discovery ; the
+# functional forecast implementation (Option A) is a separate workstream.
+FORECAST_JOB_IDS = frozenset({"forecast-train", "forecast-run"})
+
 
 class SchedulerService:
     """B1 scheduler service: elect, schedule (leader only), serve, stop cleanly."""
@@ -110,7 +117,10 @@ class SchedulerService:
             return self._specs
         from trendx.scheduler.jobs import P0_JOBS
 
-        return tuple(s for s in P0_JOBS if s.job_type not in UNSCHEDULED_JOB_TYPES)
+        specs = [s for s in P0_JOBS if s.job_type not in UNSCHEDULED_JOB_TYPES]
+        if not getattr(self._settings, "trendx_scheduler_forecast_enabled", False):
+            specs = [s for s in specs if s.job_id not in FORECAST_JOB_IDS]
+        return tuple(specs)
 
     def _p0_handlers(self) -> dict[str, Any]:
         if self._handlers_override is not None:
