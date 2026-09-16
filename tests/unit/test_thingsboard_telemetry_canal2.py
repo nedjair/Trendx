@@ -183,7 +183,7 @@ def test_incremental_uses_overlap_window(monkeypatch):
             "entity_id": "dev-1",
             "name": "d",
             "entity_type": "DEVICE",
-            "metrics": [{"key": "temp"}],
+            "metrics": [{"key": "temp", "tb_entity_id": "dev-1"}],
         }
     ]
 
