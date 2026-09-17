@@ -256,6 +256,14 @@ celles = "celles"
 convertie = "convertie"
 correspondance = "correspondance"
 
+[tool.typos.default]
+# Faux positifs typos sur fragments hex des batchs d'ingestion synthétiques
+# (docs/train-synthetic-exclusion.md, tests/unit/test_training_synthetic_exclusion.py) :
+# typos découpe "8e88d1ba-0e0" et "e6c0b750-6ba" et signale le fragment "ba".
+# Identifiants exacts ancrés uniquement — aucun mot anglais réel n'est ignoré
+# (vérifié : "teh" reste détecté). Ne pas élargir sans gate dédiée.
+extend-ignore-identifiers-re = ["^8e88d1ba$", "^6ba$"]
+
 # Baseline technique préexistante (HEAD 050c0ae) : src/trendx/main.py contient 41
 # diagnostics "Untyped decorator" FastAPI en mode strict, non liés a Wave 3 et non
 # introduits par celui-ci. On isole ce module uniquement (ignore_errors) pour ne pas

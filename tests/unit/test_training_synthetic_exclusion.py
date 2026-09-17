@@ -218,3 +218,15 @@ def test_f_existing_filters_unchanged(monkeypatch) -> None:
     assert "ingestion_id" not in stmt_empty
     stmt_full = str(build_training_data_stmt(("x",)))
     assert "ingestion_id NOT IN" in stmt_full
+
+
+def test_g_null_ingestion_id_retained_with_exclusions(monkeypatch) -> None:
+    """NULL ingestion_id conservé malgré les exclusions (clause IS NULL OR ...)."""
+    null_row = _valid_row("keep-null")
+    null_row["ingestion_id"] = None
+    table = [*_SYNTHETIC_ROWS, null_row]
+    df = _run_fetch(table, ",".join(SYNTHETIC_IDS), monkeypatch)
+    assert len(df) == 1
+    assert float(df["value"].iloc[0]) == 22.5
+    stmt_full = str(build_training_data_stmt(("x",)))
+    assert "ingestion_id IS NULL OR ingestion_id NOT IN" in stmt_full
