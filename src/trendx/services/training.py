@@ -163,6 +163,12 @@ class TrainingService:
         df = self._resampler.resample(df, frequency=frequency, method="mean")
         df = self._resampler.interpolate_missing(df, method="linear", limit=3)
         df = df.rename(columns={"ts": "ds", "value": "y"})
+        # Prophet rejects tz-aware ds ("Column ds has timezone specified"):
+        # normalize to tz-naive while keeping the UTC instant (same UTC wall
+        # time). Applied after resampling/interpolation (hourly results
+        # unchanged) and shared by all algorithms (ARIMA/sklearn/Fourier do
+        # not depend on tzinfo; instants strictly identical).
+        df["ds"] = pd.to_datetime(df["ds"], utc=True).dt.tz_localize(None)
         df = df.dropna(subset=["y"])
         return df
 
