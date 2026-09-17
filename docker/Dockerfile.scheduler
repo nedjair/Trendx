@@ -52,10 +52,21 @@ COPY constraints.txt /app/constraints.txt
 # ——— Dépendances Python partagées (épinglées via constraints.txt) ———
 # Identiques au worker : les handlers directs (topology, ingestion) utilisent
 # les mêmes services. Aucune dépendance d'exécution de code utilisateur.
+# Dépendances ML du chemin trendx_train (training.py -> Normalizer ->
+# sklearn/scipy top-level ; LinearRegression/statsmodels, prophet/cmdstanpy,
+# pmdarima en lazy ; mlflow via MLflowTracker non gardé) : versions
+# identiques à constraints.txt (scikit-learn 1.4.2, statsmodels 0.14.2,
+# prophet 1.1.5, cmdstanpy 1.2.2, pmdarima 2.0.4, mlflow 2.14.3).
 RUN /opt/venv/bin/python -m pip install --no-cache-dir -c /app/constraints.txt \
         numpy==1.26.4 \
         pandas==2.2.2 \
         scipy==1.12.0 \
+        scikit-learn==1.4.2 \
+        statsmodels==0.14.2 \
+        prophet==1.1.5 \
+        cmdstanpy==1.2.2 \
+        pmdarima==2.0.4 \
+        mlflow==2.14.3 \
         SQLAlchemy==2.0.29 \
         psycopg2-binary==2.9.9 \
         httpx==0.27.0 \
