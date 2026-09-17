@@ -8,7 +8,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from loguru import logger
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
+from sqlalchemy.sql.elements import TextClause
 from trendx.config import settings
 from trendx.database.connection import manager as db_manager
 from trendx.database.models import PredictionModel
@@ -36,6 +37,54 @@ def resolve_customer_scope(customer_id: str | None = None) -> str:
         return str(uuid.UUID(raw))
     except (ValueError, AttributeError, TypeError) as exc:
         raise ValueError(f"customer_id invalide (UUID attendu) : {raw!r}") from exc
+
+
+def parse_excluded_ingestion_ids(raw: str | None) -> tuple[str, ...]:
+    """Parse la liste d'exclusion des batches d'ingestion (déterministe).
+
+    Règles : séparation par virgule, suppression des surrounding whitespace,
+    suppression des vides, déduplication (premier vu conservé).
+    Vide/None -> (). `source` n'est jamais utilisé comme critère.
+    """
+    if raw is None:
+        return ()
+    seen: dict[str, None] = {}
+    for part in str(raw).split(","):
+        cleaned = part.strip()
+        if cleaned and cleaned not in seen:
+            seen[cleaned] = None
+    return tuple(seen)
+
+
+def get_excluded_ingestion_ids() -> tuple[str, ...]:
+    """Lit la liste d'exclusion depuis la configuration (vide = aucune exclusion)."""
+    return parse_excluded_ingestion_ids(settings.training_excluded_ingestion_ids)
+
+
+def build_training_data_stmt(excluded: tuple[str, ...] = ()) -> TextClause:
+    """Construit la requête Train (paramétrée, sans concaténation de valeurs).
+
+    Filtres invariants : entity_id, metric_key, [start, end), dbl_v NOT NULL.
+    Si `excluded` est non vide, ajoute
+    `AND (ingestion_id IS NULL OR ingestion_id NOT IN :excluded)`
+    avec bindparam expanding (NULL conservés, jamais exclus).
+    """
+    base = """
+            SELECT ts, dbl_v AS value
+            FROM ts_kv
+            WHERE entity_id = :eid
+              AND metric_key = :key
+              AND ts >= :start
+              AND ts < :end
+              AND dbl_v IS NOT NULL
+    """
+    if not excluded:
+        return text(base + "            ORDER BY ts ASC\n            ")
+    stmt = text(
+        base + "              AND (ingestion_id IS NULL OR ingestion_id NOT IN :excluded)\n"
+        "            ORDER BY ts ASC\n            "
+    )
+    return stmt.bindparams(bindparam("excluded", expanding=True))
 
 
 class TrainingService:
@@ -71,28 +120,18 @@ class TrainingService:
         end = datetime.now(UTC)
         start = end - timedelta(days=lookback)
         engine = db_manager.get_engine("analytics")
-        stmt = text(
-            """
-            SELECT ts, dbl_v AS value
-            FROM ts_kv
-            WHERE entity_id = :eid
-              AND metric_key = :key
-              AND ts >= :start
-              AND ts < :end
-              AND dbl_v IS NOT NULL
-            ORDER BY ts ASC
-            """
-        )
+        excluded = get_excluded_ingestion_ids()
+        stmt = build_training_data_stmt(excluded)
+        params: dict[str, Any] = {
+            "eid": entity_id,
+            "key": metric_key,
+            "start": start,
+            "end": end,
+        }
+        if excluded:
+            params["excluded"] = list(excluded)
         with engine.connect() as conn:
-            rows = conn.execute(
-                stmt,
-                {
-                    "eid": entity_id,
-                    "key": metric_key,
-                    "start": start,
-                    "end": end,
-                },
-            ).fetchall()
+            rows = conn.execute(stmt, params).fetchall()
         if not rows:
             logger.warning(
                 "No training data for {}/{} in the last {} days",

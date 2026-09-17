@@ -155,6 +155,16 @@ class Settings(BaseSettings):
     forecast_frequency: str = Field(default="1h", alias="FORECAST_FREQUENCY")
     forecast_horizon: int = Field(default=24, alias="FORECAST_HORIZON")
     training_lookback_days: int = Field(default=90, alias="TRAINING_LOOKBACK_DAYS")
+    # Exclusion explicite de batches d'ingestion du Train (isolement synthétique).
+    # Liste séparée par des virgules d'ingestion_id à exclure de
+    # TrainingService._fetch_training_data() via `AND ingestion_id NOT IN (...)`.
+    # Vide par défaut = aucune exclusion (comportement normal). Voir
+    # docs/train-synthetic-exclusion.md pour les 11 IDs synthétiques de
+    # septembre 2026 et la procédure de remplacement de la liste.
+    # `source=thingsboard` n'est jamais un critère (homogène valide/synthétique).
+    training_excluded_ingestion_ids: str = Field(
+        default="", alias="TRAINING_EXCLUDED_INGESTION_IDS"
+    )
     forecast_min_value: float = Field(default=0.0, alias="FORECAST_MIN_VALUE")
     forecast_max_value: float = Field(default=60.0, alias="FORECAST_MAX_VALUE")
 

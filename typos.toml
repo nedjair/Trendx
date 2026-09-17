@@ -8,4 +8,8 @@ extend-ignore-words-re = [
     # "mobili_dahsboard_default" Docker network name are intentional and
     # deployed — correcting them would break PostgreSQL connectivity.
     "dahsboard",
+    # Synthetic TB ingestion batch IDs (uuid4()[:12], e.g. "5b55fd02-043",
+    # "bd0c4482-dad") documented in docs/train-synthetic-exclusion.md.
+    # Hex fragments like "d1ba" are identifiers, not typos.
+    "[0-9a-f]{8}-[0-9a-z]{3}",
 ]
