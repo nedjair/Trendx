@@ -62,7 +62,9 @@ class ProphetModel(ForecastModel):
         self.custom_regressors = custom_regressors or []
         self.growth = growth
         self._model: Any = None
-        self._last_df: pd.DataFrame | None = None
+        # Shared training-history contract (linear/OLS/ARIMA/Fourier) required by
+        # mlops.forecast_pyfunc.export_history: the training frame.
+        self._train_df: pd.DataFrame | None = None
 
     def _build_model(self) -> Any:
         from prophet import Prophet
@@ -109,7 +111,7 @@ class ProphetModel(ForecastModel):
             df["floor"] = self.floor
 
         self._model.fit(df)
-        self._last_df = df
+        self._train_df = df
 
         elapsed = time.monotonic() - t_start
         logger.info("ProphetModel.fit completed in {:.2f}s", elapsed)
