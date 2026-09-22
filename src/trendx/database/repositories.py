@@ -730,11 +730,6 @@ class ViewConfigRepository(BaseRepository[ViewConfig]):
         return self.find_favorite()
 
 
-# Scheduler B1 (migration 014, TrendX-owned) — reporté verbatim depuis master
-# pour la résolution W49 (rétention scheduler_runs du worker). Aucune
-# modification des repositories existants.
-
-
 TERMINAL_RUN_STATUSES = ("ok", "failed")
 
 

@@ -105,9 +105,7 @@ def task_forecast_dryrun(device_id: str, metric_name: str, horizon: int = 24) ->
 # Les noms préfixés sont ré-exportés ici : le contrat exécuteur (JOB_DISPATCH,
 # attributs de module _run_*, __name__ assertés par les tests) reste inchangé.
 from trendx.scheduler.handlers import (  # noqa: E402  -- imports métier en tête de bloc
-    _run_anomaly_scan,
     _run_ingestion,
-    _run_ml_pipeline,
     _run_topology_discovery,
     _run_topology_sync,
     _run_trendx_forecast,
@@ -122,8 +120,6 @@ JOB_DISPATCH: dict[str, Callable[[dict[str, Any], str, str], Any]] = {
     "ingestion": _run_ingestion,
     "trendx_train": _run_trendx_train,
     "trendx_forecast": _run_trendx_forecast,
-    "anomaly_scan": _run_anomaly_scan,
-    "ml_pipeline": _run_ml_pipeline,
 }
 
 
@@ -553,3 +549,15 @@ if __name__ == "__main__":
         if _scheduler is not None:
             _scheduler.shutdown(wait=False)
         logger.info("trendx-worker stopped by signal")
+
+
+# W49 (résolution) : enregistrement disjoint des handlers ML.
+# Placé en fin de fichier, zone non touchée par l'extraction B1, afin que la
+# fusion avec master reste propre : handlers définis dans
+# trendx.scheduler.handlers (source de vérité, sans import de ce module),
+# enregistrés ici sans modifier le bloc d'import ni le littéral JOB_DISPATCH.
+from trendx.scheduler.handlers import _run_anomaly_scan as _w49_anomaly_scan  # noqa: E402
+from trendx.scheduler.handlers import _run_ml_pipeline as _w49_ml_pipeline  # noqa: E402
+
+JOB_DISPATCH["anomaly_scan"] = _w49_anomaly_scan
+JOB_DISPATCH["ml_pipeline"] = _w49_ml_pipeline

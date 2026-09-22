@@ -136,40 +136,6 @@ class TrainingService:
         """
         return self._fetch_training_data(entity_id, metric_key, lookback_days)
 
-    def _resolve_tenant(self, entity_id: str, metric_key: str) -> str | None:
-        """Resolve the tenant UUID for model registration (W49 provenance).
-
-        Priority: metric_definition.tenant_id for (entity, metric), then the
-        configured default. None when unresolvable : ModelRegistry then
-        resolves it from the business entity itself (fail-closed when the
-        entity is unknown). Bounded catalog read, best-effort, never blocking.
-        """
-        from trendx.database.repositories import MetricDefinitionRepository
-
-        try:
-            with db_manager.get_session("catalog") as session:
-                repo = MetricDefinitionRepository(session)
-                match = next(
-                    (
-                        m
-                        for m in repo.find_by_business_entity(entity_id)
-                        if str(getattr(m, "item_name", "") or "") == metric_key
-                        or str(getattr(m, "name", "") or "") == metric_key
-                    ),
-                    None,
-                )
-                if match is not None and getattr(match, "tenant_id", None) is not None:
-                    return str(match.tenant_id)
-        except Exception as exc:
-            logger.warning(
-                "Tenant lookup failed for {}/{}: {} (registry fallback applies)",
-                entity_id[:12],
-                metric_key,
-                exc,
-            )
-        default = (settings.trendx_default_tenant_id or "").strip()
-        return default or None
-
     def _fetch_training_data(
         self,
         entity_id: str,
@@ -357,7 +323,6 @@ class TrainingService:
                 model_type=algorithm,
                 model_uri=model_uri,
                 customer_id=resolved_customer,
-                tenant_id=self._resolve_tenant(entity_id, metric_key),
             )
             return champion
         except Exception as exc:

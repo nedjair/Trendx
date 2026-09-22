@@ -1184,11 +1184,6 @@ class ViewCollection(Base):
 # Use trendz_system_property for key/value config.
 
 
-# Scheduler B1 (migration 014, TrendX-owned) — reporté verbatim depuis master
-# pour la résolution W49 (persistance requise par la rétention
-# scheduler_runs du worker). Aucune modification des modèles existants.
-
-
 class SchedulerRun(Base):
     """Ligne d'exécution d'un job scheduler P0 (TrendX-owned, migration 014).
 

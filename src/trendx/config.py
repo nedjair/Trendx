@@ -117,6 +117,31 @@ class Settings(BaseSettings):
 
     trendx_retention_days: int = Field(default=180, alias="TRENDX_RETENTION_DAYS")
 
+    # Scheduler B1 (MR-3 : leader election / heartbeat). Tout est OFF par
+    # défaut : TRENDX_SCHEDULER_ENABLED=false interdit toute planification
+    # en production. La validation fail-closed vit dans LeaderElection
+    # (entiers > 0, stale > heartbeat, lock/instance non vides).
+    trendx_scheduler_enabled: bool = Field(default=False, alias="TRENDX_SCHEDULER_ENABLED")
+    # Forecast B1 : jamais fonctionnel en production (pas de fan-out par device,
+    # payloads incomplets -> échecs horaires + runs orphelins). false par défaut =
+    # forecast-train/forecast-run non planifiés ; ingestion/discovery inchangés.
+    # Option A (fan-out + réconciliation + catalogue provisionné) reste un
+    # chantier ultérieur distinct.
+    trendx_scheduler_forecast_enabled: bool = Field(
+        default=False, alias="TRENDX_SCHEDULER_FORECAST_ENABLED"
+    )
+    trendx_scheduler_instance_id: str = Field(default="", alias="TRENDX_SCHEDULER_INSTANCE_ID")
+    trendx_scheduler_heartbeat_seconds: int = Field(
+        default=15, alias="TRENDX_SCHEDULER_HEARTBEAT_SECONDS"
+    )
+    trendx_scheduler_stale_seconds: int = Field(default=60, alias="TRENDX_SCHEDULER_STALE_SECONDS")
+    trendx_scheduler_acquire_timeout_seconds: int = Field(
+        default=5, alias="TRENDX_SCHEDULER_ACQUIRE_TIMEOUT_SECONDS"
+    )
+    trendx_scheduler_leader_lock: str = Field(
+        default="trendx_scheduler_leader", alias="TRENDX_SCHEDULER_LEADER_LOCK"
+    )
+
     # Planification ingestion côté worker (MR-5 : déduplication). true par
     # défaut = comportement historique (le worker planifie ingestion_hourly).
     # Passer à false quand le scheduler B1 dédié assure la planification
@@ -133,7 +158,9 @@ class Settings(BaseSettings):
     # Exclusion explicite de batches d'ingestion du Train (isolement synthétique).
     # Liste séparée par des virgules d'ingestion_id à exclure de
     # TrainingService._fetch_training_data() via `AND ingestion_id NOT IN (...)`.
-    # Vide par défaut = aucune exclusion (comportement normal).
+    # Vide par défaut = aucune exclusion (comportement normal). Voir
+    # docs/train-synthetic-exclusion.md pour les 11 IDs synthétiques de
+    # septembre 2026 et la procédure de remplacement de la liste.
     # `source=thingsboard` n'est jamais un critère (homogène valide/synthétique).
     training_excluded_ingestion_ids: str = Field(
         default="", alias="TRAINING_EXCLUDED_INGESTION_IDS"
