@@ -54,6 +54,8 @@ def test_dispatch_registry_no_static_per_device_job() -> None:
             "ingestion",
             "trendx_train",
             "trendx_forecast",
+            "anomaly_scan",
+            "ml_pipeline",
         }, f"job_type inattendu (potentiellement statique par device): {key}"
 
 

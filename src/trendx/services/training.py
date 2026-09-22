@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -109,6 +110,76 @@ class TrainingService:
         df = df.rename(columns={"ts": "ds", "value": "y"})
         df = df.dropna(subset=["y"])
         return df
+
+    def fetch_training_frame(
+        self,
+        entity_id: str,
+        metric_key: str,
+        lookback_days: int | None = None,
+    ) -> pd.DataFrame:
+        """Public bounded read for the ML pipeline orchestrator.
+
+        Delegates to the existing private fetch (same window + unbounded-row
+        risks already handled there). Additive only, no behavior change.
+        """
+        return self._fetch_training_data(entity_id, metric_key, lookback_days)
+
+    @staticmethod
+    def _valid_uuid(value: Any) -> str | None:
+        try:
+            return str(uuid.UUID(str(value)))
+        except (ValueError, TypeError, AttributeError):
+            return None
+
+    def _resolve_model_provenance(
+        self,
+        entity_id: str,
+        metric_key: str,
+    ) -> tuple[str, str, str]:
+        """Resolve NOT NULL UUID provenance for prediction_model registration.
+
+        Convention prod observée (3 modèles réels) : tenant/customer lus depuis
+        le metric_definition (entity, metric), field_id = metric_definition.id,
+        sinon entity_id. Repli : defaults settings (doivent être des UUID
+        valides, comme l'exige TaskService.create_task), sinon entity_id.
+        Lecture bornée catalogue, best-effort (jamais bloquante).
+        """
+        from trendx.database.repositories import MetricDefinitionRepository
+
+        field_id = entity_id
+        tenant_id = settings.trendx_default_tenant_id
+        customer_id = settings.trendx_default_customer_id
+        try:
+            with db_manager.get_session("catalog") as session:
+                repo = MetricDefinitionRepository(session)
+                candidates = repo.find_by_business_entity(entity_id)
+                match = next(
+                    (
+                        m
+                        for m in candidates
+                        if str(getattr(m, "item_name", "") or "") == metric_key
+                        or str(getattr(m, "name", "") or "") == metric_key
+                    ),
+                    None,
+                )
+                if match is not None:
+                    if self._valid_uuid(getattr(match, "tenant_id", None)):
+                        tenant_id = str(match.tenant_id)
+                    if self._valid_uuid(getattr(match, "customer_id", None)):
+                        customer_id = str(match.customer_id)
+                    if self._valid_uuid(getattr(match, "id", None)):
+                        field_id = str(match.id)
+        except Exception as exc:
+            logger.warning(
+                "Provenance lookup failed for {}/{}: {} (fallbacks used)",
+                entity_id[:12],
+                metric_key,
+                exc,
+            )
+        tenant_ok = self._valid_uuid(tenant_id) or entity_id
+        customer_ok = self._valid_uuid(customer_id) or entity_id
+        field_ok = self._valid_uuid(field_id) or entity_id
+        return tenant_ok, customer_ok, field_ok
 
     def train_model(
         self,
@@ -222,16 +293,23 @@ class TrainingService:
             self._tracker.log_tags(tags)
             model_uri = self._tracker.log_model(model, artifact_path="model", model_name=None)
             self._tracker.end_run("FINISHED")
+            tenant_id, customer_id, field_id = self._resolve_model_provenance(entity_id, metric_key)
             # Contrat actuel de ModelRegistry.register() (schéma/ORM Trendz 1.15.0) :
             # business_entity_id / tb_telemetry_key / model_type / model_uri.
+            # Les colonnes UUID NOT NULL (tenant/customer/field, cf. migration 001)
+            # sont renseignées selon la convention prod observée : tenant/customer
+            # du metric_definition, field_id = metric_definition.id sinon entity.
             # Les metadonnees (metrics, hyperparameters, scaler, frequency, horizon,
             # lookback_days, data_version, train_period_*, code_version, mlflow_run_id)
             # sont deja enregistrees via MLflowTracker (log_params/metrics/scaler) plus haut.
             champion = self._registry.register(
                 business_entity_id=entity_id,
+                business_entity_field_id=field_id,
                 tb_telemetry_key=metric_key,
                 model_type=algorithm,
                 model_uri=model_uri,
+                tenant_id=tenant_id,
+                customer_id=customer_id,
             )
             return champion
         except Exception as exc:

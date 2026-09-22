@@ -39,10 +39,16 @@ class MLflowTracker:
         self._tracking_uri = tracking_uri or settings.mlflow_tracking_uri
         mlflow.set_tracking_uri(self._tracking_uri)
         self._client = client or MlflowClient(self._tracking_uri)
-        self._active_run: mlflow.ActiveRun | None = None
+        # NOTE (W49): the active run is the client-created Run entity, never a
+        # fluent ActiveRun. All operations below use the explicit client bound
+        # to this tracking URI, so behavior never depends on the mlflow global
+        # fluent state (mlflow>=2.x compat; the fluent nested start in
+        # log_model issued cross-store runs/get retries when the global URI
+        # diverged from the client URI).
+        self._active_run: Any | None = None
 
     @property
-    def active_run(self) -> mlflow.ActiveRun | None:
+    def active_run(self) -> Any | None:
         return self._active_run
 
     @property
@@ -74,10 +80,7 @@ class MLflowTracker:
     ) -> str:
         experiment_id = self.create_experiment(experiment_name)
         run = self._client.create_run(experiment_id, run_name=run_name, tags=tags or {})
-        try:
-            self._active_run = mlflow.start_run(run_id=run.info.run_id)
-        except Exception:
-            self._active_run = run
+        self._active_run = run
         logger.info(
             "Started MLflow run '{}' (id={}) in experiment '{}'",
             run_name or "unnamed",
@@ -92,7 +95,6 @@ class MLflowTracker:
             run_id = self._active_run.info.run_id
             self._active_run = None
             logger.info("Ended MLflow run {} with status '{}'", run_id, status)
-        mlflow.end_run(status=status)
 
     # ── Context manager ────────────────────────────────────────────────
 
@@ -134,14 +136,28 @@ class MLflowTracker:
         artifact_path: str,
         model_name: str | None = None,
     ) -> str:
+        # mlflow>=2.x only accepts a PythonModel/callable here, which our
+        # ForecastModel implementations are not (proven MlflowException), and
+        # the nested fluent start issued cross-store runs/get retries when the
+        # global fluent URI diverged from this client URI. Persist the fitted
+        # object as a cloudpickle artifact via the explicit client instead:
+        # deterministic in every environment, same runs:/ URI shape. The URI
+        # stays provenance-only (inference refits from hyperparameters; no
+        # consumer loads models via pyfunc/models:/).
         run_id = self._get_run_id()
-        with mlflow.start_run(run_id=run_id, nested=True):
-            mlflow.pyfunc.log_model(
-                artifact_path=artifact_path,
-                python_model=model,
-            )
+        import cloudpickle
+
+        with tempfile.NamedTemporaryFile(
+            mode="wb", suffix=".pkl", delete=False, prefix="model_"
+        ) as f:
+            cloudpickle.dump(model, f)
+            tmp_path = f.name
+        try:
+            self._client.log_artifact(run_id, tmp_path, artifact_path=artifact_path)
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+        logger.info("Logged model artifact to 'runs:/{}/{}'", run_id, artifact_path)
         model_uri = f"runs:/{run_id}/{artifact_path}"
-        logger.info("Logged model to '{}'", model_uri)
         if model_name is not None:
             self.register_model(run_id, model_name, alias="challenger")
         return model_uri
@@ -169,7 +185,11 @@ class MLflowTracker:
         self.log_params({"data_version": version_hash})
 
     def log_tags(self, tags: dict[str, str]) -> None:
-        self._client.set_tags(self._get_run_id(), tags)
+        # MlflowClient has no bulk set_tags in mlflow 2.x: loop singular set_tag
+        # (same per-key style as log_metrics above; cf. ActiveRun compat fix).
+        run_id = self._get_run_id()
+        for key, value in tags.items():
+            self._client.set_tag(run_id, str(key), str(value))
 
     # ── Search & selection ─────────────────────────────────────────────
 
