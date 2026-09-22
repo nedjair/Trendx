@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy.exc import ProgrammingError
@@ -67,6 +67,7 @@ def test_register_persists_model_uri(registry):
     mock_model = MagicMock()
     mock_model.id = 1
     mock_repo.create.return_value = mock_model
+    ent = str(uuid4())
 
     with (
         patch(
@@ -76,15 +77,22 @@ def test_register_persists_model_uri(registry):
         patch("trendx.mlops.registry.PredictionModelRepository", return_value=mock_repo),
     ):
         registry.register(
-            business_entity_id="dev-001",
+            business_entity_id=ent,
             tb_telemetry_key="temperature",
             model_type="Prophet",
             model_uri="runs:/run-123/model",
+            tenant_id=str(uuid4()),
+            customer_id=str(uuid4()),
+            promote=False,
         )
 
     mock_repo.create.assert_called_once()
     # model_uri must reach the persistence layer (was silently dropped before).
     assert mock_repo.create.call_args.kwargs.get("model_uri") == "runs:/run-123/model"
+    # UUID contract: no empty string may reach PostgreSQL.
+    for key, value in mock_repo.create.call_args.kwargs.items():
+        if "entity" in key or "tenant" in key:
+            UUID(str(value))
 
 
 @pytest.mark.unit
@@ -489,3 +497,30 @@ def test_set_champion_demotes_previous_champion_status_column():
     assert result is new_model
     assert new_model.status == "champion"
     assert old_champion.status == "challenger"
+
+
+@pytest.mark.unit
+def test_register_rejects_empty_uuid_before_postgres(registry):
+    """ "" dans une colonne UUID NOT NULL doit échouer avant tout accès PG."""
+    with pytest.raises(ValueError, match="Invalid UUID"):
+        registry.register(
+            business_entity_id="",
+            tb_telemetry_key="temperature",
+            model_type="LinearRegression",
+            model_uri="runs:/x/model",
+            customer_id=str(uuid4()),
+            promote=False,
+        )
+
+
+@pytest.mark.unit
+def test_register_requires_customer_id_fail_closed(registry):
+    """customer_id absent du contexte -> RuntimeError explicite, jamais de valeur fictive."""
+    with pytest.raises(RuntimeError, match="customer_id is required"):
+        registry.register(
+            business_entity_id=str(uuid4()),
+            tb_telemetry_key="temperature",
+            model_type="LinearRegression",
+            model_uri="runs:/x/model",
+            promote=False,
+        )

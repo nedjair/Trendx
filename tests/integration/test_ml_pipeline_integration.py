@@ -25,6 +25,8 @@ pytestmark = [pytest.mark.integration]
 
 ENTITY_A = str(uuid.uuid4())
 ENTITY_B = str(uuid.uuid4())
+TENANT = str(uuid.uuid4())
+CUSTOMER = str(uuid.uuid4())
 METRIC = "temperature"
 N_POINTS = 150
 
@@ -99,6 +101,48 @@ def _seed_telemetry() -> None:
             )
 
 
+def _seed_catalog() -> None:
+    """Seed business entities + metric definitions (master registry contract).
+
+    ``ModelRegistry.register`` resolves the tenant from the business entity
+    (fail-closed when unknown) : the catalog rows below mirror the production
+    convention instead of papering over it with settings fallbacks.
+    """
+    from trendx.database.connection import manager
+
+    engine = manager.get_engine("catalog")
+    with engine.begin() as conn:
+        for entity in (ENTITY_A, ENTITY_B):
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO trendx_catalog.business_entity
+                        (id, name, tenant_id, hidden, shared_with_customers)
+                    VALUES (:eid, :name, :tenant, false, false)
+                    """
+                ),
+                {"eid": entity, "name": f"BE-e2e-{entity[:8]}", "tenant": TENANT},
+            )
+            conn.execute(
+                text(
+                    """
+                    INSERT INTO trendx_catalog.metric_definition (
+                        id, business_entity_id, item_id, item_name, tenant_id,
+                        customer_id, name, user_input, description,
+                        how_to_calculate, is_advanced_mode, is_outdated,
+                        auto_deletable, created_ts, updated_ts
+                    ) VALUES (
+                        gen_random_uuid(), :be, gen_random_uuid(), :metric, :tenant,
+                        :customer, :metric, '', '',
+                        '', false, false,
+                        true, 0, 0
+                    )
+                    """
+                ),
+                {"be": entity, "metric": METRIC, "tenant": TENANT, "customer": CUSTOMER},
+            )
+
+
 def _count(params: dict[str, str], sql: str) -> int:
     rows = pg_query(params, sql)
     return int(rows[0]) if rows else 0
@@ -114,6 +158,7 @@ def test_pipeline_e2e_two_entities(pipeline_db, tmp_path) -> None:
 
     params = pipeline_db
     _seed_telemetry()
+    _seed_catalog()
 
     tracker = MLflowTracker(tracking_uri=f"file://{tmp_path}/mlflow")
     training = TrainingService(mlflow_tracker=tracker)
@@ -123,20 +168,22 @@ def test_pipeline_e2e_two_entities(pipeline_db, tmp_path) -> None:
     )
     contexts = [
         PipelineContext(
-            tenant_id=str(uuid.uuid4()),
+            tenant_id=TENANT,
             entity_type="DEVICE",
             entity_id=ENTITY_A,
             metric_name=METRIC,
             lookback_days=30,
             algorithm="LinearRegression",
+            customer_id=CUSTOMER,
         ),
         PipelineContext(
-            tenant_id=str(uuid.uuid4()),
+            tenant_id=TENANT,
             entity_type="DEVICE",
             entity_id=ENTITY_B,
             metric_name=METRIC,
             lookback_days=30,
             algorithm="LinearRegression",
+            customer_id=CUSTOMER,
         ),
     ]
     results = orch.run_many(contexts)

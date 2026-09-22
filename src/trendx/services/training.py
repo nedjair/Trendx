@@ -8,7 +8,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from loguru import logger
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
+from sqlalchemy.sql.elements import TextClause
 from trendx.config import settings
 from trendx.database.connection import manager as db_manager
 from trendx.database.models import PredictionModel
@@ -22,6 +23,70 @@ from trendx.preprocessing.quality import DataQualityService
 from trendx.preprocessing.resampling import Resampler
 
 
+def resolve_customer_scope(customer_id: str | None = None) -> str:
+    """Résout le customer explicite du training (OPTION A approuvée).
+
+    Priorité : paramètre explicite, puis ``TRENDX_DEFAULT_CUSTOMER_ID``.
+    Fail-closed : absent ou invalide -> ValueError. Aucune dérivation
+    tenant -> customer, aucun UUID inventé.
+    """
+    raw = (customer_id or settings.trendx_default_customer_id or "").strip()
+    if not raw:
+        raise ValueError("customer_id explicite requis (paramètre ou TRENDX_DEFAULT_CUSTOMER_ID)")
+    try:
+        return str(uuid.UUID(raw))
+    except (ValueError, AttributeError, TypeError) as exc:
+        raise ValueError(f"customer_id invalide (UUID attendu) : {raw!r}") from exc
+
+
+def parse_excluded_ingestion_ids(raw: str | None) -> tuple[str, ...]:
+    """Parse la liste d'exclusion des batches d'ingestion (déterministe).
+
+    Règles : séparation par virgule, suppression des surrounding whitespace,
+    suppression des vides, déduplication (premier vu conservé).
+    Vide/None -> (). `source` n'est jamais utilisé comme critère.
+    """
+    if raw is None:
+        return ()
+    seen: dict[str, None] = {}
+    for part in str(raw).split(","):
+        cleaned = part.strip()
+        if cleaned and cleaned not in seen:
+            seen[cleaned] = None
+    return tuple(seen)
+
+
+def get_excluded_ingestion_ids() -> tuple[str, ...]:
+    """Lit la liste d'exclusion depuis la configuration (vide = aucune exclusion)."""
+    return parse_excluded_ingestion_ids(settings.training_excluded_ingestion_ids)
+
+
+def build_training_data_stmt(excluded: tuple[str, ...] = ()) -> TextClause:
+    """Construit la requête Train (paramétrée, sans concaténation de valeurs).
+
+    Filtres invariants : entity_id, metric_key, [start, end), dbl_v NOT NULL.
+    Si `excluded` est non vide, ajoute
+    `AND (ingestion_id IS NULL OR ingestion_id NOT IN :excluded)`
+    avec bindparam expanding (NULL conservés, jamais exclus).
+    """
+    base = """
+            SELECT ts, dbl_v AS value
+            FROM ts_kv
+            WHERE entity_id = :eid
+              AND metric_key = :key
+              AND ts >= :start
+              AND ts < :end
+              AND dbl_v IS NOT NULL
+    """
+    if not excluded:
+        return text(base + "            ORDER BY ts ASC\n            ")
+    stmt = text(
+        base + "              AND (ingestion_id IS NULL OR ingestion_id NOT IN :excluded)\n"
+        "            ORDER BY ts ASC\n            "
+    )
+    return stmt.bindparams(bindparam("excluded", expanding=True))
+
+
 class TrainingService:
     """Orchestrates model training, competition, and champion selection."""
 
@@ -33,7 +98,7 @@ class TrainingService:
         resampler: Resampler | None = None,
         model_selector: ModelSelector | None = None,
     ) -> None:
-        self._tracker = mlflow_tracker or MLflowTracker()
+        self._tracker_instance: MLflowTracker | None = mlflow_tracker
         self._registry = model_registry or ModelRegistry()
         self._quality = data_quality or DataQualityService()
         self._resampler = resampler or Resampler()
@@ -45,6 +110,66 @@ class TrainingService:
             marginal_gain_threshold=0.02,
         )
 
+    @property
+    def _tracker(self) -> MLflowTracker:
+        """Lazy MLflow tracker: construction (and its global URI side effect)
+        happens only when training actually logs, never for fetch-only uses
+        such as the pipeline orchestrator's dataset fetch."""
+        if self._tracker_instance is None:
+            self._tracker_instance = MLflowTracker()
+        return self._tracker_instance
+
+    @_tracker.setter
+    def _tracker(self, value: MLflowTracker | None) -> None:
+        self._tracker_instance = value
+
+    def fetch_training_frame(
+        self,
+        entity_id: str,
+        metric_key: str,
+        lookback_days: int | None = None,
+    ) -> pd.DataFrame:
+        """Public bounded read for the ML pipeline orchestrator.
+
+        Delegates to the existing private fetch (same window, same synthetic
+        exclusion). Additive only, no behavior change.
+        """
+        return self._fetch_training_data(entity_id, metric_key, lookback_days)
+
+    def _resolve_tenant(self, entity_id: str, metric_key: str) -> str | None:
+        """Resolve the tenant UUID for model registration (W49 provenance).
+
+        Priority: metric_definition.tenant_id for (entity, metric), then the
+        configured default. None when unresolvable : ModelRegistry then
+        resolves it from the business entity itself (fail-closed when the
+        entity is unknown). Bounded catalog read, best-effort, never blocking.
+        """
+        from trendx.database.repositories import MetricDefinitionRepository
+
+        try:
+            with db_manager.get_session("catalog") as session:
+                repo = MetricDefinitionRepository(session)
+                match = next(
+                    (
+                        m
+                        for m in repo.find_by_business_entity(entity_id)
+                        if str(getattr(m, "item_name", "") or "") == metric_key
+                        or str(getattr(m, "name", "") or "") == metric_key
+                    ),
+                    None,
+                )
+                if match is not None and getattr(match, "tenant_id", None) is not None:
+                    return str(match.tenant_id)
+        except Exception as exc:
+            logger.warning(
+                "Tenant lookup failed for {}/{}: {} (registry fallback applies)",
+                entity_id[:12],
+                metric_key,
+                exc,
+            )
+        default = (settings.trendx_default_tenant_id or "").strip()
+        return default or None
+
     def _fetch_training_data(
         self,
         entity_id: str,
@@ -55,28 +180,18 @@ class TrainingService:
         end = datetime.now(UTC)
         start = end - timedelta(days=lookback)
         engine = db_manager.get_engine("analytics")
-        stmt = text(
-            """
-            SELECT ts, dbl_v AS value
-            FROM ts_kv
-            WHERE entity_id = :eid
-              AND metric_key = :key
-              AND ts >= :start
-              AND ts < :end
-              AND dbl_v IS NOT NULL
-            ORDER BY ts ASC
-            """
-        )
+        excluded = get_excluded_ingestion_ids()
+        stmt = build_training_data_stmt(excluded)
+        params: dict[str, Any] = {
+            "eid": entity_id,
+            "key": metric_key,
+            "start": start,
+            "end": end,
+        }
+        if excluded:
+            params["excluded"] = list(excluded)
         with engine.connect() as conn:
-            rows = conn.execute(
-                stmt,
-                {
-                    "eid": entity_id,
-                    "key": metric_key,
-                    "start": start,
-                    "end": end,
-                },
-            ).fetchall()
+            rows = conn.execute(stmt, params).fetchall()
         if not rows:
             logger.warning(
                 "No training data for {}/{} in the last {} days",
@@ -108,78 +223,14 @@ class TrainingService:
         df = self._resampler.resample(df, frequency=frequency, method="mean")
         df = self._resampler.interpolate_missing(df, method="linear", limit=3)
         df = df.rename(columns={"ts": "ds", "value": "y"})
+        # Prophet rejects tz-aware ds ("Column ds has timezone specified"):
+        # normalize to tz-naive while keeping the UTC instant (same UTC wall
+        # time). Applied after resampling/interpolation (hourly results
+        # unchanged) and shared by all algorithms (ARIMA/sklearn/Fourier do
+        # not depend on tzinfo; instants strictly identical).
+        df["ds"] = pd.to_datetime(df["ds"], utc=True).dt.tz_localize(None)
         df = df.dropna(subset=["y"])
         return df
-
-    def fetch_training_frame(
-        self,
-        entity_id: str,
-        metric_key: str,
-        lookback_days: int | None = None,
-    ) -> pd.DataFrame:
-        """Public bounded read for the ML pipeline orchestrator.
-
-        Delegates to the existing private fetch (same window + unbounded-row
-        risks already handled there). Additive only, no behavior change.
-        """
-        return self._fetch_training_data(entity_id, metric_key, lookback_days)
-
-    @staticmethod
-    def _valid_uuid(value: Any) -> str | None:
-        try:
-            return str(uuid.UUID(str(value)))
-        except (ValueError, TypeError, AttributeError):
-            return None
-
-    def _resolve_model_provenance(
-        self,
-        entity_id: str,
-        metric_key: str,
-    ) -> tuple[str, str, str]:
-        """Resolve NOT NULL UUID provenance for prediction_model registration.
-
-        Convention prod observée (3 modèles réels) : tenant/customer lus depuis
-        le metric_definition (entity, metric), field_id = metric_definition.id,
-        sinon entity_id. Repli : defaults settings (doivent être des UUID
-        valides, comme l'exige TaskService.create_task), sinon entity_id.
-        Lecture bornée catalogue, best-effort (jamais bloquante).
-        """
-        from trendx.database.repositories import MetricDefinitionRepository
-
-        field_id = entity_id
-        tenant_id = settings.trendx_default_tenant_id
-        customer_id = settings.trendx_default_customer_id
-        try:
-            with db_manager.get_session("catalog") as session:
-                repo = MetricDefinitionRepository(session)
-                candidates = repo.find_by_business_entity(entity_id)
-                match = next(
-                    (
-                        m
-                        for m in candidates
-                        if str(getattr(m, "item_name", "") or "") == metric_key
-                        or str(getattr(m, "name", "") or "") == metric_key
-                    ),
-                    None,
-                )
-                if match is not None:
-                    if self._valid_uuid(getattr(match, "tenant_id", None)):
-                        tenant_id = str(match.tenant_id)
-                    if self._valid_uuid(getattr(match, "customer_id", None)):
-                        customer_id = str(match.customer_id)
-                    if self._valid_uuid(getattr(match, "id", None)):
-                        field_id = str(match.id)
-        except Exception as exc:
-            logger.warning(
-                "Provenance lookup failed for {}/{}: {} (fallbacks used)",
-                entity_id[:12],
-                metric_key,
-                exc,
-            )
-        tenant_ok = self._valid_uuid(tenant_id) or entity_id
-        customer_ok = self._valid_uuid(customer_id) or entity_id
-        field_ok = self._valid_uuid(field_id) or entity_id
-        return tenant_ok, customer_ok, field_ok
 
     def train_model(
         self,
@@ -192,8 +243,10 @@ class TrainingService:
         horizon: int | None = None,
         min_val: float | None = None,
         max_val: float | None = None,
+        customer_id: str | None = None,
     ) -> PredictionModel | None:
         horizon = horizon or settings.forecast_horizon
+        resolved_customer = resolve_customer_scope(customer_id)
         logger.info(
             "Training model: {}/{} algorithm={} horizon={}",
             entity_id[:12],
@@ -293,23 +346,18 @@ class TrainingService:
             self._tracker.log_tags(tags)
             model_uri = self._tracker.log_model(model, artifact_path="model", model_name=None)
             self._tracker.end_run("FINISHED")
-            tenant_id, customer_id, field_id = self._resolve_model_provenance(entity_id, metric_key)
             # Contrat actuel de ModelRegistry.register() (schéma/ORM Trendz 1.15.0) :
             # business_entity_id / tb_telemetry_key / model_type / model_uri.
-            # Les colonnes UUID NOT NULL (tenant/customer/field, cf. migration 001)
-            # sont renseignées selon la convention prod observée : tenant/customer
-            # du metric_definition, field_id = metric_definition.id sinon entity.
             # Les metadonnees (metrics, hyperparameters, scaler, frequency, horizon,
             # lookback_days, data_version, train_period_*, code_version, mlflow_run_id)
             # sont deja enregistrees via MLflowTracker (log_params/metrics/scaler) plus haut.
             champion = self._registry.register(
                 business_entity_id=entity_id,
-                business_entity_field_id=field_id,
                 tb_telemetry_key=metric_key,
                 model_type=algorithm,
                 model_uri=model_uri,
-                tenant_id=tenant_id,
-                customer_id=customer_id,
+                customer_id=resolved_customer,
+                tenant_id=self._resolve_tenant(entity_id, metric_key),
             )
             return champion
         except Exception as exc:

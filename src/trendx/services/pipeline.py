@@ -8,7 +8,9 @@ persistence contracts (no new table, no new run ID):
   * preprocessing: ``Resampler`` + ``Normalizer`` validation in memory.
     Time segmentation for anomaly detection stays inside
     ``FeatureExtractor``/``AnomalyDetectorService.scan`` (existing contract).
-  * train: ``TrainingService.train_model`` then ``ModelRegistry.promote_to_champion``
+  * train: ``TrainingService.train_model`` (fail-closed customer scope,
+    tz-naive, synthetic exclusion ; registration + champion promotion owned
+    by ``ModelRegistry.register(promote=True)``, history recorded).
     (existing contract — a freshly trained single model becomes champion so the
     forecast step can resolve it; competition thresholds in ``ModelSelector``
     are unchanged).
@@ -23,7 +25,8 @@ Explicit W48-ambiguity decisions (fail-fast, observable, no silent pass):
   * retry inter-étapes: none. A failed step stops the pipeline with status
     ``failed`` and an explicit error; failed runs are NOT cached (retry allowed).
   * dedup inter-étapes: session-scoped in-memory cache keyed by
-    ``(entity_id, metric_key, frequency, horizon, algorithm, lookback_days)``.
+    ``(entity_id, metric_key, frequency, horizon, algorithm, lookback_days,
+    customer_id)``.
     Durable dedup relies on existing contracts (predictions composite-PK
     upsert, ``TaskService`` claim ``SKIP LOCKED`` + terminal-state idempotence).
     A durable run ledger via ``scheduler_run`` is deferred to scheduler wiring.
@@ -31,8 +34,9 @@ Explicit W48-ambiguity decisions (fail-fast, observable, no silent pass):
     propagated to every step) + existing ``model_id`` / ``mlflow_run_id``.
   * error policy: ``run_many`` isolates failures per entity/metric; one item
     never corrupts or cancels its siblings.
-  * champion promotion: existing ``ModelRegistry.promote_to_champion`` with
-    status history; selector thresholds untouched.
+  * champion promotion: owned by ``ModelRegistry.register(promote=True)``
+    (ModelSelector thresholds untouched, status history recorded) ; the
+    orchestrator never promotes explicitly.
 
 No broker, no ThingsBoard dependency, UTC everywhere, bounded reads owned by
 the reused services (``AGENTS.md``).
@@ -82,9 +86,10 @@ class PipelineContext:
     frequency: str = "1h"
     horizon: int | None = None
     algorithm: str = "Prophet"
+    customer_id: str | None = None
     execution_id: str = field(default_factory=lambda: uuid.uuid4().hex)
 
-    def cache_key(self) -> tuple[str, str, str, str, str, str]:
+    def cache_key(self) -> tuple[str, str, str, str, str, str, str]:
         return (
             self.entity_id,
             self.metric_name,
@@ -92,6 +97,7 @@ class PipelineContext:
             str(self.horizon),
             self.algorithm,
             str(self.lookback_days),
+            str(self.customer_id),
         )
 
 
@@ -181,7 +187,7 @@ class MLPipelineOrchestrator:
         self._anomaly = anomaly
         self._registry = registry
         self._fetcher = fetcher or _default_fetcher
-        self._completed: dict[tuple[str, str, str, str, str, str], PipelineResult] = {}
+        self._completed: dict[tuple[str, str, str, str, str, str, str], PipelineResult] = {}
 
     def _quality_service(self) -> Any:
         if self._quality is None:
@@ -357,15 +363,13 @@ class MLPipelineOrchestrator:
                 lookback_days=context.lookback_days,
                 frequency=context.frequency,
                 horizon=context.horizon,
+                customer_id=context.customer_id,
             )
             if model is None:
                 return self._fail(steps, STEP_TRAIN, context, "training returned no model")
-            promoted = self._model_registry().promote_to_champion(
-                context.entity_id, context.metric_name, model
-            )
-            if promoted is None:
-                return self._fail(steps, STEP_TRAIN, context, "champion promotion failed")
-            model_id = str(getattr(promoted, "id", ""))
+            # Champion promotion is owned by ModelRegistry.register()
+            # (promote=True, history recorded) : no explicit promotion here.
+            model_id = str(getattr(model, "id", ""))
             steps[STEP_TRAIN] = StepResult(
                 step=STEP_TRAIN, status=STATUS_OK, detail={**base, "model_id": model_id}
             )

@@ -1182,3 +1182,56 @@ class ViewCollection(Base):
 
 # TODO: SchemaVersion does not exist in Trendz 1.15.0 schema.
 # Use trendz_system_property for key/value config.
+
+
+# Scheduler B1 (migration 014, TrendX-owned) — reporté verbatim depuis master
+# pour la résolution W49 (persistance requise par la rétention
+# scheduler_runs du worker). Aucune modification des modèles existants.
+
+
+class SchedulerRun(Base):
+    """Ligne d'exécution d'un job scheduler P0 (TrendX-owned, migration 014).
+
+    Cycle : running -> ok | failed. Les lignes running orphelines (crash)
+    sont reprises en failed (interrupted). task_id est NULLABLE et SANS FK :
+    les jobs `direct` n'ont pas de tâche, et la purge des tâches ne doit
+    jamais effacer l'historique des runs. finished_at est NULL tant que
+    running (invariant : running => finished_at IS NULL).
+    """
+
+    __tablename__ = "scheduler_run"
+    __table_args__ = ({"schema": "trendx_catalog"},)
+
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    job_id: Mapped[str] = mapped_column(Text, nullable=False)
+    job_type: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    triggered_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    instance_id: Mapped[str] = mapped_column(Text, nullable=False)
+    mode: Mapped[str] = mapped_column(Text, nullable=False, default="direct")
+    task_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+
+
+class SchedulerHeartbeat(Base):
+    """Heartbeat d'instance scheduler (TrendX-owned, migration 014).
+
+    Une ligne par instance_id. Utilisé par /healthz (leader|standby|stale),
+    les métriques et la future élection leader (MR-3 : advisory lock, fencing).
+    """
+
+    __tablename__ = "scheduler_heartbeat"
+    __table_args__ = ({"schema": "trendx_catalog"},)
+
+    instance_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    leader: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    heartbeat_ts: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
+    )
+    version: Mapped[str | None] = mapped_column(Text, nullable=True)
+    host: Mapped[str | None] = mapped_column(Text, nullable=True)

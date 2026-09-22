@@ -115,9 +115,29 @@ class Settings(BaseSettings):
     trendx_default_customer_id: str = Field(default="", alias="TRENDX_DEFAULT_CUSTOMER_ID")
     trendx_default_user_id: str = Field(default="", alias="TRENDX_DEFAULT_USER_ID")
 
+    trendx_retention_days: int = Field(default=180, alias="TRENDX_RETENTION_DAYS")
+
+    # Planification ingestion côté worker (MR-5 : déduplication). true par
+    # défaut = comportement historique (le worker planifie ingestion_hourly).
+    # Passer à false quand le scheduler B1 dédié assure la planification
+    # (profil scheduler actif) : garantit un seul planificateur actif pour
+    # l'ingestion (contrat XOR : jamais worker + scheduler simultanément).
+    # Rollback : true + restart worker.
+    trendx_worker_ingestion_enabled: bool = Field(
+        default=True, alias="TRENDX_WORKER_INGESTION_ENABLED"
+    )
+
     forecast_frequency: str = Field(default="1h", alias="FORECAST_FREQUENCY")
     forecast_horizon: int = Field(default=24, alias="FORECAST_HORIZON")
     training_lookback_days: int = Field(default=90, alias="TRAINING_LOOKBACK_DAYS")
+    # Exclusion explicite de batches d'ingestion du Train (isolement synthétique).
+    # Liste séparée par des virgules d'ingestion_id à exclure de
+    # TrainingService._fetch_training_data() via `AND ingestion_id NOT IN (...)`.
+    # Vide par défaut = aucune exclusion (comportement normal).
+    # `source=thingsboard` n'est jamais un critère (homogène valide/synthétique).
+    training_excluded_ingestion_ids: str = Field(
+        default="", alias="TRAINING_EXCLUDED_INGESTION_IDS"
+    )
     forecast_min_value: float = Field(default=0.0, alias="FORECAST_MIN_VALUE")
     forecast_max_value: float = Field(default=60.0, alias="FORECAST_MAX_VALUE")
 

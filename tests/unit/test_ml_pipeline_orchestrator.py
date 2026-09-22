@@ -72,13 +72,7 @@ class FakeTraining:
 
 
 class FakeRegistry:
-    def __init__(self, *, promote: bool = True) -> None:
-        self.calls: list[dict[str, Any]] = []
-        self._promote = promote
-
-    def promote_to_champion(self, entity_id: str, metric_key: str, model: Any) -> Any:
-        self.calls.append({"entity_id": entity_id, "metric_key": metric_key, "model": model})
-        return model if self._promote else None
+    """Placeholder registry fake (promotion owned by register(); unused here)."""
 
 
 class FakeInference:
@@ -167,12 +161,15 @@ def test_02_context_propagation() -> None:
     orch = _orchestrator(
         _frame(), training=training, registry=registry, inference=inference, anomaly=anomaly
     )
-    context = _ctx(entity="11111111-2222-4333-8444-555555555555")
+    context = _ctx(
+        entity="11111111-2222-4333-8444-555555555555",
+        customer_id="8a40b580-9b9e-11f0-8e3f-c909dc64d424",
+    )
     result = orch.run_single(context)
     assert result.status == "ok"
     assert training.calls[0]["entity_id"] == context.entity_id
     assert training.calls[0]["metric_key"] == "temperature"
-    assert registry.calls[0]["entity_id"] == context.entity_id
+    assert training.calls[0]["customer_id"] == "8a40b580-9b9e-11f0-8e3f-c909dc64d424"
     assert inference.calls[0][1]["entity_id"] == context.entity_id
     assert anomaly.calls[0]["entity_id"] == context.entity_id
     assert result.execution_id == context.execution_id
@@ -336,8 +333,27 @@ def test_12_no_writeback_no_alarm() -> None:
 
 @pytest.mark.unit
 def test_13_dispatch_registers_pipeline_tasks() -> None:
-    assert "ml_pipeline" in worker_mod.JOB_DISPATCH
-    assert "anomaly_scan" in worker_mod.JOB_DISPATCH
-    assert "trendx_train" in worker_mod.JOB_DISPATCH
-    assert "trendx_forecast" in worker_mod.JOB_DISPATCH
-    assert "ingestion" in worker_mod.JOB_DISPATCH
+    from trendx.scheduler.handlers import JOB_HANDLERS
+
+    for registry in (worker_mod.JOB_DISPATCH, JOB_HANDLERS):
+        assert "ml_pipeline" in registry
+        assert "anomaly_scan" in registry
+        assert "trendx_train" in registry
+        assert "trendx_forecast" in registry
+        assert "ingestion" in registry
+    assert worker_mod.JOB_DISPATCH["ml_pipeline"] is JOB_HANDLERS["ml_pipeline"]
+    assert worker_mod.JOB_DISPATCH["anomaly_scan"] is JOB_HANDLERS["anomaly_scan"]
+
+
+@pytest.mark.unit
+def test_14_customer_fail_closed() -> None:
+    orch = _orchestrator(
+        _frame(),
+        training=FakeTraining(fail=ValueError("customer_id explicite requis")),
+        registry=FakeRegistry(),
+    )
+    result = orch.run_single(_ctx())
+    assert result.status == "failed"
+    assert result.steps["train"].status == "failed"
+    assert "customer_id" in (result.error or "")
+    assert result.steps["forecast"].status == "skipped"
