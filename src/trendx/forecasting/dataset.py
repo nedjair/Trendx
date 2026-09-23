@@ -66,6 +66,7 @@ class DatasetBuilder:
         request: ForecastRequest,
         resolved: ResolvedFeatureSet,
         execution_id: str = "",
+        frames: Mapping[tuple[str, str], pd.DataFrame] | None = None,
     ) -> ForecastDataset:
         if not resolved.ok:
             msg = f"Unresolved feature set: {list(resolved.errors)}"
@@ -79,8 +80,21 @@ class DatasetBuilder:
         from trendx.preprocessing.resampling import Resampler
 
         resampler = Resampler()
+        provider = self._provider
+        if frames is not None:
+            snapshot = {k: v.copy() for k, v in frames.items()}
+
+            def provider(entity_id: str, metric: str) -> pd.DataFrame:
+                frame = snapshot.get((entity_id, metric))
+                return frame.copy() if frame is not None else pd.DataFrame()
+
         target = self._series(
-            resampler, request, request.entity_id, request.target_metric, "target"
+            resampler,
+            request,
+            request.entity_id,
+            request.target_metric,
+            "target",
+            provider=provider,
         )
         if target.empty:
             msg = "Missing target: no usable rows"
@@ -100,6 +114,7 @@ class DatasetBuilder:
                 res.entity_id,
                 res.metric or request.target_metric,
                 f"feature {res.name!r}",
+                provider=provider,
             )
             col = self._apply_feature_ops(series, res.lag, res.transformation, res.name)
             wide = wide.merge(col, on="ds", how="outer")
@@ -140,8 +155,9 @@ class DatasetBuilder:
         entity_id: str,
         metric: str,
         what: str,
+        provider: FrameProvider | None = None,
     ) -> pd.DataFrame:
-        frame = self._provider(entity_id, metric)
+        frame = (provider or self._provider)(entity_id, metric)
         if frame is None or frame.empty:
             return pd.DataFrame(columns=["ds", "y"])
         if "ts" not in frame.columns or "value" not in frame.columns:
