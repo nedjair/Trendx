@@ -34,6 +34,7 @@ from trendx.database.repositories import (
     PredictionModelRepository,
     TrendzTaskRepository,
 )
+from trendx.explorer.router import router as explorer_router
 from trendx.services.tasks import PENDING_STATE, TaskService
 
 
@@ -69,6 +70,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(explorer_router)
 
 
 # ── Authentication ────────────────────────────────────────────────────

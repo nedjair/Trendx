@@ -160,7 +160,7 @@ test-e2e: ## Tests end-to-end (MVP complet)
 	@$(VENV)/bin/pytest -m e2e -ra 2>/dev/null || pytest -m e2e -ra
 
 # ————————————————————————————————————————
-# Migrations SQL tracées via public.schema_version (sur PostgreSQL externe existant)
+# Migrations SQL tracées via trendx_catalog.schema_version (sur PostgreSQL externe existant)
 # ————————————————————————————————————————
 migrate: ## Appliquer les migrations SQL tracées sur la base trendx (AGENTS §17)
 	@echo "[trendx-migrate] 001_trendz_native_schema.sql → trendx..."

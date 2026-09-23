@@ -1,12 +1,17 @@
 # ============================================================
-# Trendx — Python Executor Worker (ML : Prophet / ARIMA / PyOD)
-# Reproduction du conteneur thingsboard-trendz-python-executor:1.15.0
-# Python 3.11 identique, user python-executor non-root, venv /opt/venv
+# Trendx — Scheduler B1 dédié (planificateur P0 : discovery, ingestion,
+# train/forecast/anomaly)
+# Même base Python 3.11 que le worker, user python-executor non-root,
+# venv /opt/venv. Les dépendances Python sont celles partagées de
+# l'application (aucune couche script-engine/executor ici : pas de
+# variables EXECUTOR_*, pas d'exécution de code utilisateur).
+# Le service démarre EXCLUSIVEMENT : python -m trendx.scheduler.service
+# (OFF par défaut via TRENDX_SCHEDULER_ENABLED=false).
 # ============================================================
 FROM python:3.11.14-slim-bookworm AS base
 
-LABEL org.opencontainers.image.title="Trendx Python Executor Worker" \
-      org.opencontainers.image.description="Celery/HTTP worker for forecasts, anomaly detection and calculated fields" \
+LABEL org.opencontainers.image.title="Trendx Scheduler B1" \
+      org.opencontainers.image.description="Dedicated P0 scheduler: leader election, heartbeat, run persistence, health/metrics" \
       org.opencontainers.image.version="0.1.0" \
       com.trendx.project="trendx"
 
@@ -31,7 +36,7 @@ RUN apt-get update \
  && update-ca-certificates \
  && echo "UTC" > /etc/timezone && dpkg-reconfigure -f noninteractive tzdata
 
-# ——— VEN global /opt/venv ——— (même layout que Trendz python-executor)
+# ——— VEN global /opt/venv ——— (même layout que le worker)
 ENV VIRTUAL_ENV=/opt/venv \
     PATH=/opt/venv/bin:${PATH} \
     PYTHON_EXECUTABLE_PATH=/opt/venv/bin/python3 \
@@ -44,7 +49,9 @@ RUN python3 -m venv /opt/venv \
 WORKDIR /app
 COPY constraints.txt /app/constraints.txt
 
-# ——— Dépendances Python (épinglées via constraints.txt) ———
+# ——— Dépendances Python partagées (épinglées via constraints.txt) ———
+# Identiques au worker : les handlers directs (topology, ingestion) utilisent
+# les mêmes services. Aucune dépendance d'exécution de code utilisateur.
 # Dépendances ML du chemin trendx_train (training.py -> Normalizer ->
 # sklearn/scipy top-level ; LinearRegression/statsmodels, prophet/cmdstanpy,
 # pmdarima en lazy ; mlflow via MLflowTracker non gardé) : versions
@@ -72,11 +79,11 @@ RUN /opt/venv/bin/python -m pip install --no-cache-dir -c /app/constraints.txt \
         python-dotenv==1.0.1 \
         APScheduler==3.10.4
 
-# ——— Installer le package trendx SANS celery/redis (worker APScheduler process) ———
+# ——— Installer le package trendx (même mécanisme que le worker) ———
 RUN /opt/venv/bin/python -m pip install --no-cache-dir --no-deps -c /app/constraints.txt -e . \
   && /opt/venv/bin/python -c "import trendx; print('trendx import OK')" 2>/dev/null; true
 
-# ——— User non-root identique Trendz python-executor ———
+# ——— User non-root ———
 RUN groupadd -r -g 1000 python-executor \
  && useradd -r -u 1000 -g 1000 -s /bin/bash -m -d /home/python-executor python-executor \
  && chown -R python-executor:python-executor /app \
@@ -91,15 +98,15 @@ RUN chown -R python-executor:python-executor /app
 
 USER 1000
 WORKDIR /usr/share/python-executor
-ENV SERVER_PORT=8181 \
-    SCRIPT_ENGINE_RUNTIME_TIMEOUT=10000 \
-    EXECUTOR_MANAGER=1 \
-    EXECUTOR_SCRIPT_ENGINE=6 \
-    THROTTLING_QUEUE_CAPACITY=10 \
-    NETWORK_BUFFER_SIZE=20971520 \
-    TRENDX_WORKER_EXECUTION=1
+ENV TRENDX_SCHEDULER_ENABLED=false \
+    TRENDX_SCHEDULER_HEARTBEAT_SECONDS=15 \
+    TRENDX_SCHEDULER_STALE_SECONDS=60 \
+    TRENDX_SCHEDULER_ACQUIRE_TIMEOUT_SECONDS=5 \
+    TRENDX_SCHEDULER_LEADER_LOCK=trendx_scheduler_leader \
+    TRENDX_SCHEDULER_METRICS_PORT=9109
 
-EXPOSE 8181
+# Port metrics interne uniquement (jamais publié sur l'hôte par Compose).
+EXPOSE 9109
 
 ENTRYPOINT ["/usr/bin/dumb-init", "--"]
-CMD ["python3", "-m", "trendx.services.worker"]
+CMD ["python3", "-m", "trendx.scheduler.service"]

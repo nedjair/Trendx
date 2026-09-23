@@ -215,10 +215,45 @@ class IngestionService:
 
         for ent in entities:
             eid = str(ent.id)
-            if eid in device_map:
-                device_map[eid]["metrics"] = [
-                    {"key": m.item_name, "name": m.item_name} for m in metrics
-                ]
+            if eid not in device_map:
+                continue
+            eligible: list[dict[str, Any]] = []
+            for m in metrics:
+                # Filtre strict par entité : une métrique n'est éligible que
+                # pour sa business entity propriétaire (pas de cross-assign).
+                if str(getattr(m, "business_entity_id", "")) != eid:
+                    continue
+                raw_item = getattr(m, "item_id", None)
+                tb_id = str(raw_item or "").strip()
+                if not tb_id:
+                    logger.warning(
+                        "ingestion discovery: skipping metric without item_id "
+                        "(entity {eid}, metric {key})",
+                        eid=eid[:12],
+                        key=str(getattr(m, "item_name", "")),
+                    )
+                    continue
+                try:
+                    import uuid as _uuid
+
+                    _uuid.UUID(tb_id)
+                except (ValueError, AttributeError, TypeError):
+                    logger.warning(
+                        "ingestion discovery: skipping metric with invalid item_id "
+                        "(entity {eid}, metric {key})",
+                        eid=eid[:12],
+                        key=str(getattr(m, "item_name", "")),
+                    )
+                    continue
+                eligible.append(
+                    {
+                        "key": m.item_name,
+                        "name": m.item_name,
+                        "tb_entity_id": tb_id,
+                    }
+                )
+            if eligible:
+                device_map[eid]["metrics"] = eligible
 
         result = [d for d in device_map.values() if d.get("metrics")]
         logger.info(
@@ -299,7 +334,7 @@ class IngestionService:
             return 0
 
         engine = self._db.get_engine("analytics")
-        records = []
+        records: list[dict[str, Any]] = []
         for _, row in df.iterrows():
             ts_val = row["ts"]
             value = row.get("value")
@@ -352,10 +387,19 @@ class IngestionService:
                 result = conn.execute(stmt)
                 inserted += result.rowcount
 
+                # ts_kv_latest n'a qu'UNE ligne par (entity_id, metric_key) : ne
+                # retenir que le point le plus récent du batch (un ON CONFLICT
+                # multi-lignes sur la même clé est rejeté par PostgreSQL).
+                latest_rec = max(batch, key=lambda r: r["ts"])
+                latest_row = (
+                    f"({self._lit_uuid(str(latest_rec['entity_id']))}, "
+                    f"{self._lit(latest_rec['metric_key'])}, {self._lit(latest_rec['ts'])}, "
+                    f"{self._lit(latest_rec['dbl_v'])}, {self._lit(latest_rec['source'])})"
+                )
                 try:
                     insert_ts_kv_latest = (
                         "INSERT INTO ts_kv_latest (entity_id, metric_key, ts, dbl_v, source)"
-                        f" VALUES {values_clause}"  # nosec B608 -- clause assemblée exclusivement via _lit/_lit_uuid (échappement quotes, cast ::uuid).
+                        f" VALUES {latest_row}"  # nosec B608 -- clause assemblée exclusivement via _lit/_lit_uuid (échappement quotes, cast ::uuid).
                         " ON CONFLICT (entity_id, metric_key)"
                         " DO UPDATE SET ts = EXCLUDED.ts, dbl_v = EXCLUDED.dbl_v,"
                         " source = EXCLUDED.source, updated_at = NOW()"
@@ -484,13 +528,23 @@ class IngestionService:
         start_dt: datetime,
         end_dt: datetime,
         ingestion_id: str | None = None,
+        tb_entity_id: str | None = None,
     ) -> int:
         start_ms = int(start_dt.timestamp() * 1000)
         end_ms = int(end_dt.timestamp() * 1000)
 
+        # Identité TB distincte de l'identité Trendx : la lecture utilise
+        # metric_definition.item_id, le stockage reste indexé par
+        # business_entity.id. Fallback vers entity_id uniquement pour les
+        # appelants directs historiques où entity_id est déjà un TB UUID
+        # (tests/backfill) ; le chemin discovery fournit toujours tb_entity_id
+        # explicite et ne tombe jamais sur ce fallback (métriques invalides
+        # filtrées en amont, sans BE.id comme substitut).
+        tb_id = (tb_entity_id or "").strip() or entity_id
+
         raw = await self._reader.read_historical(
             entity_type="DEVICE",
-            entity_id=entity_id,
+            entity_id=tb_id,
             keys=[metric_key],
             start_ts=start_ms,
             end_ts=end_ms,
@@ -552,6 +606,7 @@ class IngestionService:
         metric_key: str,
         start_ts: datetime,
         end_ts: datetime,
+        tb_entity_id: str | None = None,
     ) -> dict[str, Any]:
         logger.info(
             "Ingesting {eid}/{key} from {start} to {end}",
@@ -575,6 +630,7 @@ class IngestionService:
                     start_dt=wstart,
                     end_dt=wend,
                     ingestion_id=batch_id,
+                    tb_entity_id=tb_entity_id,
                 )
                 total_stored += stored
                 window_results.append(
@@ -632,6 +688,7 @@ class IngestionService:
         metric_key: str,
         start_date: datetime,
         end_date: datetime | None = None,
+        tb_entity_id: str | None = None,
     ) -> dict[str, Any]:
         end = end_date or datetime.now(UTC)
         logger.info(
@@ -649,6 +706,7 @@ class IngestionService:
             metric_key=metric_key,
             start_ts=start_date,
             end_ts=end,
+            tb_entity_id=tb_entity_id,
         )
         duration = time.monotonic() - start_time
 
@@ -685,6 +743,15 @@ class IngestionService:
             eid = device["entity_id"]
             for metric in device.get("metrics", []):
                 key = metric["key"]
+                tb_id = str(metric.get("tb_entity_id") or "").strip()
+                if not tb_id:
+                    logger.warning(
+                        "ingestion: skipping metric without tb_entity_id "
+                        "(entity {eid}, metric {key}); no TB call, no fallback",
+                        eid=eid[:12],
+                        key=key,
+                    )
+                    continue
                 try:
                     cp = self._get_checkpoint(eid, key)
                     if cp is not None:
@@ -705,6 +772,7 @@ class IngestionService:
                         metric_key=key,
                         start_ts=start_ts,
                         end_ts=now,
+                        tb_entity_id=tb_id,
                     )
                     result["operation"] = "incremental"
                     results.append(result)
