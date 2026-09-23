@@ -111,6 +111,7 @@ from trendx.scheduler.handlers import (  # noqa: E402  -- imports métier en tê
     _run_trendx_forecast,
     _run_trendx_train,
 )
+from trendx.services.forecast_worker import _run_generic_forecast  # noqa: E402
 
 # Registre explicite job_type -> exécuteur. Aucun fallback silencieux : un
 # job_type absent conduit à fail_task() (voir _process_one_task).
@@ -120,6 +121,7 @@ JOB_DISPATCH: dict[str, Callable[[dict[str, Any], str, str], Any]] = {
     "ingestion": _run_ingestion,
     "trendx_train": _run_trendx_train,
     "trendx_forecast": _run_trendx_forecast,
+    "generic_forecast": _run_generic_forecast,
 }
 
 
