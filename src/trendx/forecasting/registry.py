@@ -167,8 +167,19 @@ class Compatibility:
     detail: str = ""
 
 
-def check_compatibility(model: RegisteredModel, dataset: ForecastDataset) -> Compatibility:
-    """Gate predict/reuse: every dimension must match explicitly."""
+def check_compatibility(
+    model: RegisteredModel,
+    dataset: ForecastDataset,
+    *,
+    require_uri: bool = True,
+) -> Compatibility:
+    """Gate predict/reuse: every dimension must match explicitly.
+
+    ``require_uri`` (default ``True``) controls whether an empty
+    ``model_uri`` is treated as incompatible.  Set to ``False`` when
+    checking compatibility *before* training (the URI is assigned by the
+    trainer only after a successful fit + save).
+    """
     meta = dataset.metadata
     if model.target_metric != dataset.target.name:
         return Compatibility(
@@ -216,7 +227,7 @@ def check_compatibility(model: RegisteredModel, dataset: ForecastDataset) -> Com
             reason=IncompatibilityReason.ALGORITHM_UNRESOLVED,
             detail="legacy algorithm unknown",
         )
-    if not (model.model_uri or "").strip():
+    if require_uri and not (model.model_uri or "").strip():
         return Compatibility(
             ok=False, reason=IncompatibilityReason.MODEL_URI_MISSING, detail="empty model_uri"
         )
@@ -235,6 +246,10 @@ class ChampionRegistry:
             raise ValueError(msg)
         self._models[model.model_id] = model
 
+    def get(self, model_id: str) -> RegisteredModel | None:
+        """Look up a model by its model_id (returns None if absent)."""
+        return self._models.get(model_id)
+
     def promote_to_champion(self, model_id: str) -> RegisteredModel:
         current = self._models.get(model_id)
         if current is None:
@@ -250,6 +265,71 @@ class ChampionRegistry:
                 self._models[mid] = replace(other, role=ModelRole.CHALLENGER)
         self._models[model_id] = promoted
         return promoted
+
+    def promote(
+        self,
+        model_id: str,
+        *,
+        artifact_store: Any = None,
+    ) -> RegisteredModel:
+        """Explicit, validated promotion to champion.
+
+        Unlike ``promote_to_champion`` (the raw W87 primitive), this adds
+        fail-closed guards required by W94:
+
+        * model must exist in the registry
+        * status must be ``READY``
+        * ``model_uri`` must be non-empty
+        * ``algorithm`` must be concrete (not ``UNKNOWN``)
+        * if an ``artifact_store`` is supplied, the artifact must exist
+          and pass integrity check
+
+        Training, registration, and evaluation never call this — only an
+        explicit, audited promotion step does.
+
+        Idempotent: calling ``promote`` on the current champion returns
+        the same champion unchanged.
+        """
+        current = self._models.get(model_id)
+        if current is None:
+            msg = f"Cannot promote unknown model_id: {model_id!r}"
+            raise KeyError(msg)
+
+        if current.status is not ModelStatus.READY:
+            msg = (
+                f"Cannot promote model {model_id!r}: status is "
+                f"{current.status.value!r}, not READY"
+            )
+            raise ValueError(msg)
+
+        if current.algorithm is Algorithm.UNKNOWN:
+            msg = (
+                f"Cannot promote model {model_id!r}: algorithm is UNKNOWN " "(legacy/incompatible)"
+            )
+            raise ValueError(msg)
+
+        if not (current.model_uri or "").strip():
+            msg = f"Cannot promote model {model_id!r}: empty model_uri (artifact absent)"
+            raise ValueError(msg)
+
+        if artifact_store is not None:
+            from trendx.forecasting.artifact import (
+                ArtifactError,
+                ArtifactIntegrityError,
+            )
+
+            if not artifact_store.exists(current.model_uri):
+                msg = f"Cannot promote model {model_id!r}: artifact not found"
+                raise ArtifactError(msg)
+            if not artifact_store.integrity_check(current.model_uri):
+                msg = f"Cannot promote model {model_id!r}: artifact integrity check failed"
+                raise ArtifactIntegrityError(msg)
+
+        # Already champion → idempotent no-op.
+        if current.role is ModelRole.CHAMPION:
+            return current
+
+        return self.promote_to_champion(model_id)
 
     def champions(self) -> list[RegisteredModel]:
         return [m for m in self._models.values() if m.role is ModelRole.CHAMPION]

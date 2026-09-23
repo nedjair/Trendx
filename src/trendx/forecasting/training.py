@@ -7,13 +7,19 @@ No metric branching, no orchestrator involvement, no external tracking,
 no persistence writes, no external writes. Model instantiation goes through an
 injected factory (default: existing ``create_model``); artifact URIs come
 from an injected store (default: empty, honestly reported).
+
+W94 adds ``ModelArtifactStore`` support: the trainer accepts either the legacy
+callable ``ArtifactStore`` (auto-adapted) or a full ``ModelArtifactStore``
+with save / load / integrity.  Provenance (fingerprint, algorithm, cutoff,
+rows …) is forwarded to ``store.save``.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 from trendx.forecasting.contract import Algorithm, ForecastRequest
@@ -26,6 +32,9 @@ from trendx.forecasting.registry import (
     RegisteredModel,
     check_compatibility,
 )
+
+if TYPE_CHECKING:
+    from trendx.forecasting.artifact import ModelArtifactStore
 
 ModelFactory = Callable[[Algorithm], Any]
 ArtifactStore = Callable[[str, Any], str]
@@ -87,17 +96,44 @@ def _default_factory(algorithm: Algorithm) -> Any:
 
 
 class ModelTrainer:
-    """Fit the W92-selected candidate and register it (challenger only)."""
+    """Fit the W92-selected candidate and register it (challenger only).
+
+    ``artifact_store`` accepts either a legacy callable
+    ``Callable[[str, Any], str]`` (auto-adapted to ``ModelArtifactStore``)
+    or a full ``ModelArtifactStore`` with save / load / integrity.  When
+    neither is supplied a ``NullArtifactStore`` is used so the model is
+    registered with an empty URI and can never be reloaded.
+    """
 
     def __init__(
         self,
         model_factory: ModelFactory | None = None,
-        artifact_store: ArtifactStore | None = None,
+        artifact_store: ArtifactStore | ModelArtifactStore | None = None,
         registry: ChampionRegistry | None = None,
     ) -> None:
         self._factory = model_factory or _default_factory
-        self._store = artifact_store or (lambda model_id, engine: "")
+        self._store = self._adapt_store(artifact_store)
         self._registry = registry or ChampionRegistry()
+
+    @staticmethod
+    def _adapt_store(
+        store: ArtifactStore | ModelArtifactStore | None,
+    ) -> ModelArtifactStore:
+        """Normalize ``store`` to a ``ModelArtifactStore``."""
+        from trendx.forecasting.artifact import (
+            NullArtifactStore,
+            _CallableArtifactStoreAdapter,
+        )
+
+        if store is None:
+            return NullArtifactStore()
+        # Duck-type: does it already implement the Protocol?
+        if hasattr(store, "save") and callable(store.save):
+            return store  # type: ignore[return-value]  # already a ModelArtifactStore
+        if callable(store):
+            return _CallableArtifactStoreAdapter(store)
+        # Fallback: assume it already satisfies the protocol.
+        return store
 
     def train(
         self,
@@ -113,7 +149,7 @@ class ModelTrainer:
         model = lookup.get(selection.winner_model_id)
         if model is None:
             return TrainingOutcome(status="refused", reason="unknown-candidate")
-        compatibility = check_compatibility(model, dataset)
+        compatibility = check_compatibility(model, dataset, require_uri=False)
         if not compatibility.ok:
             return TrainingOutcome(status="refused", reason=compatibility.reason.value)
         if dataset.target is None or len(dataset.target) == 0:
@@ -127,18 +163,43 @@ class ModelTrainer:
             engine.fit(frame)
         except Exception as exc:  # controlled failure path
             return TrainingOutcome(status="failed", reason=f"fit-failure: {exc}"[:200])
+        # Derive the actual algorithm from the engine (factory may ignore the
+        # candidate's algorithm, e.g. in tests with a fixed FourierModel).
+        from trendx.forecasting.artifact import _algorithm_for_model
+
         try:
-            uri = self._store(model.model_id, engine)
+            actual_algo_name = _algorithm_for_model(engine)
+            actual_algorithm = Algorithm.coerce(actual_algo_name)
+        except ValueError:
+            actual_algorithm = model.algorithm
+        version = self._next_version(model, existing, request)
+        try:
+            provenance = {
+                "feature_schema_version": model.feature_schema_version,
+                "feature_schema_fingerprint": model.feature_schema_fingerprint,
+                "frequency": model.frequency,
+                "horizon": model.horizon,
+                "training_window": request.training_window or model.training_window,
+                "tenant_id": model.tenant_id,
+                "entity_type": model.entity_type,
+                "entity_id": model.entity_id,
+                "target_metric": model.target_metric,
+                "model_version": version,
+                "created_at": datetime.now(UTC).isoformat(),
+                "cutoff": str(dataset.ds.max()),
+                "rows": int(len(frame)),
+                "schema_fingerprint": model.feature_schema_fingerprint,
+            }
+            uri = self._store.save(f"{model.model_id}@{version}", engine, provenance=provenance)
         except Exception as exc:  # controlled failure path
             return TrainingOutcome(status="failed", reason=f"artifact-failure: {exc}"[:200])
-        version = self._next_version(model, existing, request)
         registered = RegisteredModel(
             model_id=f"{model.model_id}@{version}",
             tenant_id=model.tenant_id,
             entity_type=model.entity_type,
             entity_id=model.entity_id,
             target_metric=model.target_metric,
-            algorithm=model.algorithm,
+            algorithm=actual_algorithm,
             feature_schema_version=model.feature_schema_version,
             feature_schema_fingerprint=model.feature_schema_fingerprint,
             frequency=model.frequency,
@@ -179,4 +240,6 @@ class ModelTrainer:
         if request.model_version_policy == "explicit":
             return model.model_version
         same = sum(1 for m in existing if m.compatibility_key() == model.compatibility_key())
+        if same == 0:
+            return model.model_version
         return f"{model.model_version}.{same + 1}"
