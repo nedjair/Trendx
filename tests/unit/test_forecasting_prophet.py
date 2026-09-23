@@ -142,3 +142,63 @@ def test_save_before_fit_raises():
 def test_prepare_dataframe_invalid():
     with pytest.raises((ValueError, TypeError)):
         ProphetModel._prepare_dataframe("invalid")
+
+
+@pytest.mark.unit
+def test_prepare_dataframe_utc_aware_to_naive():
+    # W81-A : aware UTC -> naive, même mur UTC.
+    df = pd.DataFrame(
+        {
+            "ds": pd.to_datetime(["2026-09-22 08:00:00+00:00", "2026-09-22 09:00:00+00:00"]),
+            "y": [1.0, 2.0],
+        }
+    )
+    out = ProphetModel._prepare_dataframe(df)
+    assert out["ds"].dt.tz is None
+    assert out["ds"].iloc[0] == pd.Timestamp("2026-09-22 08:00:00")
+
+
+@pytest.mark.unit
+def test_prepare_dataframe_non_utc_aware_preserves_instant():
+    # W81-B : +02:00 -> mur UTC 08:00 (instant préservé, pas de troncature).
+    df = pd.DataFrame(
+        {
+            "ds": pd.to_datetime(["2026-09-22 10:00:00+02:00", "2026-09-22 11:00:00+02:00"]),
+            "y": [1.0, 2.0],
+        }
+    )
+    out = ProphetModel._prepare_dataframe(df)
+    assert out["ds"].dt.tz is None
+    assert out["ds"].iloc[0] == pd.Timestamp("2026-09-22 08:00:00")
+    assert out["ds"].iloc[0] != pd.Timestamp("2026-09-22 10:00:00")
+
+
+@pytest.mark.unit
+def test_prepare_dataframe_already_naive_untouched():
+    # W81-C : naive reste naive, sans localisation système implicite.
+    df = pd.DataFrame(
+        {
+            "ds": pd.to_datetime(["2026-09-22 08:00:00", "2026-09-22 09:00:00"]),
+            "y": [1.0, 2.0],
+        }
+    )
+    out = ProphetModel._prepare_dataframe(df)
+    assert out["ds"].dt.tz is None
+    assert out["ds"].iloc[0] == pd.Timestamp("2026-09-22 08:00:00")
+
+
+@pytest.mark.unit
+def test_fit_with_tz_aware_data_no_prophet_tz_error():
+    # W81-D : fit réel avec ds aware ne doit plus lever l'erreur Prophet.
+    rng = np.random.default_rng(7)
+    n = 120
+    ts = pd.date_range("2026-06-01", periods=n, freq="1h", tz="Europe/Paris")
+    y = 20 + np.sin(2 * np.pi * np.arange(n) / 24) + rng.normal(0, 0.2, n)
+    model = ProphetModel(
+        yearly_seasonality=False,
+        weekly_seasonality=False,
+        daily_seasonality=True,
+    )
+    model.fit(pd.DataFrame({"ds": ts, "y": y}))
+    forecast = model.predict(horizon=24)
+    assert len(forecast.values) == 24

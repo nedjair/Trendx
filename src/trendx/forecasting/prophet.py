@@ -240,7 +240,13 @@ class ProphetModel(ForecastModel):
             msg = f"Unsupported data type: {type(data)}"
             raise TypeError(msg)
 
-        df["ds"] = pd.to_datetime(df["ds"])
+        # Prophet rejects tz-aware ds ("Column ds has timezone specified"):
+        # normalize to tz-naive UTC while keeping the instant (same contract
+        # as TrainingService._prepare_data). utc=True converts aware values
+        # to UTC and treats naive values as already-UTC (no system-local
+        # assumption); tz_localize(None) then drops tzinfo, preserving the
+        # UTC wall time for Prophet.
+        df["ds"] = pd.to_datetime(df["ds"], utc=True).dt.tz_localize(None)
         df["y"] = pd.to_numeric(df["y"], errors="coerce")
         df = df.dropna(subset=["y"]).sort_values("ds").reset_index(drop=True)
 
