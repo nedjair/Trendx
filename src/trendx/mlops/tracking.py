@@ -49,10 +49,16 @@ class MLflowTracker:
         self._tracking_uri = tracking_uri or settings.mlflow_tracking_uri
         mlflow.set_tracking_uri(self._tracking_uri)
         self._client = client or MlflowClient(self._tracking_uri)
-        self._active_run: mlflow.ActiveRun | None = None
+        # NOTE (résolution W49/master) : l'active run est l'entité Run créée
+        # par le client, jamais un ActiveRun fluent. Toutes les opérations
+        # utilisent le client explicite lié à cette URI : le comportement ne
+        # dépend jamais de l'état fluent global (compat mlflow>=2.x ; le
+        # start fluent imbriqué émettait des retries runs/get cross-store
+        # quand l'URI globale divergeait de l'URI du client).
+        self._active_run: Any | None = None
 
     @property
-    def active_run(self) -> mlflow.ActiveRun | None:
+    def active_run(self) -> Any | None:
         return self._active_run
 
     @property
@@ -84,10 +90,7 @@ class MLflowTracker:
     ) -> str:
         experiment_id = self.create_experiment(experiment_name)
         run = self._client.create_run(experiment_id, run_name=run_name, tags=tags or {})
-        try:
-            self._active_run = mlflow.start_run(run_id=run.info.run_id)
-        except Exception:
-            self._active_run = run
+        self._active_run = run
         logger.info(
             "Started MLflow run '{}' (id={}) in experiment '{}'",
             run_name or "unnamed",
@@ -102,7 +105,6 @@ class MLflowTracker:
             run_id = self._active_run.info.run_id
             self._active_run = None
             logger.info("Ended MLflow run {} with status '{}'", run_id, status)
-        mlflow.end_run(status=status)
 
     # ── Context manager ────────────────────────────────────────────────
 

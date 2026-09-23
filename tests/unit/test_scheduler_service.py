@@ -148,16 +148,20 @@ def test_initialization_registers_p0_handlers_with_modes() -> None:
         "ingestion",
         "trendx_train",
         "trendx_forecast",
+        "anomaly_scan",
+        "ml_pipeline",
+        "reconcile_runs",
     }
     assert svc._instance_id == "unit-1"
     assert svc._registry._instance_id == "unit-1"
     svc.stop()
 
 
-def test_anomaly_scan_without_handler_stays_unscheduled() -> None:
+def test_anomaly_scan_with_handler_gets_scheduled() -> None:
+    # Résolution W49/master : anomaly_scan dispose désormais d'un handler
+    # (_run_anomaly_scan) et sort du régime "sans handler" historique.
     svc = _service()
-    assert "anomaly_scan" not in svc._registry._handlers
-    assert "anomaly-scan" not in [s.job_id for s in svc._registry._specs]
+    assert "anomaly_scan" in svc._registry._handlers
     svc.stop()
 
 

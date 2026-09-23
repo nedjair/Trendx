@@ -98,7 +98,7 @@ class TrainingService:
         resampler: Resampler | None = None,
         model_selector: ModelSelector | None = None,
     ) -> None:
-        self._tracker = mlflow_tracker or MLflowTracker()
+        self._tracker_instance: MLflowTracker | None = mlflow_tracker
         self._registry = model_registry or ModelRegistry()
         self._quality = data_quality or DataQualityService()
         self._resampler = resampler or Resampler()
@@ -109,6 +109,32 @@ class TrainingService:
             min_stable_windows=3,
             marginal_gain_threshold=0.02,
         )
+
+    @property
+    def _tracker(self) -> MLflowTracker:
+        """Lazy MLflow tracker: construction (and its global URI side effect)
+        happens only when training actually logs, never for fetch-only uses
+        such as the pipeline orchestrator's dataset fetch."""
+        if self._tracker_instance is None:
+            self._tracker_instance = MLflowTracker()
+        return self._tracker_instance
+
+    @_tracker.setter
+    def _tracker(self, value: MLflowTracker | None) -> None:
+        self._tracker_instance = value
+
+    def fetch_training_frame(
+        self,
+        entity_id: str,
+        metric_key: str,
+        lookback_days: int | None = None,
+    ) -> pd.DataFrame:
+        """Public bounded read for the ML pipeline orchestrator.
+
+        Delegates to the existing private fetch (same window, same synthetic
+        exclusion). Additive only, no behavior change.
+        """
+        return self._fetch_training_data(entity_id, metric_key, lookback_days)
 
     def _fetch_training_data(
         self,

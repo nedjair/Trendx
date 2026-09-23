@@ -549,3 +549,15 @@ if __name__ == "__main__":
         if _scheduler is not None:
             _scheduler.shutdown(wait=False)
         logger.info("trendx-worker stopped by signal")
+
+
+# W49 (résolution) : enregistrement disjoint des handlers ML.
+# Placé en fin de fichier, zone non touchée par l'extraction B1, afin que la
+# fusion avec master reste propre : handlers définis dans
+# trendx.scheduler.handlers (source de vérité, sans import de ce module),
+# enregistrés ici sans modifier le bloc d'import ni le littéral JOB_DISPATCH.
+from trendx.scheduler.handlers import _run_anomaly_scan as _w49_anomaly_scan  # noqa: E402
+from trendx.scheduler.handlers import _run_ml_pipeline as _w49_ml_pipeline  # noqa: E402
+
+JOB_DISPATCH["anomaly_scan"] = _w49_anomaly_scan
+JOB_DISPATCH["ml_pipeline"] = _w49_ml_pipeline

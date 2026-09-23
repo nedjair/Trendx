@@ -18,6 +18,7 @@ EXPECTED_IDS = {
     "forecast-train",
     "forecast-run",
     "anomaly-scan",
+    "reconcile-runs",
 }
 
 

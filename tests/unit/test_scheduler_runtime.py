@@ -21,6 +21,7 @@ EXPECTED_IDS = {
     "forecast-train",
     "forecast-run",
     "anomaly-scan",
+    "reconcile-runs",
 }
 
 
@@ -67,6 +68,7 @@ def test_controlled_dispatch_all_jobs():
         trendx_train=_handler,
         trendx_forecast=_handler,
         anomaly_scan=_handler,
+        reconcile_runs=_handler,
     )
     rt = RuntimeScheduler(reg)
     rt.schedule_all()

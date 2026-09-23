@@ -220,6 +220,75 @@ def _run_trendx_forecast(
     }
 
 
+def _run_anomaly_scan(json_job: dict[str, Any], task_id: str, execution_id: str) -> dict[str, Any]:
+    """Job anomaly_scan : scan idempotent, isolé, sans alarme ni writeback TB.
+
+    Paramètres minimaux : tenant_id, entity_type, entity_id, metric_name.
+    Utilise AnomalyDetectorService.scan (persistance des épisodes dans la table
+    ``anomaly`` existante). AlertingService n'est jamais invoqué ici.
+    """
+    _require_forecast_keys(json_job, ["tenant_id", "entity_type", "entity_id", "metric_name"])
+    tenant_id = str(json_job["tenant_id"])
+    entity_type = str(json_job["entity_type"])
+    entity_id = str(json_job["entity_id"])
+    metric_name = str(json_job["metric_name"])
+
+    from trendx.anomalies.detectors import AnomalyDetectorService
+
+    svc = AnomalyDetectorService()
+    episodes = svc.scan(entity_id, metric_name)
+    return {
+        "job_type": "anomaly_scan",
+        "status": "ok",
+        "tenant_id": tenant_id,
+        "entity_type": entity_type,
+        "entity_id": entity_id,
+        "metric_name": metric_name,
+        "episodes": len(episodes or []),
+        "alarms": "disabled",
+        "generated_at": datetime.now(UTC).isoformat(),
+    }
+
+
+def _run_ml_pipeline(json_job: dict[str, Any], task_id: str, execution_id: str) -> dict[str, Any]:
+    """Job ml_pipeline : Quality → Preprocessing → Train → Forecast → Anomaly.
+
+    Paramètres minimaux : tenant_id, entity_type, entity_id, metric_name
+    (+ lookback_days/frequency/horizon/algorithm/customer_id optionnels ;
+    customer_id explicite recommandé, sinon résolution fail-closed via
+    TRENDX_DEFAULT_CUSTOMER_ID dans TrainingService).
+    Délègue au MLPipelineOrchestrator (contexte propagé, dry_run forcé côté
+    InferenceService, aucun writeback/alarme). Échec → RuntimeError pour
+    fail_task explicite (pas de passage silencieux).
+    """
+    _require_forecast_keys(json_job, ["tenant_id", "entity_type", "entity_id", "metric_name"])
+
+    from trendx.services.pipeline import MLPipelineOrchestrator, PipelineContext
+
+    context = PipelineContext(
+        tenant_id=str(json_job["tenant_id"]),
+        entity_type=str(json_job["entity_type"]),
+        entity_id=str(json_job["entity_id"]),
+        metric_name=str(json_job["metric_name"]),
+        lookback_days=json_job.get("lookback_days"),
+        frequency=str(json_job.get("frequency") or settings.forecast_frequency),
+        horizon=json_job.get("horizon"),
+        algorithm=str(json_job.get("algorithm") or "Prophet"),
+        customer_id=json_job.get("customer_id"),
+        execution_id=execution_id,
+    )
+    result = MLPipelineOrchestrator().run_single(context)
+    if result.status != "ok":
+        msg = (
+            f"ml_pipeline failed for {context.entity_id[:12]}/{context.metric_name}: "
+            f"{result.error}"
+        )
+        raise RuntimeError(msg)
+    payload = result.to_dict()
+    payload["job_type"] = "ml_pipeline"
+    return payload
+
+
 # Registre partagé job_type -> exécuteur. Le worker expose JOB_DISPATCH
 # (contrat exécuteur, clés identiques) ; le futur service scheduler dédié
 # consommera ce mapping sans jamais importer trendx.services.worker.
@@ -229,4 +298,6 @@ JOB_HANDLERS: dict[str, Any] = {
     "ingestion": _run_ingestion,
     "trendx_train": _run_trendx_train,
     "trendx_forecast": _run_trendx_forecast,
+    "anomaly_scan": _run_anomaly_scan,
+    "ml_pipeline": _run_ml_pipeline,
 }

@@ -48,7 +48,7 @@ def test_specs_duplicates_rejected() -> None:
 def test_default_catalog_is_p0() -> None:
     reg = SchedulerRegistry()
     assert {j.job_id for j in reg.jobs} == {s.job_id for s in P0_JOBS}
-    assert len(reg.jobs) == 6
+    assert len(reg.jobs) == 7
 
 
 def test_patched_module_catalog_takes_effect(monkeypatch: pytest.MonkeyPatch) -> None:
