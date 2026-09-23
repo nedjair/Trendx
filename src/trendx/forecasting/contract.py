@@ -49,6 +49,7 @@ class Algorithm(str, Enum):
     """
 
     AUTO = "AUTO"
+    UNKNOWN = "UNKNOWN"
     PROPHET = "Prophet"
     ARIMA = "ARIMA"
     FOURIER = "Fourier"
