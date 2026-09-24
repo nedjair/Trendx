@@ -29,6 +29,11 @@ from trendx.forecasting.history import (
     ExecutionStatistics,
     FailureDiagnostic,
 )
+from trendx.forecasting.reporting import (
+    REPORT_CONTRACT_VERSION,
+    ExecutionAnalyticsReport,
+    ExecutionAnalyticsReportingService,
+)
 
 _REDACTED_KEYS = frozenset(
     {
@@ -210,6 +215,125 @@ class ExecutionAnalyticsOut(BaseModel):
     failures: list[FailureAnalyticsOut]
     created_at_trend: list[TimeBucketOut]
     trend_contract: TrendContractOut
+
+
+class ExecutionReportTenantContextOut(BaseModel):
+    tenant_id: str
+
+
+class ExecutionReportFiltersOut(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
+    tenant_id: str
+    entity_type: str | None = None
+    entity_id: str | None = None
+    target_metric: str | None = None
+    execution_id: str | None = None
+    reference_key: str | None = None
+    model_id: str | None = None
+    model_version: str | None = None
+    algorithm: str | None = None
+    feature_schema_version: str | None = None
+    feature_schema_fingerprint: str | None = None
+    status: str | None = None
+    created_at_from: str | None = None
+    created_at_to: str | None = None
+    completed_at_from: str | None = None
+    completed_at_to: str | None = None
+
+
+class ExecutionReportPaginationOut(BaseModel):
+    applied: bool
+    reason: str
+
+
+class ReportDimensionsOut(BaseModel):
+    by_metric: list[AnalyticsGroupOut]
+    by_entity: list[EntityAnalyticsOut]
+    by_algorithm: list[AnalyticsGroupOut]
+    by_model: list[ModelAnalyticsOut]
+    by_status: list[AnalyticsGroupOut]
+
+
+class ReportTemporalOut(BaseModel):
+    created_at_trend: list[TimeBucketOut]
+    trend_contract: TrendContractOut
+
+
+class ExecutionAnalyticsReportOut(BaseModel):
+    contract_version: str
+    generated_at: str | None = Field(
+        default=None,
+        description=(
+            "Reserved generation metadata; null in deterministic mode and never used for aggregates"
+        ),
+    )
+    tenant_id: str
+    tenant_context: ExecutionReportTenantContextOut
+    applied_filters: ExecutionReportFiltersOut
+    pagination: ExecutionReportPaginationOut
+    summary: ExecutionStatsOut
+    dimensions: ReportDimensionsOut
+    temporal: ReportTemporalOut
+    failures: list[FailureAnalyticsOut]
+
+    @classmethod
+    def from_report(cls, report: ExecutionAnalyticsReport) -> ExecutionAnalyticsReportOut:
+        return cls(
+            contract_version=report.contract_version,
+            generated_at=report.generated_at,
+            tenant_id=report.tenant_id,
+            tenant_context=ExecutionReportTenantContextOut(
+                tenant_id=report.tenant_context.tenant_id
+            ),
+            applied_filters=ExecutionReportFiltersOut(
+                tenant_id=report.applied_filters.tenant_id,
+                entity_type=report.applied_filters.entity_type,
+                entity_id=report.applied_filters.entity_id,
+                target_metric=report.applied_filters.target_metric,
+                execution_id=report.applied_filters.execution_id,
+                reference_key=report.applied_filters.reference_key,
+                model_id=report.applied_filters.model_id,
+                model_version=report.applied_filters.model_version,
+                algorithm=report.applied_filters.algorithm,
+                feature_schema_version=report.applied_filters.feature_schema_version,
+                feature_schema_fingerprint=report.applied_filters.feature_schema_fingerprint,
+                status=report.applied_filters.status,
+                created_at_from=report.applied_filters.created_at_from,
+                created_at_to=report.applied_filters.created_at_to,
+                completed_at_from=report.applied_filters.completed_at_from,
+                completed_at_to=report.applied_filters.completed_at_to,
+            ),
+            pagination=ExecutionReportPaginationOut(
+                applied=report.pagination.applied,
+                reason=report.pagination.reason,
+            ),
+            summary=ExecutionStatsOut.from_statistics(report.summary),
+            dimensions=ReportDimensionsOut(
+                by_metric=[
+                    AnalyticsGroupOut(**item.to_dict()) for item in report.dimensions.by_metric
+                ],
+                by_entity=[
+                    EntityAnalyticsOut(**item.to_dict()) for item in report.dimensions.by_entity
+                ],
+                by_algorithm=[
+                    AnalyticsGroupOut(**item.to_dict()) for item in report.dimensions.by_algorithm
+                ],
+                by_model=[
+                    ModelAnalyticsOut(**item.to_dict()) for item in report.dimensions.by_model
+                ],
+                by_status=[
+                    AnalyticsGroupOut(**item.to_dict()) for item in report.dimensions.by_status
+                ],
+            ),
+            temporal=ReportTemporalOut(
+                created_at_trend=[
+                    TimeBucketOut(**item.to_dict()) for item in report.temporal.created_at_trend
+                ],
+                trend_contract=TrendContractOut(**report.temporal.trend_contract.to_dict()),
+            ),
+            failures=[FailureAnalyticsOut(**item.to_dict()) for item in report.failures],
+        )
 
 
 class FailureDiagnosticOut(BaseModel):
@@ -546,6 +670,58 @@ def build_analytics_query(
 ExecutionAnalyticsQueryDep = Annotated[ExecutionQuery, Depends(build_analytics_query)]
 
 
+def build_report_query(
+    tenant_context: TenantContextDep,
+    tenant_id: str | None = Query(None),
+    entity_type: str | None = Query(None),
+    entity_id: str | None = Query(None),
+    target_metric: str | None = Query(None),
+    execution_id: str | None = Query(None),
+    reference_key: str | None = Query(None),
+    model_id: str | None = Query(None),
+    model_version: str | None = Query(None),
+    algorithm: str | None = Query(None),
+    feature_schema_version: str | None = Query(None),
+    feature_schema_fingerprint: str | None = Query(None),
+    status: str | None = Query(None),
+    created_at_from: str | None = Query(None),
+    created_at_to: str | None = Query(None),
+    completed_at_from: str | None = Query(None),
+    completed_at_to: str | None = Query(None),
+) -> ExecutionQuery:
+    if tenant_id is not None and tenant_id != tenant_context.tenant_id:
+        _observe("report", "tenant_rejected", 403)
+        raise HTTPException(status_code=403, detail=_ApiErrorCode.TENANT_FORBIDDEN.value)
+    try:
+        return ExecutionQuery(
+            tenant_id=tenant_context.tenant_id,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            target_metric=target_metric,
+            execution_id=execution_id,
+            reference_key=reference_key,
+            model_id=model_id,
+            model_version=model_version,
+            algorithm=algorithm,
+            feature_schema_version=feature_schema_version,
+            feature_schema_fingerprint=feature_schema_fingerprint,
+            status=status,
+            created_at_from=created_at_from,
+            created_at_to=created_at_to,
+            completed_at_from=completed_at_from,
+            completed_at_to=completed_at_to,
+        )
+    except ValueError as exc:
+        _observe("report", "invalid_request", 422)
+        raise HTTPException(
+            status_code=422,
+            detail=_ApiErrorCode.INVALID_QUERY.value,
+        ) from exc
+
+
+ExecutionReportQueryDep = Annotated[ExecutionQuery, Depends(build_report_query)]
+
+
 def _service_unavailable(exc: Exception) -> HTTPException:
     return HTTPException(
         status_code=503,
@@ -644,6 +820,37 @@ def execution_analytics(
 
 
 @router.get(
+    "/report",
+    response_model=ExecutionAnalyticsReportOut,
+    summary="Report forecast execution history analytics",
+    description=(
+        "Stable W106 representation of the W104 analytics projection. "
+        "The report is an aggregate snapshot, so W99 pagination is intentionally not applied. "
+        "generated_at is null in deterministic mode and never affects analytics."
+    ),
+    responses=_ERROR_RESPONSES,
+)
+def execution_report(
+    query: ExecutionReportQueryDep,
+    service: ExecutionHistoryServiceDep,
+) -> ExecutionAnalyticsReportOut:
+    try:
+        report = ExecutionAnalyticsReportingService(service).report(query)
+    except (ExecutionStoreError, OSError, UnicodeError) as exc:
+        _observe("report", "datastore_unavailable", 503)
+        raise _service_unavailable(exc) from exc
+    except ValueError as exc:
+        _observe("report", "invalid_request", 422)
+        raise HTTPException(
+            status_code=422,
+            detail=_ApiErrorCode.INVALID_QUERY.value,
+        ) from exc
+    response = ExecutionAnalyticsReportOut.from_report(report)
+    _observe("report", "success", 200)
+    return response
+
+
+@router.get(
     "/reference/{reference_key}",
     response_model=ExecutionOut,
     summary="Get a forecast execution by reference key",
@@ -732,7 +939,15 @@ __all__ = [
     "AnalyticsGroupOut",
     "EntityAnalyticsOut",
     "ExecutionAnalyticsOut",
+    "ExecutionAnalyticsReportOut",
+    "ExecutionAnalyticsReportingService",
     "ExecutionDiagnosticOut",
+    "ExecutionReportFiltersOut",
+    "ExecutionReportPaginationOut",
+    "ExecutionReportTenantContextOut",
+    "ReportDimensionsOut",
+    "ReportTemporalOut",
+    "REPORT_CONTRACT_VERSION",
     "ExecutionErrorOut",
     "ExecutionHistoryService",
     "ExecutionListOut",
