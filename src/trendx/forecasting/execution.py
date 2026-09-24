@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import stat
 import tempfile
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
@@ -359,6 +360,20 @@ class MemoryExecutionStore:
             self._records[execution_id] = self._copy(updated)
             return self._copy(updated)
 
+    def delete_if_unchanged(
+        self,
+        execution_id: str,
+        expected: ExecutionRecord,
+    ) -> bool:
+        """Delete only the exact record observed by a lifecycle caller."""
+
+        with self._lock:
+            current = self._records.get(execution_id)
+            if current is None or not _strict_payload_equal(current.to_dict(), expected.to_dict()):
+                return False
+            del self._records[execution_id]
+            return True
+
     def get(self, execution_id: str) -> ExecutionRecord | None:
         with self._lock:
             record = self._records.get(execution_id)
@@ -450,6 +465,29 @@ def _validate_durable_record_shape(raw_record: Mapping[str, Any], execution_id: 
         raise ExecutionStoreSerializationError(msg)
 
 
+def _strict_payload_equal(left: Mapping[str, Any], right: Mapping[str, Any]) -> bool:
+    """Compare JSON payloads without Python's numeric/bool coercion rules."""
+
+    try:
+        left_json = json.dumps(
+            left,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+        right_json = json.dumps(
+            right,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        )
+    except (TypeError, ValueError):
+        return False
+    return left_json == right_json
+
+
 def _validate_json_value(value: Any, *, path: str = "value") -> None:
     if value is None or isinstance(value, str | bool | int):
         return
@@ -516,7 +554,9 @@ class DurableExecutionStore:
     def _locked(self) -> Iterator[None]:
         self._lock_path.parent.mkdir(parents=True, exist_ok=True)
         with self._lock_path.open("a+") as lock_handle:
-            os.chmod(self._lock_path, 0o600)
+            lock_mode = stat.S_IMODE(os.fstat(lock_handle.fileno()).st_mode)
+            if lock_mode != 0o600:
+                os.fchmod(lock_handle.fileno(), 0o600)
             flock(lock_handle.fileno(), LOCK_EX)
             try:
                 yield
@@ -765,6 +805,22 @@ class DurableExecutionStore:
             records = self._read_unlocked()
             raw_record = records.get(execution_id)
             return self._record_from_raw(raw_record) if raw_record is not None else None
+
+    def delete_if_unchanged(
+        self,
+        execution_id: str,
+        expected: ExecutionRecord,
+    ) -> bool:
+        """Atomically delete only the exact record observed by a lifecycle caller."""
+
+        with self._locked():
+            records = self._read_unlocked()
+            current = records.get(execution_id)
+            if current is None or not _strict_payload_equal(current, expected.to_dict()):
+                return False
+            del records[execution_id]
+            self._write_unlocked(records)
+            return True
 
     def get_by_reference_key(self, reference_key: str) -> ExecutionRecord | None:
         with self._locked():
