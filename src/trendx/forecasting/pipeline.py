@@ -1,13 +1,19 @@
-"""Generic multi-metric forecast pipeline (W88).
+"""Generic multi-metric forecast pipeline (W88 + W96).
 
 Wires the W84-W87 contracts end to end without metric branching:
 
     ForecastRequest -> FeatureResolver -> DatasetBuilder
         -> ModelRegistry lookup -> ForecastModel -> ForecastEnvelope
 
-No training, no MLflow writes, no scheduler/worker changes, no persistence
-changes. Model loading and champion selection are injected callables so the
-pipeline stays free of infrastructure imports.
+When a W87 ``ChampionRegistry`` and a W94 ``ModelArtifactStore`` are injected,
+the pipeline takes the W96 persisted path instead of accepting an in-memory
+engine:
+
+    ChampionRegistry -> artifact URI -> W95 reload -> predict -> envelope
+
+The injected-model path remains supported for existing W88 callers. There is
+no training, registration, promotion, external-provider, or metric-specific
+logic in this module.
 """
 
 from __future__ import annotations
@@ -17,6 +23,12 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import pandas as pd
+from trendx.forecasting.artifact import (
+    ArtifactError,
+    ArtifactIntegrityError,
+    ArtifactNotFoundError,
+    ModelArtifactStore,
+)
 from trendx.forecasting.contract import Algorithm, ForecastRequest
 from trendx.forecasting.dataset import DatasetBuilder, ForecastDataset
 from trendx.forecasting.registry import (
@@ -26,6 +38,7 @@ from trendx.forecasting.registry import (
     check_compatibility,
 )
 from trendx.forecasting.resolution import FeatureResolver, ResolvedFeatureSet
+from trendx.forecasting.serving import ServingError, serve_registered_model
 
 ModelLoader = Callable[[RegisteredModel], Any]
 ChampionSelector = Callable[[ForecastRequest], RegisteredModel | None]
@@ -51,12 +64,16 @@ class ForecastPipeline:
         models: Iterable[RegisteredModel] = (),
         model_loader: ModelLoader | None = None,
         champion_selector: ChampionSelector | None = None,
+        artifact_store: ModelArtifactStore | None = None,
+        champion_registry: ChampionRegistry | None = None,
     ) -> None:
         self._resolver = resolver or FeatureResolver()
         self._builder = builder or DatasetBuilder()
         self._models = list(models)
         self._loader = model_loader
         self._selector = champion_selector
+        self._artifact_store = artifact_store
+        self._champion_registry = champion_registry
 
     def run(
         self,
@@ -78,6 +95,14 @@ class ForecastPipeline:
             execution_id=execution_id,
             frames=store,
         )
+        if self._champion_registry is not None:
+            return self._run_persisted_champion(
+                request,
+                dataset,
+                resolved,
+                execution_id=execution_id,
+            )
+
         model = self._select_model(request, dataset)
         if model is None:
             return PipelineOutcome(
@@ -122,6 +147,124 @@ class ForecastPipeline:
             dataset_meta=dataset.metadata,
             envelope=envelope,
         )
+
+    def _run_persisted_champion(
+        self,
+        request: ForecastRequest,
+        dataset: ForecastDataset,
+        resolved: ResolvedFeatureSet,
+        *,
+        execution_id: str,
+    ) -> PipelineOutcome:
+        """Serve a registry champion exclusively through the W95 artifact path."""
+
+        registry = self._champion_registry
+        if registry is None:  # pragma: no cover - guarded by the caller
+            return PipelineOutcome(
+                status="refused",
+                reason="no-champion-registry",
+                resolved=resolved,
+                dataset_meta=dataset.metadata,
+            )
+
+        model, compatibility, selection_reason = self._select_persisted_champion(request, dataset)
+        if model is None:
+            return PipelineOutcome(
+                status="refused",
+                reason=selection_reason,
+                compatibility=compatibility,
+                resolved=resolved,
+                dataset_meta=dataset.metadata,
+            )
+
+        if self._artifact_store is None:
+            return PipelineOutcome(
+                status="refused",
+                reason="no-artifact-store",
+                compatibility=compatibility,
+                resolved=resolved,
+                dataset_meta=dataset.metadata,
+            )
+
+        try:
+            envelope = serve_registered_model(
+                model.model_id,
+                registry.get,
+                self._artifact_store,
+                dataset,
+                horizon=request.horizon,
+                execution_id=execution_id,
+            )
+        except ArtifactNotFoundError:
+            return PipelineOutcome(
+                status="refused",
+                reason="artifact-missing",
+                compatibility=compatibility,
+                resolved=resolved,
+                dataset_meta=dataset.metadata,
+            )
+        except ArtifactIntegrityError:
+            return PipelineOutcome(
+                status="refused",
+                reason="artifact-corrupted",
+                compatibility=compatibility,
+                resolved=resolved,
+                dataset_meta=dataset.metadata,
+            )
+        except ServingError:
+            return PipelineOutcome(
+                status="refused",
+                reason="serving-refused",
+                compatibility=compatibility,
+                resolved=resolved,
+                dataset_meta=dataset.metadata,
+            )
+        except ArtifactError:
+            return PipelineOutcome(
+                status="refused",
+                reason="artifact-error",
+                compatibility=compatibility,
+                resolved=resolved,
+                dataset_meta=dataset.metadata,
+            )
+
+        return PipelineOutcome(
+            status="ok",
+            reason="forecast",
+            compatibility=compatibility,
+            resolved=resolved,
+            dataset_meta=dataset.metadata,
+            envelope=envelope,
+        )
+
+    def _select_persisted_champion(
+        self, request: ForecastRequest, dataset: ForecastDataset
+    ) -> tuple[RegisteredModel | None, Compatibility | None, str]:
+        """Select exactly one W87-compatible champion, never a challenger."""
+
+        registry = self._champion_registry
+        if registry is None:  # pragma: no cover - guarded by the caller
+            return None, None, "no-champion-registry"
+
+        candidates = [
+            model
+            for model in registry.champions()
+            if request.algorithm is Algorithm.AUTO or model.algorithm is request.algorithm
+        ]
+        if not candidates:
+            return None, None, "no-compatible-champion"
+
+        evaluated = [(model, check_compatibility(model, dataset)) for model in candidates]
+        compatible = [(model, compat) for model, compat in evaluated if compat.ok]
+        if len(compatible) == 1:
+            model, compatibility = compatible[0]
+            return model, compatibility, ""
+        if len(compatible) > 1:
+            return None, None, "ambiguous-champion"
+        if len(candidates) == 1:
+            compatibility = evaluated[0][1]
+            return None, compatibility, compatibility.reason.value
+        return None, None, "no-compatible-champion"
 
     def _select_model(
         self, request: ForecastRequest, dataset: ForecastDataset
