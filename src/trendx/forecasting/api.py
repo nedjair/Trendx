@@ -1,0 +1,462 @@
+"""W101 — operational read-only API for forecast execution history.
+
+The router delegates exclusively to :class:`ExecutionHistoryService`.  The
+application wiring supplies the service through ``app.state``; this module
+never reads or writes an ExecutionStore directly.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from dataclasses import dataclass
+from enum import Enum
+from typing import Annotated, Any, cast
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel, Field
+from trendx.config import settings
+from trendx.forecasting.execution import ExecutionRecord, ExecutionStatus, ExecutionStoreError
+from trendx.forecasting.history import (
+    MAX_HISTORY_PAGE_SIZE,
+    ExecutionHistoryService,
+    ExecutionQuery,
+    ExecutionStatistics,
+    FailureDiagnostic,
+)
+
+_REDACTED_KEYS = frozenset(
+    {
+        "access_token",
+        "api_key",
+        "authorization",
+        "credential",
+        "credentials",
+        "password",
+        "refresh_token",
+        "secret",
+        "token",
+    }
+)
+
+
+class TenantContextError(HTTPException):
+    """Tenant context is unavailable or does not authorize the request."""
+
+
+@dataclass(frozen=True)
+class TenantContext:
+    """Authorized tenant context supplied by the existing API configuration."""
+
+    tenant_id: str
+
+
+class ExecutionOut(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
+    execution_id: str
+    reference_key: str
+    tenant_id: str
+    entity_type: str
+    entity_id: str
+    target_metric: str
+    frequency: str
+    horizon: int
+    model_id: str
+    model_version: str
+    algorithm: str
+    feature_schema_version: str
+    feature_schema_fingerprint: str
+    artifact_uri: str
+    created_at: str
+    started_at: str
+    completed_at: str
+    status: ExecutionStatus
+    error_code: str
+    error_reason: str
+    prediction_count: int | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    result: dict[str, Any] | None = None
+
+    @classmethod
+    def from_record(cls, record: ExecutionRecord) -> ExecutionOut:
+        return cls(
+            execution_id=record.execution_id,
+            reference_key=record.reference_key,
+            tenant_id=record.tenant_id,
+            entity_type=record.entity_type,
+            entity_id=record.entity_id,
+            target_metric=record.target_metric,
+            frequency=record.frequency,
+            horizon=record.horizon,
+            model_id=record.model_id,
+            model_version=record.model_version,
+            algorithm=record.algorithm,
+            feature_schema_version=record.feature_schema_version,
+            feature_schema_fingerprint=record.feature_schema_fingerprint,
+            artifact_uri=record.artifact_uri,
+            created_at=record.created_at,
+            started_at=record.started_at,
+            completed_at=record.completed_at,
+            status=record.status,
+            error_code=record.error_code,
+            error_reason=record.error_reason,
+            prediction_count=record.prediction_count,
+            metadata=_redact_json(record.metadata),
+            result=_redact_json(record.result) if record.result is not None else None,
+        )
+
+
+class ExecutionListOut(BaseModel):
+    items: list[ExecutionOut]
+    total: int
+    limit: int
+    offset: int
+    has_more: bool
+
+
+class ExecutionStatsOut(BaseModel):
+    total: int
+    success_count: int
+    failed_count: int
+    success_rate: float
+    total_prediction_count: int
+    duration_sample_count: int
+    total_duration: float | None
+    average_duration: float | None
+
+    @classmethod
+    def from_statistics(cls, statistics: ExecutionStatistics) -> ExecutionStatsOut:
+        return cls(
+            total=statistics.total_executions,
+            success_count=statistics.success_count,
+            failed_count=statistics.failure_count,
+            success_rate=statistics.success_rate,
+            total_prediction_count=statistics.prediction_count_total,
+            duration_sample_count=statistics.duration_sample_count,
+            total_duration=statistics.total_duration_seconds,
+            average_duration=statistics.average_duration_seconds,
+        )
+
+
+class FailureDiagnosticOut(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
+    execution_id: str
+    reference_key: str
+    tenant_id: str
+    entity_type: str
+    entity_id: str
+    target_metric: str
+    model_id: str
+    model_version: str
+    algorithm: str
+    feature_schema_version: str
+    feature_schema_fingerprint: str
+    artifact_uri: str
+    status: ExecutionStatus
+    error_code: str
+    error_reason: str
+    created_at: str
+    started_at: str
+    completed_at: str
+
+    @classmethod
+    def from_diagnostic(cls, diagnostic: FailureDiagnostic) -> FailureDiagnosticOut:
+        return cls(**diagnostic.to_dict())
+
+
+class ExecutionDiagnosticOut(BaseModel):
+    execution_id: str
+    status: ExecutionStatus
+    failure: FailureDiagnosticOut | None = None
+
+
+class ExecutionErrorOut(BaseModel):
+    detail: str
+
+
+class _ApiErrorCode(str, Enum):
+    EXECUTION_NOT_FOUND = "execution_not_found"
+    EXECUTION_HISTORY_UNAVAILABLE = "execution_history_unavailable"
+    TENANT_FORBIDDEN = "tenant_forbidden"
+    TENANT_CONTEXT_UNAVAILABLE = "tenant_context_unavailable"
+    INVALID_QUERY = "invalid_query"
+    INVALID_PAGINATION = "invalid_pagination"
+    DIAGNOSTIC_UNAVAILABLE = "diagnostic_unavailable"
+
+
+_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
+    401: {"model": ExecutionErrorOut, "description": "Authentication required"},
+    403: {"model": ExecutionErrorOut, "description": "Tenant context is not authorized"},
+    404: {"model": ExecutionErrorOut, "description": "Execution was not found"},
+    422: {"model": ExecutionErrorOut, "description": "Invalid query or pagination"},
+    503: {
+        "model": ExecutionErrorOut,
+        "description": "Durable execution history is unavailable or corrupted",
+    },
+}
+
+
+def _redact_json(value: Any) -> Any:
+    """Redact conventional credential fields at the API boundary.
+
+    W100 records are strict JSON.  This small boundary policy prevents the
+    API from returning common credential keys while leaving domain payloads
+    and forecast values intact; it does not classify arbitrary business data.
+    """
+
+    if isinstance(value, dict):
+        return {
+            key: "[REDACTED]" if str(key).casefold() in _REDACTED_KEYS else _redact_json(item)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_redact_json(item) for item in value]
+    return value
+
+
+def get_tenant_context() -> TenantContext:
+    """Return the configured tenant, failing closed when no context exists."""
+
+    tenant_id = settings.trendx_default_tenant_id.strip()
+    if not tenant_id:
+        raise TenantContextError(
+            status_code=403,
+            detail=_ApiErrorCode.TENANT_CONTEXT_UNAVAILABLE.value,
+        )
+    return TenantContext(tenant_id=tenant_id)
+
+
+TenantContextDep = Annotated[TenantContext, Depends(get_tenant_context)]
+
+
+def get_execution_history_service(request: Request) -> ExecutionHistoryService:
+    """Resolve the read-only service supplied by application wiring."""
+
+    factory = getattr(request.app.state, "execution_history_service_factory", None)
+    if not callable(factory):
+        raise HTTPException(
+            status_code=503,
+            detail=_ApiErrorCode.EXECUTION_HISTORY_UNAVAILABLE.value,
+        )
+    try:
+        service = cast(Callable[[], ExecutionHistoryService | None], factory)()
+    except (ExecutionStoreError, OSError, UnicodeError) as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=_ApiErrorCode.EXECUTION_HISTORY_UNAVAILABLE.value,
+        ) from exc
+    if service is None:
+        raise HTTPException(
+            status_code=503,
+            detail=_ApiErrorCode.EXECUTION_HISTORY_UNAVAILABLE.value,
+        )
+    return service
+
+
+ExecutionHistoryServiceDep = Annotated[
+    ExecutionHistoryService,
+    Depends(get_execution_history_service),
+]
+
+
+def build_execution_query(
+    tenant_context: TenantContextDep,
+    tenant_id: str | None = Query(None),
+    entity_type: str | None = Query(None),
+    entity_id: str | None = Query(None),
+    target_metric: str | None = Query(None),
+    execution_id: str | None = Query(None),
+    reference_key: str | None = Query(None),
+    model_id: str | None = Query(None),
+    model_version: str | None = Query(None),
+    algorithm: str | None = Query(None),
+    feature_schema_version: str | None = Query(None),
+    feature_schema_fingerprint: str | None = Query(None),
+    status: str | None = Query(None),
+    created_at_from: str | None = Query(None),
+    created_at_to: str | None = Query(None),
+    completed_at_from: str | None = Query(None),
+    completed_at_to: str | None = Query(None),
+    limit: int = Query(100),
+    offset: int = Query(0),
+) -> ExecutionQuery:
+    if tenant_id is not None and tenant_id != tenant_context.tenant_id:
+        raise HTTPException(status_code=403, detail=_ApiErrorCode.TENANT_FORBIDDEN.value)
+    if limit < 1 or limit > MAX_HISTORY_PAGE_SIZE or offset < 0:
+        raise HTTPException(
+            status_code=422,
+            detail=_ApiErrorCode.INVALID_PAGINATION.value,
+        )
+    try:
+        return ExecutionQuery(
+            tenant_id=tenant_context.tenant_id,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            target_metric=target_metric,
+            execution_id=execution_id,
+            reference_key=reference_key,
+            model_id=model_id,
+            model_version=model_version,
+            algorithm=algorithm,
+            feature_schema_version=feature_schema_version,
+            feature_schema_fingerprint=feature_schema_fingerprint,
+            status=status,
+            created_at_from=created_at_from,
+            created_at_to=created_at_to,
+            completed_at_from=completed_at_from,
+            completed_at_to=completed_at_to,
+            limit=limit,
+            offset=offset,
+        )
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=_ApiErrorCode.INVALID_QUERY.value,
+        ) from exc
+
+
+ExecutionQueryDep = Annotated[ExecutionQuery, Depends(build_execution_query)]
+
+
+def _service_unavailable(exc: ExecutionStoreError) -> HTTPException:
+    return HTTPException(
+        status_code=503,
+        detail=_ApiErrorCode.EXECUTION_HISTORY_UNAVAILABLE.value,
+    )
+
+
+def _authorized_record(
+    record: ExecutionRecord | None,
+    tenant_context: TenantContext,
+) -> ExecutionRecord:
+    if record is None or record.tenant_id != tenant_context.tenant_id:
+        raise HTTPException(status_code=404, detail=_ApiErrorCode.EXECUTION_NOT_FOUND.value)
+    return record
+
+
+router = APIRouter(prefix="/api/v1/forecast/executions", tags=["forecast-executions"])
+
+
+@router.get(
+    "",
+    response_model=ExecutionListOut,
+    summary="List forecast executions",
+    responses=_ERROR_RESPONSES,
+)
+def list_executions(
+    query: ExecutionQueryDep,
+    service: ExecutionHistoryServiceDep,
+) -> ExecutionListOut:
+    try:
+        page = service.query(query)
+    except ExecutionStoreError as exc:
+        raise _service_unavailable(exc) from exc
+    return ExecutionListOut(
+        items=[ExecutionOut.from_record(record) for record in page.records],
+        total=page.total,
+        limit=page.limit or MAX_HISTORY_PAGE_SIZE,
+        offset=page.offset,
+        has_more=page.has_more,
+    )
+
+
+@router.get(
+    "/statistics",
+    response_model=ExecutionStatsOut,
+    summary="Forecast execution statistics",
+    responses=_ERROR_RESPONSES,
+)
+def execution_statistics(
+    query: ExecutionQueryDep,
+    service: ExecutionHistoryServiceDep,
+) -> ExecutionStatsOut:
+    try:
+        return ExecutionStatsOut.from_statistics(service.statistics(query))
+    except ExecutionStoreError as exc:
+        raise _service_unavailable(exc) from exc
+
+
+@router.get(
+    "/reference/{reference_key}",
+    response_model=ExecutionOut,
+    summary="Get a forecast execution by reference key",
+    responses=_ERROR_RESPONSES,
+)
+def get_execution_by_reference(
+    reference_key: str,
+    tenant_context: TenantContextDep,
+    service: ExecutionHistoryServiceDep,
+) -> ExecutionOut:
+    try:
+        record = service.get_by_reference_key(reference_key)
+    except ExecutionStoreError as exc:
+        raise _service_unavailable(exc) from exc
+    return ExecutionOut.from_record(_authorized_record(record, tenant_context))
+
+
+@router.get(
+    "/{execution_id}/diagnostic",
+    response_model=ExecutionDiagnosticOut,
+    summary="Get failure diagnostics for a forecast execution",
+    responses=_ERROR_RESPONSES,
+)
+def get_execution_diagnostic(
+    execution_id: str,
+    tenant_context: TenantContextDep,
+    service: ExecutionHistoryServiceDep,
+) -> ExecutionDiagnosticOut:
+    try:
+        record = _authorized_record(service.get(execution_id), tenant_context)
+        if record.status is not ExecutionStatus.FAILED:
+            return ExecutionDiagnosticOut(execution_id=record.execution_id, status=record.status)
+        diagnostics = service.failure_diagnostics(
+            ExecutionQuery(tenant_id=tenant_context.tenant_id, execution_id=execution_id)
+        )
+    except ExecutionStoreError as exc:
+        raise _service_unavailable(exc) from exc
+    if not diagnostics:
+        raise HTTPException(
+            status_code=503,
+            detail=_ApiErrorCode.DIAGNOSTIC_UNAVAILABLE.value,
+        )
+    return ExecutionDiagnosticOut(
+        execution_id=record.execution_id,
+        status=record.status,
+        failure=FailureDiagnosticOut.from_diagnostic(diagnostics[0]),
+    )
+
+
+@router.get(
+    "/{execution_id}",
+    response_model=ExecutionOut,
+    summary="Get a forecast execution by ID",
+    responses=_ERROR_RESPONSES,
+)
+def get_execution(
+    execution_id: str,
+    tenant_context: TenantContextDep,
+    service: ExecutionHistoryServiceDep,
+) -> ExecutionOut:
+    try:
+        record = service.get(execution_id)
+    except ExecutionStoreError as exc:
+        raise _service_unavailable(exc) from exc
+    return ExecutionOut.from_record(_authorized_record(record, tenant_context))
+
+
+__all__ = [
+    "ExecutionDiagnosticOut",
+    "ExecutionErrorOut",
+    "ExecutionHistoryService",
+    "ExecutionListOut",
+    "ExecutionOut",
+    "ExecutionStatsOut",
+    "FailureDiagnosticOut",
+    "TenantContext",
+    "TenantContextError",
+    "build_execution_query",
+    "get_execution_history_service",
+    "get_tenant_context",
+    "router",
+]

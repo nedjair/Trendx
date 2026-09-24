@@ -112,6 +112,10 @@ class Settings(BaseSettings):
     )
 
     trendx_default_tenant_id: str = Field(default="", alias="TRENDX_DEFAULT_TENANT_ID")
+    trendx_execution_history_path: str = Field(
+        default="",
+        alias="TRENDX_EXECUTION_HISTORY_PATH",
+    )
     trendx_default_customer_id: str = Field(default="", alias="TRENDX_DEFAULT_CUSTOMER_ID")
     trendx_default_user_id: str = Field(default="", alias="TRENDX_DEFAULT_USER_ID")
 

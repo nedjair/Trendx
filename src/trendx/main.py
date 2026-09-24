@@ -6,6 +6,7 @@ import sys
 import time
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -35,6 +36,9 @@ from trendx.database.repositories import (
     TrendzTaskRepository,
 )
 from trendx.explorer.router import router as explorer_router
+from trendx.forecasting.api import router as forecast_execution_router
+from trendx.forecasting.execution import DurableExecutionStore, ExecutionStoreError
+from trendx.forecasting.history import ExecutionHistoryService
 from trendx.services.tasks import PENDING_STATE, TaskService
 
 
@@ -72,6 +76,7 @@ app.add_middleware(
 )
 
 app.include_router(explorer_router)
+app.include_router(forecast_execution_router)
 
 
 # ── Authentication ────────────────────────────────────────────────────
@@ -109,6 +114,24 @@ async def require_auth_middleware(request: Request, call_next):
                 status_code=401,
             )
     return await call_next(request)
+
+
+def _execution_history_service_factory() -> ExecutionHistoryService:
+    """Build a fresh read-only history service from the configured datastore."""
+
+    configured_path = settings.trendx_execution_history_path.strip()
+    if not configured_path:
+        msg = "Forecast execution history is not configured"
+        raise ExecutionStoreError(msg)
+    history_path = Path(configured_path)
+    if not history_path.is_file():
+        msg = "Forecast execution history datastore is unavailable"
+        raise ExecutionStoreError(msg)
+    return ExecutionHistoryService(DurableExecutionStore(history_path))
+
+
+# The factory is lazy: importing the API never creates or mutates a datastore.
+app.state.execution_history_service_factory = _execution_history_service_factory
 
 
 @app.on_event("startup")
