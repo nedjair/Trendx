@@ -10,7 +10,10 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse
 from loguru import logger
 from pydantic import BaseModel, Field
@@ -39,6 +42,8 @@ from trendx.explorer.router import router as explorer_router
 from trendx.forecasting.api import router as forecast_execution_router
 from trendx.forecasting.execution import DurableExecutionStore, ExecutionStoreError
 from trendx.forecasting.history import ExecutionHistoryService
+from trendx.forecasting.lifecycle import FileSystemArchiveStore
+from trendx.forecasting.recovery import RecoveryService
 from trendx.services.tasks import PENDING_STATE, TaskService
 
 
@@ -79,6 +84,34 @@ app.include_router(explorer_router)
 app.include_router(forecast_execution_router)
 
 
+def _openapi() -> dict[str, Any]:
+    """Document the existing middleware authentication for W109."""
+
+    if app.openapi_schema is not None:
+        return app.openapi_schema
+    schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
+    components = schema.setdefault("components", {})
+    security_schemes = components.setdefault("securitySchemes", {})
+    security_schemes.setdefault(
+        "BearerAuth",
+        {"type": "http", "scheme": "bearer"},
+    )
+    security_schemes.setdefault(
+        "ApiKeyAuth",
+        {"type": "apiKey", "in": "header", "name": "X-API-Key"},
+    )
+    app.openapi_schema = schema
+    return schema
+
+
+app.openapi = _openapi  # type: ignore[method-assign]
+
+
 # ── Authentication ────────────────────────────────────────────────────
 # Tous les endpoints /api/v1/* exigent un jeton (Bearer ou X-API-Key),
 # vérifié en temps constant. Endpoints publics : infrastructure seulement.
@@ -116,6 +149,19 @@ async def require_auth_middleware(request: Request, call_next):
     return await call_next(request)
 
 
+@app.exception_handler(RequestValidationError)
+async def _sanitize_recovery_validation(
+    request: Request,
+    exc: RequestValidationError,
+):
+    """Keep restore validation errors free of request payloads and paths."""
+
+    if request.url.path == "/api/v1/forecast/executions/restore":
+        logger.info("execution_history operation=restore outcome=invalid_request status_code=422")
+        return JSONResponse(status_code=422, content={"detail": "invalid_request"})
+    return await request_validation_exception_handler(request, exc)
+
+
 def _execution_history_service_factory() -> ExecutionHistoryService:
     """Build a fresh read-only history service from the configured datastore."""
 
@@ -130,8 +176,32 @@ def _execution_history_service_factory() -> ExecutionHistoryService:
     return ExecutionHistoryService(DurableExecutionStore(history_path))
 
 
-# The factory is lazy: importing the API never creates or mutates a datastore.
+def _execution_recovery_service_factory() -> RecoveryService:
+    """Build W108 recovery around server-configured, existing local stores."""
+
+    configured_history_path = settings.trendx_execution_history_path.strip()
+    configured_archive_path = settings.trendx_execution_archive_path.strip()
+    if not configured_history_path or not configured_archive_path:
+        msg = "Execution history recovery is not configured"
+        raise ExecutionStoreError(msg)
+    history_path = Path(configured_history_path)
+    archive_path = Path(configured_archive_path)
+    if history_path.is_symlink() or not history_path.is_file():
+        msg = "Forecast execution history datastore is unavailable"
+        raise ExecutionStoreError(msg)
+    if archive_path.is_symlink() or not archive_path.is_dir():
+        msg = "Execution history archive store is unavailable"
+        raise ExecutionStoreError(msg)
+    return RecoveryService(
+        DurableExecutionStore(history_path, create_if_missing=False),
+        FileSystemArchiveStore(archive_path),
+        lambda: datetime.now(UTC),
+    )
+
+
+# The factories are lazy: importing the API never creates or mutates a datastore.
 app.state.execution_history_service_factory = _execution_history_service_factory
+app.state.execution_recovery_service_factory = _execution_recovery_service_factory
 
 
 @app.on_event("startup")

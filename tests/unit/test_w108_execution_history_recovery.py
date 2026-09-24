@@ -644,9 +644,10 @@ def test_w108_openapi() -> None:
         response = client.get("/openapi.json")
     assert response.status_code == 200
     paths = response.json()["paths"]
-    assert "/api/v1/forecast/executions/restore" not in paths
-    assert "delete" not in paths.get("/api/v1/forecast/executions/restore", {})
-    assert "get" not in paths.get("/api/v1/forecast/executions/restore", {})
+    restore_path = paths["/api/v1/forecast/executions/restore"]
+    assert set(restore_path) == {"post"}
+    assert "delete" not in restore_path
+    assert "get" not in restore_path
 
 
 @pytest.mark.unit

@@ -593,12 +593,15 @@ class DurableExecutionStore:
 
     FORMAT_VERSION = 1
 
-    def __init__(self, path: str | Path) -> None:
+    def __init__(self, path: str | Path, *, create_if_missing: bool = True) -> None:
         self._path = Path(path)
         self._lock_path = self._path.with_name(f".{self._path.name}.lock")
         self._path.parent.mkdir(parents=True, exist_ok=True)
         with self._locked():
             if not self._path.exists():
+                if not create_if_missing:
+                    msg = "Durable execution store is unavailable"
+                    raise ExecutionStoreError(msg)
                 self._write_unlocked({})
             else:
                 self._read_unlocked()

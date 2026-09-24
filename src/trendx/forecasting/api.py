@@ -1,8 +1,9 @@
-"""W101/W104 — operational read-only API for forecast execution history.
+"""W101/W104/W109 — forecast execution history API.
 
-The router delegates exclusively to :class:`ExecutionHistoryService`.  The
-application wiring supplies the service through ``app.state``; this module
-never reads or writes an ExecutionStore directly.
+Read routes delegate exclusively to :class:`ExecutionHistoryService`.  The
+single W109 recovery route delegates exclusively to W108
+:class:`RecoveryService`.  Application wiring supplies both services through
+``app.state``; this module never reads or writes an ExecutionStore directly.
 """
 
 from __future__ import annotations
@@ -10,11 +11,11 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Annotated, Any, cast
+from typing import Annotated, Any, Literal, cast
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from loguru import logger
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from trendx.config import settings
 from trendx.forecasting.analytics import (
     TREND_CONTRACT,
@@ -28,6 +29,15 @@ from trendx.forecasting.history import (
     ExecutionQuery,
     ExecutionStatistics,
     FailureDiagnostic,
+)
+from trendx.forecasting.recovery import (
+    ExecutionRestoreMetadata,
+    ExecutionRestoreOutcome,
+    ExecutionRestoreRequest,
+    ExecutionRestoreResult,
+    ExecutionRestoreStatus,
+    RecoveryService,
+    RestoreConflictPolicy,
 )
 from trendx.forecasting.reporting import (
     REPORT_CONTRACT_VERSION,
@@ -48,6 +58,7 @@ _REDACTED_KEYS = frozenset(
         "token",
     }
 )
+_RECOVERY_API_PLACEHOLDERS = frozenset({"", "CHANGE_ME", "change-me", "changeme"})
 
 
 class TenantContextError(HTTPException):
@@ -373,6 +384,113 @@ class ExecutionErrorOut(BaseModel):
     detail: str
 
 
+def _safe_response_identifier(value: str) -> str:
+    """Prevent client-controlled filesystem-looking identifiers from echoing."""
+
+    normalized = value.replace("\\", "/")
+    if (
+        "\x00" in value
+        or "/" in normalized
+        or (len(normalized) >= 2 and normalized[1] == ":" and normalized[0].isalpha())
+    ):
+        return "[REDACTED]"
+    return value
+
+
+class ExecutionRestoreRequestIn(BaseModel):
+    """Strict HTTP body mapped to the W108 recovery request."""
+
+    model_config = {"extra": "forbid"}
+
+    execution_id: str = Field(min_length=1, max_length=512)
+    tenant_id: str = Field(min_length=1, max_length=256)
+    expected_archive_checksum: str = Field(
+        min_length=64,
+        max_length=64,
+        pattern=r"^[0-9a-f]{64}$",
+    )
+    conflict_policy: Literal["FAIL_IF_EXISTS"]
+
+    @field_validator("execution_id", "tenant_id")
+    @classmethod
+    def reject_invalid_identifier(cls, value: str) -> str:
+        if "\x00" in value:
+            msg = "null bytes are not allowed"
+            raise ValueError(msg)
+        if not value.strip():
+            msg = "identifier must not be blank"
+            raise ValueError(msg)
+        return value
+
+    def to_domain(self) -> ExecutionRestoreRequest:
+        return ExecutionRestoreRequest(
+            execution_id=self.execution_id,
+            tenant_id=self.tenant_id,
+            expected_archive_checksum=self.expected_archive_checksum,
+            conflict_policy=RestoreConflictPolicy.FAIL_IF_EXISTS,
+        )
+
+
+class ExecutionRestoreMetadataOut(BaseModel):
+    archive_format_version: int
+    archive_checksum: str
+    restore_timestamp: str
+    operation: str
+    version: str
+
+    @classmethod
+    def from_metadata(
+        cls,
+        metadata: ExecutionRestoreMetadata,
+    ) -> ExecutionRestoreMetadataOut:
+        return cls(
+            archive_format_version=metadata.archive_format_version,
+            archive_checksum=metadata.archive_checksum,
+            restore_timestamp=metadata.restore_timestamp,
+            operation=metadata.operation,
+            version=metadata.version,
+        )
+
+
+class ExecutionRestoreResultOut(BaseModel):
+    execution_id: str
+    tenant_id: str
+    status: ExecutionRestoreStatus
+    outcome: ExecutionRestoreOutcome
+    archive_verified: bool
+    record_restored: bool
+    already_present: bool
+    conflict: bool
+    reason: str
+    archive_format_version: int | None = None
+    archive_checksum: str | None = None
+    restore_metadata: ExecutionRestoreMetadataOut | None = None
+
+    @classmethod
+    def from_result(cls, result: ExecutionRestoreResult) -> ExecutionRestoreResultOut:
+        return cls(
+            execution_id=_safe_response_identifier(result.execution_id),
+            tenant_id=_safe_response_identifier(result.tenant_id),
+            status=result.status,
+            outcome=result.outcome,
+            archive_verified=result.archive_verified,
+            record_restored=result.record_restored,
+            already_present=result.already_present,
+            conflict=result.conflict,
+            reason=result.reason,
+            archive_format_version=result.archive_format_version,
+            archive_checksum=result.archive_checksum,
+            restore_metadata=(
+                ExecutionRestoreMetadataOut.from_metadata(result.metadata)
+                if result.metadata is not None
+                else None
+            ),
+        )
+
+
+ExecutionRestoreErrorOut = ExecutionRestoreResultOut | ExecutionErrorOut
+
+
 def _analytics_out(result: ExecutionAnalytics) -> ExecutionAnalyticsOut:
     return ExecutionAnalyticsOut(
         tenant_id=result.tenant_id,
@@ -464,6 +582,8 @@ class _ApiErrorCode(str, Enum):
     INVALID_QUERY = "invalid_query"
     INVALID_PAGINATION = "invalid_pagination"
     DIAGNOSTIC_UNAVAILABLE = "diagnostic_unavailable"
+    RECOVERY_SERVICE_UNAVAILABLE = "recovery_service_unavailable"
+    RECOVERY_AUTH_NOT_CONFIGURED = "recovery_authentication_not_configured"
 
 
 def _observe(operation: str, outcome: str, status_code: int) -> None:
@@ -485,6 +605,30 @@ _ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     503: {
         "model": ExecutionErrorOut,
         "description": "Durable execution history is unavailable or corrupted",
+    },
+}
+
+_RESTORE_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
+    401: {"model": ExecutionErrorOut, "description": "Authentication required"},
+    403: {
+        "model": ExecutionRestoreErrorOut,
+        "description": "Tenant context is not authorized",
+    },
+    404: {
+        "model": ExecutionRestoreResultOut,
+        "description": "Archive was not found",
+    },
+    409: {
+        "model": ExecutionRestoreResultOut,
+        "description": "Active execution identity conflict",
+    },
+    422: {
+        "model": ExecutionRestoreErrorOut,
+        "description": "Invalid request or archive",
+    },
+    503: {
+        "model": ExecutionRestoreErrorOut,
+        "description": "Recovery backend is unavailable",
     },
 }
 
@@ -523,6 +667,35 @@ def get_tenant_context() -> TenantContext:
 TenantContextDep = Annotated[TenantContext, Depends(get_tenant_context)]
 
 
+def _recovery_api_is_configured() -> bool:
+    token = settings.trendx_api_token.get_secret_value().strip()
+    return bool(token) and token not in _RECOVERY_API_PLACEHOLDERS
+
+
+def validate_restore_request(
+    request: Request,
+    payload: ExecutionRestoreRequestIn,
+    tenant_context: TenantContextDep,
+) -> None:
+    """Validate HTTP-only controls before resolving the recovery backend."""
+
+    if request.query_params:
+        _observe("restore", "invalid_request", 422)
+        raise HTTPException(status_code=422, detail="invalid_request")
+    if not _recovery_api_is_configured():
+        _observe("restore", "authentication_not_configured", 503)
+        raise HTTPException(
+            status_code=503,
+            detail=_ApiErrorCode.RECOVERY_AUTH_NOT_CONFIGURED.value,
+        )
+    if payload.tenant_id != tenant_context.tenant_id:
+        _observe("restore", "tenant_forbidden", 403)
+        raise HTTPException(
+            status_code=403,
+            detail=_ApiErrorCode.TENANT_FORBIDDEN.value,
+        )
+
+
 def get_execution_history_service(request: Request) -> ExecutionHistoryService:
     """Resolve the read-only service supplied by application wiring."""
 
@@ -553,6 +726,45 @@ def get_execution_history_service(request: Request) -> ExecutionHistoryService:
 ExecutionHistoryServiceDep = Annotated[
     ExecutionHistoryService,
     Depends(get_execution_history_service),
+]
+
+
+def get_execution_recovery_service(request: Request) -> RecoveryService:
+    """Resolve the W108 recovery service from application wiring."""
+
+    if not _recovery_api_is_configured():
+        _observe("restore", "authentication_not_configured", 503)
+        raise HTTPException(
+            status_code=503,
+            detail=_ApiErrorCode.RECOVERY_AUTH_NOT_CONFIGURED.value,
+        )
+    factory = getattr(request.app.state, "execution_recovery_service_factory", None)
+    if not callable(factory):
+        _observe("restore", "backend_unavailable", 503)
+        raise HTTPException(
+            status_code=503,
+            detail=_ApiErrorCode.RECOVERY_SERVICE_UNAVAILABLE.value,
+        )
+    try:
+        service = cast(Callable[[], RecoveryService | None], factory)()
+    except Exception as exc:  # adapter boundary: never expose a backend cause
+        _observe("restore", "backend_unavailable", 503)
+        raise HTTPException(
+            status_code=503,
+            detail=_ApiErrorCode.RECOVERY_SERVICE_UNAVAILABLE.value,
+        ) from exc
+    if service is None or not callable(getattr(service, "restore", None)):
+        _observe("restore", "backend_unavailable", 503)
+        raise HTTPException(
+            status_code=503,
+            detail=_ApiErrorCode.RECOVERY_SERVICE_UNAVAILABLE.value,
+        )
+    return service
+
+
+RecoveryServiceDep = Annotated[
+    RecoveryService,
+    Depends(get_execution_recovery_service),
 ]
 
 
@@ -740,6 +952,42 @@ def _authorized_record(
     return record
 
 
+def _restore_status_code(status: ExecutionRestoreStatus) -> int:
+    return {
+        ExecutionRestoreStatus.RESTORED: 200,
+        ExecutionRestoreStatus.ALREADY_PRESENT: 200,
+        ExecutionRestoreStatus.VERIFIED: 503,
+        ExecutionRestoreStatus.CONFLICT: 409,
+        ExecutionRestoreStatus.TENANT_FORBIDDEN: 403,
+        ExecutionRestoreStatus.ARCHIVE_NOT_FOUND: 404,
+        ExecutionRestoreStatus.INVALID_ARCHIVE: 422,
+        ExecutionRestoreStatus.INTEGRITY_FAILURE: 422,
+        ExecutionRestoreStatus.RESTORE_FAILED: 503,
+    }[status]
+
+
+def _restore_outcome(status: ExecutionRestoreStatus) -> str:
+    return {
+        ExecutionRestoreStatus.RESTORED: "success",
+        ExecutionRestoreStatus.ALREADY_PRESENT: "already_present",
+        ExecutionRestoreStatus.VERIFIED: "backend_unavailable",
+        ExecutionRestoreStatus.CONFLICT: "conflict",
+        ExecutionRestoreStatus.TENANT_FORBIDDEN: "tenant_forbidden",
+        ExecutionRestoreStatus.ARCHIVE_NOT_FOUND: "archive_not_found",
+        ExecutionRestoreStatus.INVALID_ARCHIVE: "invalid_archive",
+        ExecutionRestoreStatus.INTEGRITY_FAILURE: "invalid_archive",
+        ExecutionRestoreStatus.RESTORE_FAILED: "backend_unavailable",
+    }[status]
+
+
+def reject_reserved_restore_read(request: Request) -> None:
+    """Keep the literal ``restore`` path unavailable to read methods."""
+
+    if request.method in {"GET", "HEAD"} and request.url.path.endswith("/restore"):
+        _observe("get", "method_not_allowed", 405)
+        raise HTTPException(status_code=405, detail="method_not_allowed")
+
+
 router = APIRouter(prefix="/api/v1/forecast/executions", tags=["forecast-executions"])
 
 
@@ -850,6 +1098,70 @@ def execution_report(
     return response
 
 
+@router.post(
+    "/restore",
+    response_model=ExecutionRestoreResultOut,
+    summary="Restore one verified archived execution",
+    description=(
+        "Explicit, authenticated W108 recovery operation. The archive is selected by "
+        "execution_id through the server-configured ArchiveStore; clients cannot provide "
+        "an archive path. Only FAIL_IF_EXISTS is accepted."
+    ),
+    responses=_RESTORE_ERROR_RESPONSES,
+    dependencies=[Depends(validate_restore_request)],
+    openapi_extra={
+        "security": [
+            {"BearerAuth": []},
+            {"ApiKeyAuth": []},
+        ]
+    },
+)
+def restore_execution(
+    payload: ExecutionRestoreRequestIn,
+    response: Response,
+    tenant_context: TenantContextDep,
+    service: RecoveryServiceDep,
+) -> ExecutionRestoreResultOut:
+    if payload.tenant_id != tenant_context.tenant_id:
+        _observe("restore", "tenant_forbidden", 403)
+        raise HTTPException(
+            status_code=403,
+            detail=_ApiErrorCode.TENANT_FORBIDDEN.value,
+        )
+    try:
+        domain_request = payload.to_domain()
+    except (TypeError, ValueError) as exc:
+        _observe("restore", "invalid_request", 422)
+        raise HTTPException(status_code=422, detail="invalid_request") from exc
+    try:
+        result = service.restore(domain_request)
+    except Exception as exc:  # adapter boundary: never expose a backend cause
+        _observe("restore", "backend_unavailable", 503)
+        raise HTTPException(
+            status_code=503,
+            detail=_ApiErrorCode.RECOVERY_SERVICE_UNAVAILABLE.value,
+        ) from exc
+    if not isinstance(result, ExecutionRestoreResult):
+        _observe("restore", "backend_unavailable", 503)
+        raise HTTPException(
+            status_code=503,
+            detail=_ApiErrorCode.RECOVERY_SERVICE_UNAVAILABLE.value,
+        )
+    try:
+        status_code = _restore_status_code(result.status)
+        response_body = ExecutionRestoreResultOut.from_result(result)
+        outcome = _restore_outcome(result.status)
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
+        _observe("restore", "backend_unavailable", 503)
+        raise HTTPException(
+            status_code=503,
+            detail=_ApiErrorCode.RECOVERY_SERVICE_UNAVAILABLE.value,
+        ) from exc
+    response.status_code = status_code
+    _observe("restore", outcome, status_code)
+    return response_body
+
+
 @router.get(
     "/reference/{reference_key}",
     response_model=ExecutionOut,
@@ -919,6 +1231,7 @@ def get_execution_diagnostic(
     response_model=ExecutionOut,
     summary="Get a forecast execution by ID",
     responses=_ERROR_RESPONSES,
+    dependencies=[Depends(reject_reserved_restore_read)],
 )
 def get_execution(
     execution_id: str,
@@ -945,6 +1258,11 @@ __all__ = [
     "ExecutionReportFiltersOut",
     "ExecutionReportPaginationOut",
     "ExecutionReportTenantContextOut",
+    "ExecutionRestoreErrorOut",
+    "ExecutionRestoreMetadataOut",
+    "ExecutionRestoreRequest",
+    "ExecutionRestoreRequestIn",
+    "ExecutionRestoreResultOut",
     "ReportDimensionsOut",
     "ReportTemporalOut",
     "REPORT_CONTRACT_VERSION",
@@ -963,6 +1281,7 @@ __all__ = [
     "build_analytics_query",
     "build_execution_query",
     "get_execution_history_service",
+    "get_execution_recovery_service",
     "get_tenant_context",
     "router",
 ]
