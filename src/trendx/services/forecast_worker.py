@@ -64,12 +64,24 @@ def execute_forecast_task(
     request = payload_to_request(payload)
     active = pipeline or ForecastPipeline()
     outcome = active.run(
-        request, frames or {}, execution_id=execution_id or str(payload.get("execution_id", ""))
+        request,
+        frames or {},
+        execution_id=execution_id or str(payload.get("execution_id", "")),
+        reference_key=str(payload.get("reference_key", "")),
     )
-    if outcome.status != "ok" or outcome.envelope is None:
+    if outcome.status != "ok":
         msg = f"Forecast pipeline refused: {outcome.reason}"
         raise RuntimeError(msg)
-    result: dict[str, Any] = outcome.envelope.to_dict()
+    if outcome.envelope is not None:
+        result: dict[str, Any] = outcome.envelope.to_dict()
+    elif outcome.duplicate and outcome.execution_record is not None:
+        result = dict(outcome.execution_record.result or {})
+        if not result:
+            msg = "Duplicate execution has no persisted result"
+            raise RuntimeError(msg)
+    else:
+        msg = f"Forecast pipeline returned no envelope: {outcome.reason}"
+        raise RuntimeError(msg)
     result["reference_key"] = payload.get("reference_key", "")
     return result
 

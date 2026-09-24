@@ -19,8 +19,10 @@ logic in this module.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from typing import Any
+from uuid import uuid4
 
 import pandas as pd
 from trendx.forecasting.artifact import (
@@ -31,6 +33,13 @@ from trendx.forecasting.artifact import (
 )
 from trendx.forecasting.contract import Algorithm, ForecastRequest
 from trendx.forecasting.dataset import DatasetBuilder, ForecastDataset
+from trendx.forecasting.execution import (
+    ExecutionProvenance,
+    ExecutionRecord,
+    ExecutionStatus,
+    ExecutionStore,
+    ExecutionStoreError,
+)
 from trendx.forecasting.registry import (
     ChampionRegistry,
     Compatibility,
@@ -52,6 +61,9 @@ class PipelineOutcome:
     resolved: ResolvedFeatureSet | None = None
     dataset_meta: dict[str, Any] = field(default_factory=dict)
     envelope: Any = field(default=None)
+    execution_record: ExecutionRecord | None = None
+    served_model: RegisteredModel | None = None
+    duplicate: bool = False
 
 
 class ForecastPipeline:
@@ -66,6 +78,7 @@ class ForecastPipeline:
         champion_selector: ChampionSelector | None = None,
         artifact_store: ModelArtifactStore | None = None,
         champion_registry: ChampionRegistry | None = None,
+        execution_store: ExecutionStore | None = None,
     ) -> None:
         self._resolver = resolver or FeatureResolver()
         self._builder = builder or DatasetBuilder()
@@ -74,8 +87,74 @@ class ForecastPipeline:
         self._selector = champion_selector
         self._artifact_store = artifact_store
         self._champion_registry = champion_registry
+        self._execution_store = execution_store
 
     def run(
+        self,
+        request: ForecastRequest,
+        frames: Mapping[tuple[str, str], pd.DataFrame] | None = None,
+        execution_id: str = "",
+        reference_key: str = "",
+    ) -> PipelineOutcome:
+        """Run one forecast and, when configured, persist its execution record."""
+        if self._execution_store is None:
+            return self._run_forecast(request, frames, execution_id)
+
+        try:
+            record, early = self._begin_execution(request, execution_id, reference_key)
+        except ExecutionStoreError:
+            return PipelineOutcome(status="refused", reason="execution-store-error")
+        if early is not None:
+            return early
+        if record is None:  # pragma: no cover - defensive store contract guard
+            return PipelineOutcome(status="refused", reason="execution-store-error")
+
+        try:
+            outcome = self._run_forecast(request, frames, record.execution_id)
+        except Exception as exc:
+            try:
+                failed = self._mark_execution_failed(
+                    record,
+                    request,
+                    reason="pipeline-error",
+                    error_reason=str(exc)[:500],
+                )
+            except ExecutionStoreError:
+                return PipelineOutcome(
+                    status="refused",
+                    reason="execution-store-error",
+                    execution_record=record,
+                )
+            return PipelineOutcome(
+                status="refused",
+                reason="pipeline-error",
+                execution_record=failed,
+            )
+
+        try:
+            if outcome.status == "ok" and outcome.envelope is not None:
+                record = self._mark_execution_success(record, request, outcome)
+            else:
+                record = self._mark_execution_failed(
+                    record,
+                    request,
+                    reason=outcome.reason or "pipeline-refused",
+                    error_reason=outcome.reason or "forecast pipeline refused",
+                    outcome=outcome,
+                )
+        except ExecutionStoreError:
+            return PipelineOutcome(
+                status="refused",
+                reason="execution-store-error",
+                execution_record=record,
+                compatibility=outcome.compatibility,
+                resolved=outcome.resolved,
+                dataset_meta=outcome.dataset_meta,
+            )
+        outcome = replace(outcome, execution_record=record)
+        return outcome
+
+    def _run_forecast(
         self,
         request: ForecastRequest,
         frames: Mapping[tuple[str, str], pd.DataFrame] | None = None,
@@ -146,6 +225,153 @@ class ForecastPipeline:
             resolved=resolved,
             dataset_meta=dataset.metadata,
             envelope=envelope,
+            served_model=model,
+        )
+
+    def _begin_execution(
+        self,
+        request: ForecastRequest,
+        execution_id: str,
+        reference_key: str,
+    ) -> tuple[ExecutionRecord | None, PipelineOutcome | None]:
+        store = self._execution_store
+        if store is None:
+            return None, None
+
+        resolved_execution_id = str(execution_id or uuid4().hex)
+        resolved_reference_key = str(reference_key or resolved_execution_id)
+        prior_records = store.list(reference_key=resolved_reference_key)
+        successful = next(
+            (record for record in prior_records if record.status is ExecutionStatus.SUCCESS),
+            None,
+        )
+        if successful is not None:
+            return None, PipelineOutcome(
+                status="ok",
+                reason="duplicate",
+                execution_record=successful,
+                duplicate=True,
+            )
+        active = next(
+            (
+                record
+                for record in prior_records
+                if record.status in (ExecutionStatus.PENDING, ExecutionStatus.RUNNING)
+            ),
+            None,
+        )
+        if active is not None:
+            return None, PipelineOutcome(
+                status="refused",
+                reason="execution-in-progress",
+                execution_record=active,
+            )
+
+        schema = request.feature_schema()
+        record = ExecutionRecord(
+            execution_id=resolved_execution_id,
+            reference_key=resolved_reference_key,
+            tenant_id=request.tenant_id,
+            entity_type=request.entity_type,
+            entity_id=request.entity_id,
+            target_metric=request.target_metric,
+            frequency=request.frequency,
+            horizon=request.horizon,
+            algorithm=request.algorithm.value,
+            feature_schema_version=schema.schema_version,
+            feature_schema_fingerprint=schema.fingerprint(),
+            created_at=datetime.now(UTC).isoformat(),
+            metadata={
+                "source": "forecast-pipeline",
+                "feature_columns": list(schema.names()),
+            },
+        )
+        store.create(record)
+        return store.mark_started(resolved_execution_id), None
+
+    def _execution_provenance(
+        self,
+        request: ForecastRequest,
+        outcome: PipelineOutcome | None = None,
+    ) -> ExecutionProvenance:
+        model = outcome.served_model if outcome is not None else None
+        if model is not None:
+            model_id = model.model_id
+            model_version = model.model_version
+            algorithm = model.algorithm.value
+            schema_version = model.feature_schema_version
+            fingerprint = model.feature_schema_fingerprint
+            artifact_uri = model.model_uri
+        else:
+            schema = request.feature_schema()
+            model_id = ""
+            model_version = ""
+            algorithm = request.algorithm.value
+            schema_version = schema.schema_version
+            fingerprint = schema.fingerprint()
+            artifact_uri = ""
+
+        result_payload = None
+        prediction_count = None
+        metadata = {
+            "feature_columns": list(
+                outcome.dataset_meta.get("feature_columns", request.feature_schema().names())
+                if outcome is not None
+                else request.feature_schema().names()
+            )
+        }
+        if outcome is not None and outcome.envelope is not None:
+            result_payload = outcome.envelope.to_dict()
+            values = result_payload.get("result", {}).get("values", [])
+            prediction_count = len(values) if isinstance(values, list) else None
+        return ExecutionProvenance(
+            model_id=model_id,
+            model_version=model_version,
+            algorithm=algorithm,
+            feature_schema_version=schema_version,
+            feature_schema_fingerprint=fingerprint,
+            artifact_uri=artifact_uri,
+            prediction_count=prediction_count,
+            metadata=metadata,
+            result=result_payload,
+        )
+
+    def _mark_execution_success(
+        self,
+        record: ExecutionRecord,
+        request: ForecastRequest,
+        outcome: PipelineOutcome,
+    ) -> ExecutionRecord:
+        store = self._execution_store
+        if store is None:  # pragma: no cover - guarded by the caller
+            raise ExecutionStoreError("execution store is not configured")
+        return store.mark_success(
+            record.execution_id,
+            self._execution_provenance(request, outcome),
+        )
+
+    def _mark_execution_failed(
+        self,
+        record: ExecutionRecord,
+        request: ForecastRequest,
+        *,
+        reason: str,
+        error_reason: str,
+        outcome: PipelineOutcome | None = None,
+    ) -> ExecutionRecord:
+        store = self._execution_store
+        if store is None:  # pragma: no cover - guarded by the caller
+            raise ExecutionStoreError("execution store is not configured")
+        provenance = self._execution_provenance(request, outcome)
+        provenance = replace(
+            provenance,
+            metadata={**provenance.metadata, "failure_stage": reason},
+        )
+        return store.mark_failed(
+            record.execution_id,
+            error_code=reason or "pipeline-refused",
+            error_reason=error_reason or reason or "forecast pipeline refused",
+            provenance=provenance,
         )
 
     def _run_persisted_champion(
@@ -184,6 +410,7 @@ class ForecastPipeline:
                 compatibility=compatibility,
                 resolved=resolved,
                 dataset_meta=dataset.metadata,
+                served_model=model,
             )
 
         try:
@@ -202,6 +429,7 @@ class ForecastPipeline:
                 compatibility=compatibility,
                 resolved=resolved,
                 dataset_meta=dataset.metadata,
+                served_model=model,
             )
         except ArtifactIntegrityError:
             return PipelineOutcome(
@@ -210,6 +438,7 @@ class ForecastPipeline:
                 compatibility=compatibility,
                 resolved=resolved,
                 dataset_meta=dataset.metadata,
+                served_model=model,
             )
         except ServingError:
             return PipelineOutcome(
@@ -218,6 +447,7 @@ class ForecastPipeline:
                 compatibility=compatibility,
                 resolved=resolved,
                 dataset_meta=dataset.metadata,
+                served_model=model,
             )
         except ArtifactError:
             return PipelineOutcome(
@@ -226,6 +456,7 @@ class ForecastPipeline:
                 compatibility=compatibility,
                 resolved=resolved,
                 dataset_meta=dataset.metadata,
+                served_model=model,
             )
 
         return PipelineOutcome(
@@ -235,6 +466,7 @@ class ForecastPipeline:
             resolved=resolved,
             dataset_meta=dataset.metadata,
             envelope=envelope,
+            served_model=model,
         )
 
     def _select_persisted_champion(
