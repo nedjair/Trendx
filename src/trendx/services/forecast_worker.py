@@ -1,18 +1,18 @@
-"""Generic forecast task execution (W90): W89 payload -> W88 pipeline.
+"""Generic forecast task execution (W90/W97): W89 payload -> W96 pipeline.
 
 Thin orchestration layer only: validate payload, rebuild the W84
-``ForecastRequest``, delegate to the injected W88 ``ForecastPipeline``,
+``ForecastRequest``, delegate to the injected ``ForecastPipeline``, and
 propagate execution provenance. No metric branching, no direct calls to
 FeatureResolver, DatasetBuilder, ModelRegistry, ForecastModel, Prophet,
-MLflow, or ThingsBoard.
+MLflow, persistence internals, or ThingsBoard.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
-from trendx.forecasting.contract import ForecastRequest
+from trendx.forecasting.contract import Algorithm, ForecastRequest
 from trendx.forecasting.pipeline import ForecastPipeline
 
 
@@ -28,16 +28,21 @@ def payload_to_request(payload: Mapping[str, Any]) -> ForecastRequest:
     try:
         from trendx.forecasting.contract import FeatureDefinition
 
+        job_type = str(payload.get("job_type") or "")
+        if job_type not in ("", "trendx_forecast", "generic_forecast"):
+            msg = f"Unsupported forecast job_type: {job_type!r}"
+            raise ValueError(msg)
+        target_metric = payload.get("target_metric") or payload.get("metric_name", "")
         features = tuple(FeatureDefinition.from_dict(f) for f in payload.get("features", []))
         return ForecastRequest(
             tenant_id=payload.get("tenant_id", ""),
             entity_type=payload.get("entity_type", ""),
             entity_id=payload.get("entity_id", ""),
-            target_metric=payload.get("target_metric", ""),
+            target_metric=target_metric,
             horizon=payload.get("horizon", 24),
             frequency=payload.get("frequency", "1h"),
             features=features,
-            algorithm=payload.get("algorithm", "AUTO"),
+            algorithm=Algorithm.coerce(payload.get("algorithm") or "AUTO"),
         )
     except (ValueError, TypeError, KeyError, AttributeError) as exc:
         msg = f"Invalid forecast payload: {exc}"
@@ -47,10 +52,10 @@ def payload_to_request(payload: Mapping[str, Any]) -> ForecastRequest:
 def execute_forecast_task(
     payload: dict[str, Any],
     pipeline: ForecastPipeline | None = None,
-    frames: dict[tuple[str, str], Any] | None = None,
+    frames: Mapping[tuple[str, str], Any] | None = None,
     execution_id: str = "",
 ) -> dict[str, Any]:
-    """Execute one generic forecast task via the W88 pipeline.
+    """Execute one generic forecast task via the injected W96/W88 pipeline.
 
     Returns the envelope dict on success; raises ``ForecastTaskError`` for
     invalid payloads and ``RuntimeError`` for pipeline refusals (the caller
@@ -69,8 +74,45 @@ def execute_forecast_task(
     return result
 
 
+ForecastTaskHandler = Callable[[dict[str, Any], str, str], dict[str, Any]]
+
+
+def build_forecast_task_handler(
+    pipeline: ForecastPipeline,
+    frames: Mapping[tuple[str, str], Any] | None = None,
+) -> ForecastTaskHandler:
+    """Bind a generic W90-style task handler to an injected W96 pipeline.
+
+    The handler owns no model, registry, or persistence knowledge.  The
+    scheduler's execution identifier is preserved when present; otherwise the
+    worker execution/task identifier is used by ``execute_forecast_task``.
+    """
+
+    def _handler(json_job: dict[str, Any], task_id: str, execution_id: str) -> dict[str, Any]:
+        resolved_execution_id = str(json_job.get("execution_id") or execution_id or task_id)
+        return execute_forecast_task(
+            json_job,
+            pipeline,
+            frames,
+            execution_id=resolved_execution_id,
+        )
+
+    return _handler
+
+
 def _run_generic_forecast(
-    json_job: dict[str, Any], task_id: str, execution_id: str
+    json_job: dict[str, Any],
+    task_id: str,
+    execution_id: str,
+    *,
+    pipeline: ForecastPipeline | None = None,
+    frames: Mapping[tuple[str, str], Any] | None = None,
 ) -> dict[str, Any]:
-    """JOB_DISPATCH adapter: (json_job, task_id, execution_id) contract."""
-    return execute_forecast_task(json_job, execution_id=execution_id or task_id)
+    """JOB_DISPATCH adapter with optional injected W96 pipeline."""
+    resolved_execution_id = str(json_job.get("execution_id") or execution_id or task_id)
+    return execute_forecast_task(
+        json_job,
+        pipeline,
+        frames,
+        execution_id=resolved_execution_id,
+    )

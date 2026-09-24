@@ -114,6 +114,7 @@ def build_forecast_payload(
     window: str,
     parent_run_id: str | None = None,
     overrides: dict[str, Any] | None = None,
+    execution_id: str | None = None,
 ) -> dict[str, Any]:
     """Complete, explicitly typed task payload for one (entity, metric) pair."""
     if job_type not in FORECAST_PLAN_JOB_TYPES:
@@ -121,11 +122,29 @@ def build_forecast_payload(
     for required in ("tenant_id", "entity_id", "metric_name"):
         if not pair.get(required):
             raise ValueError(f"forecast fan-out pair misses {required!r}")
+    policy = dict(overrides or {})
+    resolved_execution_id = str(execution_id or policy.get("execution_id") or uuid.uuid4())
+    raw_features = policy.get("features") or []
+    if isinstance(raw_features, dict):
+        raw_features = [raw_features]
+    features: list[dict[str, Any]] = []
+    for feature in raw_features:
+        normalized = feature.to_dict() if hasattr(feature, "to_dict") else feature
+        if not isinstance(normalized, dict):
+            msg = "forecast features must be serializable mappings"
+            raise ValueError(msg)
+        features.append(normalized)
     payload: dict[str, Any] = {
         "tenant_id": pair["tenant_id"],
         "entity_type": pair.get("entity_type", "DEVICE"),
         "entity_id": pair["entity_id"],
         "metric_name": pair["metric_name"],
+        "target_metric": pair["metric_name"],
+        "frequency": policy.get("frequency", "1h"),
+        "horizon": policy.get("horizon", 24),
+        "algorithm": policy.get("algorithm", "AUTO"),
+        "features": features,
+        "execution_id": resolved_execution_id,
         "job_type": job_type,
         "name": f"scheduler-{job_type}-{pair['entity_id'][:8]}-{pair['metric_name']}",
         "reference_key": forecast_reference_key(
@@ -139,8 +158,9 @@ def build_forecast_payload(
     }
     if parent_run_id is not None:
         payload["parent_run_id"] = parent_run_id
-    if overrides:
-        payload.update(overrides)
+    payload.update(policy)
+    payload["execution_id"] = resolved_execution_id
+    payload["features"] = features
     return payload
 
 
