@@ -194,6 +194,23 @@ class ExecutionRecord:
         )
 
 
+class RestoreStoreStatus(str, Enum):
+    """Atomic result of an insert-if-absent recovery operation."""
+
+    INSERTED = "INSERTED"
+    ALREADY_PRESENT = "ALREADY_PRESENT"
+    CONFLICT = "CONFLICT"
+
+
+@dataclass(frozen=True)
+class RestoreStoreResult:
+    """State and record snapshot captured under the store write lock."""
+
+    status: RestoreStoreStatus
+    record: ExecutionRecord | None = None
+    reason: str | None = None
+
+
 class ExecutionStore(Protocol):
     """Technology-neutral persistence port for forecast executions."""
 
@@ -374,6 +391,44 @@ class MemoryExecutionStore:
             del self._records[execution_id]
             return True
 
+    def restore_if_absent(self, record: ExecutionRecord) -> RestoreStoreResult:
+        """Insert one recovered record only when its identities are unused."""
+
+        raw_record = _validated_restore_record(record)
+        restored = ExecutionRecord.from_dict(raw_record)
+        with self._lock:
+            current = self._records.get(record.execution_id)
+            if current is not None:
+                if _strict_payload_equal(current.to_dict(), raw_record):
+                    return RestoreStoreResult(
+                        status=RestoreStoreStatus.ALREADY_PRESENT,
+                        record=self._copy(current),
+                    )
+                return RestoreStoreResult(
+                    status=RestoreStoreStatus.CONFLICT,
+                    record=self._copy(current),
+                    reason="execution_id_conflict",
+                )
+            reference_match = next(
+                (
+                    existing
+                    for existing in self._records.values()
+                    if existing.reference_key == record.reference_key
+                ),
+                None,
+            )
+            if reference_match is not None:
+                return RestoreStoreResult(
+                    status=RestoreStoreStatus.CONFLICT,
+                    record=self._copy(reference_match),
+                    reason="reference_key_conflict",
+                )
+            self._records[record.execution_id] = self._copy(restored)
+            return RestoreStoreResult(
+                status=RestoreStoreStatus.INSERTED,
+                record=self._copy(restored),
+            )
+
     def get(self, execution_id: str) -> ExecutionRecord | None:
         with self._lock:
             record = self._records.get(execution_id)
@@ -509,6 +564,22 @@ def _validate_json_value(value: Any, *, path: str = "value") -> None:
         return
     msg = f"{path} contains an unsupported value type: {type(value).__name__}"
     raise ExecutionStoreSerializationError(msg)
+
+
+def _validated_restore_record(record: ExecutionRecord) -> dict[str, Any]:
+    """Validate and canonicalize a record before an atomic recovery insert."""
+
+    if not isinstance(record, ExecutionRecord):
+        msg = "restore requires an ExecutionRecord"
+        raise ExecutionStoreSerializationError(msg)
+    raw_record = record.to_dict()
+    _validate_json_value(raw_record)
+    _validate_durable_record_shape(raw_record, record.execution_id)
+    decoded = ExecutionRecord.from_dict(raw_record)
+    if not _strict_payload_equal(decoded.to_dict(), raw_record):
+        msg = "restore record is not canonical"
+        raise ExecutionStoreSerializationError(msg)
+    return raw_record
 
 
 class DurableExecutionStore:
@@ -822,6 +893,46 @@ class DurableExecutionStore:
             self._write_unlocked(records)
             return True
 
+    def restore_if_absent(self, record: ExecutionRecord) -> RestoreStoreResult:
+        """Atomically insert one recovered record without overwriting."""
+
+        raw_record = _validated_restore_record(record)
+        with self._locked():
+            records = self._read_unlocked()
+            current_raw = records.get(record.execution_id)
+            if current_raw is not None:
+                current = self._record_from_raw(current_raw)
+                if _strict_payload_equal(current.to_dict(), raw_record):
+                    return RestoreStoreResult(
+                        status=RestoreStoreStatus.ALREADY_PRESENT,
+                        record=current,
+                    )
+                return RestoreStoreResult(
+                    status=RestoreStoreStatus.CONFLICT,
+                    record=current,
+                    reason="execution_id_conflict",
+                )
+            reference_raw = next(
+                (
+                    raw
+                    for raw in records.values()
+                    if raw.get("reference_key") == raw_record.get("reference_key")
+                ),
+                None,
+            )
+            if reference_raw is not None:
+                return RestoreStoreResult(
+                    status=RestoreStoreStatus.CONFLICT,
+                    record=self._record_from_raw(reference_raw),
+                    reason="reference_key_conflict",
+                )
+            records[record.execution_id] = raw_record
+            self._write_unlocked(records)
+            return RestoreStoreResult(
+                status=RestoreStoreStatus.INSERTED,
+                record=self._record_from_raw(raw_record),
+            )
+
     def get_by_reference_key(self, reference_key: str) -> ExecutionRecord | None:
         with self._locked():
             records = self._read_unlocked()
@@ -862,4 +973,6 @@ __all__ = [
     "ExecutionStoreSerializationError",
     "InvalidExecutionTransitionError",
     "MemoryExecutionStore",
+    "RestoreStoreResult",
+    "RestoreStoreStatus",
 ]
