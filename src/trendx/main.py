@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hmac
 import os
+import re
 import sys
 import time
 import uuid
@@ -40,9 +41,17 @@ from trendx.database.repositories import (
 )
 from trendx.explorer.router import router as explorer_router
 from trendx.forecasting.api import router as forecast_execution_router
+from trendx.forecasting.audit import (
+    AuditActorType,
+    AuditError,
+    AuditOperation,
+    AuditOutcome,
+    ExecutionAuditService,
+    ExecutionAuditStore,
+)
 from trendx.forecasting.execution import DurableExecutionStore, ExecutionStoreError
 from trendx.forecasting.history import ExecutionHistoryService
-from trendx.forecasting.lifecycle import FileSystemArchiveStore
+from trendx.forecasting.lifecycle import ExecutionHistoryLifecycle, FileSystemArchiveStore
 from trendx.forecasting.recovery import RecoveryService
 from trendx.services.tasks import PENDING_STATE, TaskService
 
@@ -57,9 +66,10 @@ logger.remove()
 logger.add(
     sys.stderr,
     level=settings.trendx_log_level,
-    format="<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
+    format="<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> | request_id={extra[request_id]} - <level>{message}</level>",
     colorize=True,
 )
+logger.configure(extra={"request_id": "-"})
 
 APP_VERSION = "0.1.0"
 
@@ -78,6 +88,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Request-ID"],
 )
 
 app.include_router(explorer_router)
@@ -85,7 +96,7 @@ app.include_router(forecast_execution_router)
 
 
 def _openapi() -> dict[str, Any]:
-    """Document the existing middleware authentication for W109."""
+    """Document existing authentication and W110 audit correlation."""
 
     if app.openapi_schema is not None:
         return app.openapi_schema
@@ -105,6 +116,39 @@ def _openapi() -> dict[str, Any]:
         "ApiKeyAuth",
         {"type": "apiKey", "in": "header", "name": "X-API-Key"},
     )
+    headers = components.setdefault("headers", {})
+    headers.setdefault(
+        "XRequestId",
+        {
+            "description": "Bounded non-secret correlation identifier",
+            "schema": {"type": "string", "maxLength": 128},
+        },
+    )
+    for path in (
+        "/api/v1/forecast/executions/audit",
+        "/api/v1/forecast/executions/audit/statistics",
+    ):
+        operation = schema.get("paths", {}).get(path, {}).get("get")
+        if not isinstance(operation, dict):
+            continue
+        parameters = operation.setdefault("parameters", [])
+        if not any(
+            isinstance(parameter, dict) and parameter.get("name") == "X-Request-ID"
+            for parameter in parameters
+        ):
+            parameters.append(
+                {
+                    "name": "X-Request-ID",
+                    "in": "header",
+                    "required": False,
+                    "description": "Optional bounded request correlation identifier",
+                    "schema": {"type": "string", "maxLength": 128},
+                }
+            )
+        success = operation.setdefault("responses", {}).setdefault("200", {})
+        success.setdefault("headers", {})["X-Request-ID"] = {
+            "$ref": "#/components/headers/XRequestId"
+        }
     app.openapi_schema = schema
     return schema
 
@@ -149,6 +193,27 @@ async def require_auth_middleware(request: Request, call_next):
     return await call_next(request)
 
 
+_REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+
+
+@app.middleware("http")
+async def request_correlation_middleware(request: Request, call_next):
+    """Attach one bounded, non-secret correlation id to every HTTP request."""
+
+    supplied = request.headers.get("x-request-id", "").strip()
+    supplied_folded = supplied.casefold()
+    safe_supplied = _REQUEST_ID_PATTERN.fullmatch(supplied) and not any(
+        marker in supplied_folded
+        for marker in ("authorization", "bearer", "password", "secret", "token", "api_key")
+    )
+    request_id = supplied if safe_supplied else f"request-{uuid.uuid4()}"
+    request.state.request_id = request_id
+    with logger.contextualize(request_id=request_id):
+        response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
+    return response
+
+
 @app.exception_handler(RequestValidationError)
 async def _sanitize_recovery_validation(
     request: Request,
@@ -158,7 +223,35 @@ async def _sanitize_recovery_validation(
 
     if request.url.path == "/api/v1/forecast/executions/restore":
         logger.info("execution_history operation=restore outcome=invalid_request status_code=422")
+        tenant_id = settings.trendx_default_tenant_id.strip()
+        if tenant_id:
+            factory = getattr(request.app.state, "execution_audit_service_factory", None)
+            try:
+                service = factory() if callable(factory) else None
+                if service is not None:
+                    service.record(
+                        operation=AuditOperation.RECOVERY_API,
+                        outcome=AuditOutcome.REJECTED,
+                        tenant_id=tenant_id,
+                        actor_type=AuditActorType.API,
+                        actor_id="api-key-context",
+                        request_id=getattr(request.state, "request_id", None),
+                        source="w109-http",
+                        reason_code="invalid_request",
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "execution_audit operation=recovery_api outcome=rejected "
+                    "reason_code=audit_write_failed error_type={}",
+                    type(exc).__name__,
+                )
         return JSONResponse(status_code=422, content={"detail": "invalid_request"})
+    if request.url.path in {
+        "/api/v1/forecast/executions/audit",
+        "/api/v1/forecast/executions/audit/statistics",
+    }:
+        logger.info("execution_history operation=audit outcome=invalid_request status_code=422")
+        return JSONResponse(status_code=422, content={"detail": "invalid_audit_query"})
     return await request_validation_exception_handler(request, exc)
 
 
@@ -174,6 +267,45 @@ def _execution_history_service_factory() -> ExecutionHistoryService:
         msg = "Forecast execution history datastore is unavailable"
         raise ExecutionStoreError(msg)
     return ExecutionHistoryService(DurableExecutionStore(history_path))
+
+
+def _execution_audit_service_factory() -> ExecutionAuditService | None:
+    """Build the optional best-effort W110 audit service from server config."""
+
+    configured_path = settings.trendx_execution_audit_path.strip()
+    if not configured_path:
+        return None
+    audit_path = Path(configured_path)
+    history_text = settings.trendx_execution_history_path.strip()
+    archive_text = settings.trendx_execution_archive_path.strip()
+    try:
+        business_paths = [Path(value).resolve() for value in (history_text, archive_text) if value]
+        resolved_audit = audit_path.resolve()
+        overlaps_business_store = any(
+            resolved_audit == business_path
+            or resolved_audit in business_path.parents
+            or business_path in resolved_audit.parents
+            for business_path in business_paths
+        )
+    except (OSError, RuntimeError, ValueError):
+        overlaps_business_store = True
+    if overlaps_business_store:
+        logger.warning("execution_audit backend_unavailable reason=store_overlap")
+        return None
+    if audit_path.is_symlink():
+        logger.warning("execution_audit backend_unavailable reason=unsafe_store_path")
+        return None
+    try:
+        return ExecutionAuditService(ExecutionAuditStore(audit_path))
+    except AuditError:
+        logger.warning("execution_audit backend_unavailable reason=store_initialization_failed")
+        return None
+    except OSError:
+        logger.warning("execution_audit backend_unavailable reason=store_initialization_failed")
+        return None
+    except Exception:
+        logger.warning("execution_audit backend_unavailable reason=store_initialization_failed")
+        return None
 
 
 def _execution_recovery_service_factory() -> RecoveryService:
@@ -192,16 +324,53 @@ def _execution_recovery_service_factory() -> RecoveryService:
     if archive_path.is_symlink() or not archive_path.is_dir():
         msg = "Execution history archive store is unavailable"
         raise ExecutionStoreError(msg)
+    audit_service = _execution_audit_service_factory()
     return RecoveryService(
-        DurableExecutionStore(history_path, create_if_missing=False),
+        DurableExecutionStore(
+            history_path,
+            create_if_missing=False,
+            audit_service=audit_service,
+        ),
         FileSystemArchiveStore(archive_path),
         lambda: datetime.now(UTC),
+        audit_service=audit_service,
+    )
+
+
+def _execution_lifecycle_service_factory() -> ExecutionHistoryLifecycle:
+    """Build W107 lifecycle around configured, existing local stores."""
+
+    configured_history_path = settings.trendx_execution_history_path.strip()
+    configured_archive_path = settings.trendx_execution_archive_path.strip()
+    if not configured_history_path or not configured_archive_path:
+        msg = "Execution lifecycle is not configured"
+        raise ExecutionStoreError(msg)
+    history_path = Path(configured_history_path)
+    archive_path = Path(configured_archive_path)
+    if history_path.is_symlink() or not history_path.is_file():
+        msg = "Forecast execution history datastore is unavailable"
+        raise ExecutionStoreError(msg)
+    if archive_path.is_symlink() or not archive_path.is_dir():
+        msg = "Execution history archive store is unavailable"
+        raise ExecutionStoreError(msg)
+    audit_service = _execution_audit_service_factory()
+    return ExecutionHistoryLifecycle(
+        DurableExecutionStore(
+            history_path,
+            create_if_missing=False,
+            audit_service=audit_service,
+        ),
+        FileSystemArchiveStore(archive_path),
+        lambda: datetime.now(UTC),
+        audit_service=audit_service,
     )
 
 
 # The factories are lazy: importing the API never creates or mutates a datastore.
 app.state.execution_history_service_factory = _execution_history_service_factory
 app.state.execution_recovery_service_factory = _execution_recovery_service_factory
+app.state.execution_lifecycle_service_factory = _execution_lifecycle_service_factory
+app.state.execution_audit_service_factory = _execution_audit_service_factory
 
 
 @app.on_event("startup")

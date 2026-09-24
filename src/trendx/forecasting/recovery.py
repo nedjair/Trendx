@@ -16,6 +16,12 @@ from enum import Enum
 from typing import Any, Protocol
 
 from loguru import logger
+from trendx.forecasting.audit import (
+    AuditActorType,
+    AuditOperation,
+    ExecutionAuditService,
+    current_request_id,
+)
 from trendx.forecasting.execution import (
     ExecutionRecord,
     ExecutionStatus,
@@ -184,22 +190,26 @@ class RecoveryService:
         store: RestorableExecutionStore,
         archive_store: ArchiveStore,
         clock: Callable[[], datetime],
+        *,
+        audit_service: ExecutionAuditService | None = None,
     ) -> None:
         self._store = store
         self._archive_store = archive_store
         self._clock = clock
+        self._audit_service = audit_service
 
     def verify_archive(
         self,
         request: ExecutionRestoreRequest,
         *,
         now: datetime | None = None,
+        request_id: str | None = None,
     ) -> ExecutionRestoreResult:
         """Verify an archive and reconstruct its record without any write."""
 
         checked, result = self._check_archive(request, now)
         if checked is None:
-            self._observe(result)
+            self._observe(result, request_id=request_id)
             return result
         metadata = self._metadata(checked, checked.verified_at)
         result = self._result(
@@ -210,7 +220,7 @@ class RecoveryService:
             reason="archive_verified",
             metadata=metadata,
         )
-        self._observe(result)
+        self._observe(result, request_id=request_id)
         return result
 
     def restore(
@@ -218,12 +228,13 @@ class RecoveryService:
         request: ExecutionRestoreRequest,
         *,
         now: datetime | None = None,
+        request_id: str | None = None,
     ) -> ExecutionRestoreResult:
         """Verify then atomically restore one archive; never overwrite."""
 
         checked, result = self._check_archive(request, now)
         if checked is None:
-            self._observe(result)
+            self._observe(result, request_id=request_id)
             return result
         metadata = self._metadata(checked, checked.verified_at)
         try:
@@ -237,7 +248,7 @@ class RecoveryService:
                 reason="active_store_write_failed",
                 metadata=metadata,
             )
-            self._observe(result)
+            self._observe(result, request_id=request_id)
             return result
 
         if not isinstance(store_result, RestoreStoreResult) or not isinstance(
@@ -251,7 +262,7 @@ class RecoveryService:
                 reason="active_store_invalid_result",
                 metadata=metadata,
             )
-            self._observe(result)
+            self._observe(result, request_id=request_id)
             return result
 
         # The store captures the post-operation record while holding the same
@@ -268,7 +279,7 @@ class RecoveryService:
                     reason="active_record_verification_failed",
                     metadata=metadata,
                 )
-                self._observe(result)
+                self._observe(result, request_id=request_id)
                 return result
             result = self._result(
                 request,
@@ -279,7 +290,7 @@ class RecoveryService:
                 reason="record_restored",
                 metadata=metadata,
             )
-            self._observe(result)
+            self._observe(result, request_id=request_id)
             return result
 
         if store_result.status is RestoreStoreStatus.ALREADY_PRESENT:
@@ -292,7 +303,7 @@ class RecoveryService:
                     reason="active_state_inconsistent",
                     metadata=metadata,
                 )
-                self._observe(result)
+                self._observe(result, request_id=request_id)
                 return result
             result = self._result(
                 request,
@@ -303,7 +314,7 @@ class RecoveryService:
                 reason="record_already_present",
                 metadata=metadata,
             )
-            self._observe(result)
+            self._observe(result, request_id=request_id)
             return result
 
         if store_result.status is RestoreStoreStatus.CONFLICT:
@@ -317,7 +328,7 @@ class RecoveryService:
                     reason="record_already_present",
                     metadata=metadata,
                 )
-                self._observe(result)
+                self._observe(result, request_id=request_id)
                 return result
             if active is None:
                 result = self._result(
@@ -328,7 +339,7 @@ class RecoveryService:
                     reason="active_state_inconsistent",
                     metadata=metadata,
                 )
-                self._observe(result)
+                self._observe(result, request_id=request_id)
                 return result
             reason = (
                 "reference_key_conflict"
@@ -344,7 +355,7 @@ class RecoveryService:
                 reason=reason,
                 metadata=metadata,
             )
-            self._observe(result)
+            self._observe(result, request_id=request_id)
             return result
 
         result = self._result(
@@ -355,7 +366,7 @@ class RecoveryService:
             reason="active_store_invalid_result",
             metadata=metadata,
         )
-        self._observe(result)
+        self._observe(result, request_id=request_id)
         return result
 
     def _check_archive(
@@ -713,8 +724,12 @@ class RecoveryService:
     def _format(value: datetime) -> str:
         return _normalize_datetime(value).isoformat()
 
-    @staticmethod
-    def _observe(result: ExecutionRestoreResult) -> None:
+    def _observe(
+        self,
+        result: ExecutionRestoreResult,
+        *,
+        request_id: str | None = None,
+    ) -> None:
         outcome = {
             ExecutionRestoreStatus.RESTORED: "success",
             ExecutionRestoreStatus.ALREADY_PRESENT: "already_present",
@@ -732,6 +747,21 @@ class RecoveryService:
             result.status.value,
             result.reason,
         )
+        if self._audit_service is not None:
+            try:
+                self._audit_service.record_restore_result(
+                    result,
+                    operation=AuditOperation.RESTORE,
+                    actor_type=AuditActorType.SYSTEM,
+                    actor_id="system",
+                    request_id=(
+                        request_id or current_request_id() or f"restore:{result.execution_id}"
+                    ),
+                    source="w108-recovery",
+                )
+            except Exception:
+                # The recovery result is authoritative; audit is best effort.
+                return
 
 
 def _normalize_datetime(value: datetime) -> datetime:

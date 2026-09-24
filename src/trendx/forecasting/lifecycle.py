@@ -23,6 +23,12 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from loguru import logger
+from trendx.forecasting.audit import (
+    AuditActorType,
+    AuditOperation,
+    AuditOutcome,
+    ExecutionAuditService,
+)
 from trendx.forecasting.execution import (
     ExecutionRecord,
     ExecutionStatus,
@@ -798,11 +804,44 @@ class ExecutionHistoryLifecycle:
         store: PurgeableExecutionStore,
         archive_store: ArchiveStore,
         clock: Callable[[], datetime],
+        *,
+        audit_service: ExecutionAuditService | None = None,
     ) -> None:
         self._store = store
         self._reader: ExecutionHistoryReader = store
         self._archive_store = archive_store
         self._clock = clock
+        self._audit_service = audit_service
+
+    def _record_audit(
+        self,
+        *,
+        operation: AuditOperation,
+        outcome: AuditOutcome,
+        tenant_id: str,
+        execution_id: str | None,
+        reference_key: str | None,
+        reason_code: str,
+        request_id: str,
+    ) -> None:
+        if self._audit_service is None:
+            return
+        try:
+            self._audit_service.record(
+                operation=operation,
+                outcome=outcome,
+                tenant_id=tenant_id,
+                execution_id=execution_id,
+                reference_key=reference_key,
+                actor_type=AuditActorType.SYSTEM,
+                actor_id="system",
+                request_id=request_id,
+                source="w107-lifecycle",
+                reason_code=reason_code,
+            )
+        except Exception:
+            # Audit is observational and must never change lifecycle semantics.
+            return
 
     def preview(
         self,
@@ -810,9 +849,17 @@ class ExecutionHistoryLifecycle:
         policy: ExecutionRetentionPolicy,
         *,
         now: datetime | None = None,
+        request_id: str | None = None,
     ) -> ExecutionLifecycleReport:
         effective = replace(policy, dry_run=True)
-        return self._execute(tenant_id, effective, purge=False, now=now, outcome="preview")
+        return self._execute(
+            tenant_id,
+            effective,
+            purge=False,
+            now=now,
+            outcome="preview",
+            request_id=request_id,
+        )
 
     def archive_eligible(
         self,
@@ -820,10 +867,27 @@ class ExecutionHistoryLifecycle:
         policy: ExecutionRetentionPolicy,
         *,
         now: datetime | None = None,
+        request_id: str | None = None,
     ) -> ExecutionLifecycleReport:
         if policy.dry_run:
-            return self.preview(tenant_id, policy, now=now)
-        return self._execute(tenant_id, policy, purge=False, now=now, outcome="archive")
+            self._record_audit(
+                operation=AuditOperation.ARCHIVE,
+                outcome=AuditOutcome.REJECTED,
+                tenant_id=tenant_id,
+                execution_id=None,
+                reference_key=None,
+                reason_code="dry_run",
+                request_id=request_id or f"lifecycle:{tenant_id}",
+            )
+            return self.preview(tenant_id, policy, now=now, request_id=request_id)
+        return self._execute(
+            tenant_id,
+            policy,
+            purge=False,
+            now=now,
+            outcome="archive",
+            request_id=request_id,
+        )
 
     def purge_eligible(
         self,
@@ -831,12 +895,94 @@ class ExecutionHistoryLifecycle:
         policy: ExecutionRetentionPolicy,
         *,
         now: datetime | None = None,
+        request_id: str | None = None,
     ) -> ExecutionLifecycleReport:
         if policy.dry_run:
-            return self.preview(tenant_id, policy, now=now)
-        return self._execute(tenant_id, policy, purge=True, now=now, outcome="purge")
+            self._record_audit(
+                operation=AuditOperation.PURGE,
+                outcome=AuditOutcome.REJECTED,
+                tenant_id=tenant_id,
+                execution_id=None,
+                reference_key=None,
+                reason_code="dry_run",
+                request_id=request_id or f"lifecycle:{tenant_id}",
+            )
+            return self.preview(tenant_id, policy, now=now, request_id=request_id)
+        return self._execute(
+            tenant_id,
+            policy,
+            purge=True,
+            now=now,
+            outcome="purge",
+            request_id=request_id,
+        )
 
     def archive_execution(
+        self,
+        execution_id: str,
+        tenant_id: str,
+        policy: ExecutionRetentionPolicy,
+        *,
+        now: datetime | None = None,
+        request_id: str | None = None,
+    ) -> ArchiveReceipt:
+        active_request_id = request_id or f"lifecycle:{tenant_id}:{execution_id}"
+        try:
+            receipt = self._archive_execution(
+                execution_id,
+                tenant_id,
+                policy,
+                now=now,
+            )
+        except LifecycleTenantError:
+            self._record_audit(
+                operation=AuditOperation.ARCHIVE,
+                outcome=AuditOutcome.FORBIDDEN,
+                tenant_id=tenant_id,
+                execution_id=execution_id,
+                reference_key=None,
+                reason_code="tenant_forbidden",
+                request_id=active_request_id,
+            )
+            raise
+        except LifecycleProtectedError:
+            self._record_audit(
+                operation=AuditOperation.ARCHIVE,
+                outcome=AuditOutcome.REJECTED,
+                tenant_id=tenant_id,
+                execution_id=execution_id,
+                reference_key=None,
+                reason_code="retention_protected",
+                request_id=active_request_id,
+            )
+            raise
+        except Exception:
+            self._record_audit(
+                operation=AuditOperation.ARCHIVE,
+                outcome=AuditOutcome.FAILED,
+                tenant_id=tenant_id,
+                execution_id=execution_id,
+                reference_key=None,
+                reason_code="archive_failed",
+                request_id=active_request_id,
+            )
+            raise
+        try:
+            source_record = self._reader.get(receipt.execution_id)
+        except Exception:
+            source_record = None
+        self._record_audit(
+            operation=AuditOperation.ARCHIVE,
+            outcome=AuditOutcome.SUCCESS if receipt.created else AuditOutcome.ALREADY_PRESENT,
+            tenant_id=receipt.tenant_id,
+            execution_id=receipt.execution_id,
+            reference_key=source_record.reference_key if source_record is not None else None,
+            reason_code="archive_created" if receipt.created else "archive_already_present",
+            request_id=active_request_id,
+        )
+        return receipt
+
+    def _archive_execution(
         self,
         execution_id: str,
         tenant_id: str,
@@ -875,9 +1021,11 @@ class ExecutionHistoryLifecycle:
         purge: bool,
         now: datetime | None,
         outcome: str,
+        request_id: str | None = None,
     ) -> ExecutionLifecycleReport:
         self._validate_tenant(tenant_id)
         current = self._now(now)
+        active_request_id = request_id or f"lifecycle:{tenant_id}"
         try:
             records = tuple(
                 sorted(
@@ -908,6 +1056,16 @@ class ExecutionHistoryLifecycle:
                 failed=1,
                 error_code="store_read_failed",
             )
+            if not policy.dry_run:
+                self._record_audit(
+                    operation=AuditOperation.PURGE if purge else AuditOperation.ARCHIVE,
+                    outcome=AuditOutcome.FAILED,
+                    tenant_id=tenant_id,
+                    execution_id=None,
+                    reference_key=None,
+                    reason_code="store_read_failed",
+                    request_id=active_request_id,
+                )
             return report
         classifications = self._classify(records, policy, current)
         eligible = tuple(item.record for item in classifications if item.state == "eligible")
@@ -948,7 +1106,25 @@ class ExecutionHistoryLifecycle:
                         )
                         if verification.valid and verification.checksum == _record_checksum(record):
                             already.append(record.execution_id)
+                            self._record_audit(
+                                operation=AuditOperation.ARCHIVE_VERIFY,
+                                outcome=AuditOutcome.SUCCESS,
+                                tenant_id=record.tenant_id,
+                                execution_id=record.execution_id,
+                                reference_key=record.reference_key,
+                                reason_code="archive_verified",
+                                request_id=active_request_id,
+                            )
                         else:
+                            self._record_audit(
+                                operation=AuditOperation.ARCHIVE_VERIFY,
+                                outcome=AuditOutcome.FAILED,
+                                tenant_id=record.tenant_id,
+                                execution_id=record.execution_id,
+                                reference_key=None,
+                                reason_code="archive_verification_failed",
+                                request_id=active_request_id,
+                            )
                             failures.append(
                                 LifecycleFailure(
                                     record.execution_id,
@@ -965,10 +1141,30 @@ class ExecutionHistoryLifecycle:
                     failures.append(
                         LifecycleFailure(record.execution_id, "archive", "archive_required")
                     )
+                    self._record_audit(
+                        operation=AuditOperation.PURGE,
+                        outcome=AuditOutcome.REJECTED,
+                        tenant_id=record.tenant_id,
+                        execution_id=record.execution_id,
+                        reference_key=record.reference_key,
+                        reason_code="archive_required",
+                        request_id=active_request_id,
+                    )
                     continue
                 if not exists:
                     candidates.append(record.execution_id)
                 receipt = self._archive_one(record, policy, current)
+                self._record_audit(
+                    operation=AuditOperation.ARCHIVE,
+                    outcome=AuditOutcome.SUCCESS
+                    if receipt.created
+                    else AuditOutcome.ALREADY_PRESENT,
+                    tenant_id=record.tenant_id,
+                    execution_id=record.execution_id,
+                    reference_key=record.reference_key,
+                    reason_code="archive_created" if receipt.created else "archive_already_present",
+                    request_id=active_request_id,
+                )
                 if receipt.created:
                     archived_count += 1
                     archived_ids.append(record.execution_id)
@@ -978,6 +1174,15 @@ class ExecutionHistoryLifecycle:
                     if self._store.delete_if_unchanged(record.execution_id, record):
                         purged_count += 1
                         purged_ids.append(record.execution_id)
+                        self._record_audit(
+                            operation=AuditOperation.PURGE,
+                            outcome=AuditOutcome.SUCCESS,
+                            tenant_id=record.tenant_id,
+                            execution_id=record.execution_id,
+                            reference_key=record.reference_key,
+                            reason_code="record_purged",
+                            request_id=active_request_id,
+                        )
                         continue
                     current_record = self._reader.get(record.execution_id)
                     if current_record is None:
@@ -998,12 +1203,39 @@ class ExecutionHistoryLifecycle:
                                     "source_missing_archive_unverified",
                                 )
                             )
+                            self._record_audit(
+                                operation=AuditOperation.PURGE,
+                                outcome=AuditOutcome.FAILED,
+                                tenant_id=record.tenant_id,
+                                execution_id=record.execution_id,
+                                reference_key=record.reference_key,
+                                reason_code="source_missing_archive_unverified",
+                                request_id=active_request_id,
+                            )
                             continue
                         already_purged_count += 1
                         already_purged_ids.append(record.execution_id)
+                        self._record_audit(
+                            operation=AuditOperation.PURGE,
+                            outcome=AuditOutcome.ALREADY_PRESENT,
+                            tenant_id=record.tenant_id,
+                            execution_id=record.execution_id,
+                            reference_key=record.reference_key,
+                            reason_code="record_already_purged",
+                            request_id=active_request_id,
+                        )
                         continue
                     failures.append(
                         LifecycleFailure(record.execution_id, "purge", "record_changed")
+                    )
+                    self._record_audit(
+                        operation=AuditOperation.PURGE,
+                        outcome=AuditOutcome.CONFLICT,
+                        tenant_id=record.tenant_id,
+                        execution_id=record.execution_id,
+                        reference_key=record.reference_key,
+                        reason_code="record_changed",
+                        request_id=active_request_id,
                     )
             except ArchiveError as exc:
                 failures.append(
@@ -1012,6 +1244,15 @@ class ExecutionHistoryLifecycle:
                         "archive",
                         _archive_error_code(exc),
                     )
+                )
+                self._record_audit(
+                    operation=AuditOperation.PURGE if purge else AuditOperation.ARCHIVE,
+                    outcome=AuditOutcome.FAILED,
+                    tenant_id=record.tenant_id,
+                    execution_id=record.execution_id,
+                    reference_key=record.reference_key,
+                    reason_code=_archive_error_code(exc),
+                    request_id=active_request_id,
                 )
                 self._observe(
                     outcome,
@@ -1023,6 +1264,15 @@ class ExecutionHistoryLifecycle:
             except (ExecutionStoreError, OSError, TypeError, UnicodeError, ValueError):
                 failures.append(
                     LifecycleFailure(record.execution_id, "lifecycle", "operation_failed")
+                )
+                self._record_audit(
+                    operation=AuditOperation.PURGE if purge else AuditOperation.ARCHIVE,
+                    outcome=AuditOutcome.FAILED,
+                    tenant_id=record.tenant_id,
+                    execution_id=record.execution_id,
+                    reference_key=record.reference_key,
+                    reason_code="operation_failed",
+                    request_id=active_request_id,
                 )
                 self._observe(
                     outcome,
@@ -1055,6 +1305,16 @@ class ExecutionHistoryLifecycle:
             decisions=decisions,
             failures=tuple(failures),
         )
+        if not policy.dry_run:
+            self._record_audit(
+                operation=AuditOperation.PURGE if purge else AuditOperation.ARCHIVE,
+                outcome=AuditOutcome.SUCCESS if report.failed == 0 else AuditOutcome.FAILED,
+                tenant_id=tenant_id,
+                execution_id=None,
+                reference_key=None,
+                reason_code="lifecycle_completed" if report.failed == 0 else "lifecycle_failed",
+                request_id=active_request_id,
+            )
         self._observe(
             outcome,
             outcome if report.failed == 0 else "error",

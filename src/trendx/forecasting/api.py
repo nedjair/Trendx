@@ -1,15 +1,19 @@
-"""W101/W104/W109 — forecast execution history API.
+"""W101/W104/W109/W110 — forecast execution history and audit APIs.
 
-Read routes delegate exclusively to :class:`ExecutionHistoryService`.  The
-single W109 recovery route delegates exclusively to W108
-:class:`RecoveryService`.  Application wiring supplies both services through
-``app.state``; this module never reads or writes an ExecutionStore directly.
+Read history routes delegate exclusively to :class:`ExecutionHistoryService`.
+The W109 recovery route delegates exclusively to W108
+:class:`RecoveryService`.  W110 adds a bounded, tenant-aware, read-only audit
+projection over a separate audit store.  Application wiring supplies services
+through ``app.state``; this module never reads or writes an ExecutionStore or
+an audit event file directly.
 """
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
 from typing import Annotated, Any, Literal, cast
 
@@ -21,6 +25,19 @@ from trendx.forecasting.analytics import (
     TREND_CONTRACT,
     ExecutionAnalytics,
     analyze_execution_history,
+)
+from trendx.forecasting.audit import (
+    MAX_AUDIT_OFFSET,
+    MAX_AUDIT_QUERY_LIMIT,
+    AuditActorType,
+    AuditOperation,
+    AuditOutcome,
+    ExecutionAuditEvent,
+    ExecutionAuditPage,
+    ExecutionAuditQuery,
+    ExecutionAuditService,
+    ExecutionAuditStatistics,
+    audit_request_context,
 )
 from trendx.forecasting.execution import ExecutionRecord, ExecutionStatus, ExecutionStoreError
 from trendx.forecasting.history import (
@@ -384,6 +401,88 @@ class ExecutionErrorOut(BaseModel):
     detail: str
 
 
+class ExecutionAuditEventOut(BaseModel):
+    """Sanitized durable event returned by the read-only audit API."""
+
+    event_id: str
+    event_version: str
+    occurred_at: str
+    operation: AuditOperation
+    outcome: AuditOutcome
+    tenant_id: str
+    execution_id: str | None
+    reference_key: str | None
+    actor_type: AuditActorType
+    actor_id: str
+    request_id: str
+    source: str
+    reason_code: str
+    idempotency_key: str
+    checksum: str
+
+    @classmethod
+    def from_event(cls, event: ExecutionAuditEvent) -> ExecutionAuditEventOut:
+        return cls(
+            event_id=_safe_response_identifier(event.event_id),
+            event_version=event.event_version,
+            occurred_at=event.occurred_at.isoformat(),
+            operation=event.operation,
+            outcome=event.outcome,
+            tenant_id=_safe_response_identifier(event.tenant_id),
+            execution_id=(
+                _safe_response_identifier(event.execution_id)
+                if event.execution_id is not None
+                else None
+            ),
+            reference_key=(
+                _safe_response_identifier(event.reference_key)
+                if event.reference_key is not None
+                else None
+            ),
+            actor_type=event.actor_type,
+            actor_id=_safe_response_identifier(event.actor_id),
+            request_id=_safe_response_identifier(event.request_id),
+            source=_safe_response_identifier(event.source),
+            reason_code=_safe_response_identifier(event.reason_code),
+            idempotency_key=_safe_response_identifier(event.idempotency_key or ""),
+            checksum=event.checksum or "",
+        )
+
+
+class ExecutionAuditListOut(BaseModel):
+    items: list[ExecutionAuditEventOut]
+    total: int
+    limit: int
+    offset: int
+    has_more: bool
+
+    @classmethod
+    def from_page(cls, page: ExecutionAuditPage) -> ExecutionAuditListOut:
+        return cls(
+            items=[ExecutionAuditEventOut.from_event(event) for event in page.events],
+            total=page.total,
+            limit=page.limit,
+            offset=page.offset,
+            has_more=page.has_more,
+        )
+
+
+class ExecutionAuditStatsOut(BaseModel):
+    total_events: int
+    successful_events: int
+    failed_events: int
+    rejected_events: int
+    conflicts: int
+    forbidden: int
+    by_operation: dict[str, int]
+    by_outcome: dict[str, int]
+    by_tenant: dict[str, int]
+
+    @classmethod
+    def from_statistics(cls, statistics: ExecutionAuditStatistics) -> ExecutionAuditStatsOut:
+        return cls(**statistics.to_dict())
+
+
 def _safe_response_identifier(value: str) -> str:
     """Prevent client-controlled filesystem-looking identifiers from echoing."""
 
@@ -584,6 +683,9 @@ class _ApiErrorCode(str, Enum):
     DIAGNOSTIC_UNAVAILABLE = "diagnostic_unavailable"
     RECOVERY_SERVICE_UNAVAILABLE = "recovery_service_unavailable"
     RECOVERY_AUTH_NOT_CONFIGURED = "recovery_authentication_not_configured"
+    AUDIT_SERVICE_UNAVAILABLE = "audit_service_unavailable"
+    AUDIT_AUTH_NOT_CONFIGURED = "audit_authentication_not_configured"
+    INVALID_AUDIT_QUERY = "invalid_audit_query"
 
 
 def _observe(operation: str, outcome: str, status_code: int) -> None:
@@ -630,6 +732,13 @@ _RESTORE_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
         "model": ExecutionRestoreErrorOut,
         "description": "Recovery backend is unavailable",
     },
+}
+
+_AUDIT_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
+    401: {"model": ExecutionErrorOut, "description": "Authentication required"},
+    403: {"model": ExecutionErrorOut, "description": "Tenant context is not authorized"},
+    422: {"model": ExecutionErrorOut, "description": "Invalid audit query"},
+    503: {"model": ExecutionErrorOut, "description": "Audit store is unavailable or corrupted"},
 }
 
 
@@ -679,17 +788,43 @@ def validate_restore_request(
 ) -> None:
     """Validate HTTP-only controls before resolving the recovery backend."""
 
+    audit_service = _optional_execution_audit_service(request)
+    request_id = _request_id(request)
     if request.query_params:
         _observe("restore", "invalid_request", 422)
+        _record_api_failure_audit(
+            audit_service,
+            tenant_id=tenant_context.tenant_id,
+            execution_id=payload.execution_id,
+            outcome=AuditOutcome.REJECTED,
+            reason_code="invalid_request",
+            request_id=request_id,
+        )
         raise HTTPException(status_code=422, detail="invalid_request")
     if not _recovery_api_is_configured():
         _observe("restore", "authentication_not_configured", 503)
+        _record_api_failure_audit(
+            audit_service,
+            tenant_id=tenant_context.tenant_id,
+            execution_id=payload.execution_id,
+            outcome=AuditOutcome.REJECTED,
+            reason_code="authentication_not_configured",
+            request_id=request_id,
+        )
         raise HTTPException(
             status_code=503,
             detail=_ApiErrorCode.RECOVERY_AUTH_NOT_CONFIGURED.value,
         )
     if payload.tenant_id != tenant_context.tenant_id:
         _observe("restore", "tenant_forbidden", 403)
+        _record_api_failure_audit(
+            audit_service,
+            tenant_id=tenant_context.tenant_id,
+            execution_id=payload.execution_id,
+            outcome=AuditOutcome.FORBIDDEN,
+            reason_code="tenant_forbidden",
+            request_id=request_id,
+        )
         raise HTTPException(
             status_code=403,
             detail=_ApiErrorCode.TENANT_FORBIDDEN.value,
@@ -766,6 +901,102 @@ RecoveryServiceDep = Annotated[
     RecoveryService,
     Depends(get_execution_recovery_service),
 ]
+
+
+def _request_id(request: Request) -> str:
+    value = getattr(request.state, "request_id", None)
+    if isinstance(value, str) and value:
+        return value
+    generated = f"request-{uuid.uuid4()}"
+    request.state.request_id = generated
+    return generated
+
+
+def _optional_execution_audit_service(request: Request) -> ExecutionAuditService | None:
+    factory = getattr(request.app.state, "execution_audit_service_factory", None)
+    if not callable(factory):
+        return None
+    try:
+        service = cast(Callable[[], ExecutionAuditService | None], factory)()
+    except Exception:
+        return None
+    if service is None or not callable(getattr(service, "record", None)):
+        return None
+    return service
+
+
+def get_execution_audit_service(request: Request) -> ExecutionAuditService:
+    """Resolve the W110 service for read-only audit queries."""
+
+    if not _recovery_api_is_configured():
+        _observe("audit", "authentication_not_configured", 503)
+        raise HTTPException(
+            status_code=503,
+            detail=_ApiErrorCode.AUDIT_AUTH_NOT_CONFIGURED.value,
+        )
+    service = _optional_execution_audit_service(request)
+    if service is None:
+        _observe("audit", "backend_unavailable", 503)
+        raise HTTPException(
+            status_code=503,
+            detail=_ApiErrorCode.AUDIT_SERVICE_UNAVAILABLE.value,
+        )
+    return service
+
+
+ExecutionAuditServiceDep = Annotated[
+    ExecutionAuditService,
+    Depends(get_execution_audit_service),
+]
+
+
+def _record_optional_restore_audit(
+    service: ExecutionAuditService | None,
+    result: ExecutionRestoreResult,
+    *,
+    status_code: int,
+    request_id: str,
+) -> None:
+    if service is None:
+        return
+    try:
+        service.record_recovery_api_result(
+            result,
+            status_code=status_code,
+            actor_type=AuditActorType.API,
+            actor_id="api-key-context",
+            request_id=request_id,
+        )
+    except Exception:
+        # The recovery result is authoritative; audit is best effort.
+        return
+
+
+def _record_api_failure_audit(
+    service: ExecutionAuditService | None,
+    *,
+    tenant_id: str,
+    execution_id: str | None,
+    outcome: AuditOutcome,
+    reason_code: str,
+    request_id: str,
+) -> None:
+    if service is None:
+        return
+    try:
+        service.record(
+            operation=AuditOperation.RECOVERY_API,
+            outcome=outcome,
+            tenant_id=tenant_id,
+            execution_id=execution_id,
+            actor_type=AuditActorType.API,
+            actor_id="api-key-context",
+            request_id=request_id,
+            source="w109-http",
+            reason_code=reason_code,
+        )
+    except Exception:
+        return
 
 
 def build_execution_query(
@@ -932,6 +1163,79 @@ def build_report_query(
 
 
 ExecutionReportQueryDep = Annotated[ExecutionQuery, Depends(build_report_query)]
+
+
+_AUDIT_QUERY_FIELDS = frozenset(
+    {
+        "tenant_id",
+        "event_id",
+        "operation",
+        "outcome",
+        "execution_id",
+        "reference_key",
+        "occurred_at_from",
+        "occurred_at_to",
+        "request_id",
+        "actor_type",
+        "source",
+        "reason_code",
+        "limit",
+        "offset",
+    }
+)
+
+
+def build_execution_audit_query(
+    request: Request,
+    tenant_context: TenantContextDep,
+    tenant_id: str | None = Query(None),
+    event_id: str | None = Query(None),
+    operation: str | None = Query(None),
+    outcome: str | None = Query(None),
+    execution_id: str | None = Query(None),
+    reference_key: str | None = Query(None),
+    occurred_at_from: datetime | None = Query(None),  # noqa: B008
+    occurred_at_to: datetime | None = Query(None),  # noqa: B008
+    request_id: str | None = Query(None),
+    actor_type: str | None = Query(None),
+    source: str | None = Query(None),
+    reason_code: str | None = Query(None),
+    limit: int = Query(100, ge=1, le=MAX_AUDIT_QUERY_LIMIT),
+    offset: int = Query(0, ge=0, le=MAX_AUDIT_OFFSET),
+) -> ExecutionAuditQuery:
+    unknown = set(request.query_params) - _AUDIT_QUERY_FIELDS
+    if unknown:
+        _observe("audit", "invalid_request", 422)
+        raise HTTPException(status_code=422, detail=_ApiErrorCode.INVALID_AUDIT_QUERY.value)
+    if tenant_id is not None and tenant_id != tenant_context.tenant_id:
+        _observe("audit", "tenant_rejected", 403)
+        raise HTTPException(status_code=403, detail=_ApiErrorCode.TENANT_FORBIDDEN.value)
+    try:
+        return ExecutionAuditQuery(
+            tenant_id=tenant_context.tenant_id,
+            event_id=event_id,
+            operation=cast(Any, operation),
+            outcome=cast(Any, outcome),
+            execution_id=execution_id,
+            reference_key=reference_key,
+            occurred_at_from=occurred_at_from,
+            occurred_at_to=occurred_at_to,
+            request_id=request_id,
+            actor_type=cast(Any, actor_type),
+            source=source,
+            reason_code=reason_code,
+            limit=limit,
+            offset=offset,
+        )
+    except (TypeError, ValueError) as exc:
+        _observe("audit", "invalid_request", 422)
+        raise HTTPException(
+            status_code=422,
+            detail=_ApiErrorCode.INVALID_AUDIT_QUERY.value,
+        ) from exc
+
+
+ExecutionAuditQueryDep = Annotated[ExecutionAuditQuery, Depends(build_execution_audit_query)]
 
 
 def _service_unavailable(exc: Exception) -> HTTPException:
@@ -1117,13 +1421,24 @@ def execution_report(
     },
 )
 def restore_execution(
+    request: Request,
     payload: ExecutionRestoreRequestIn,
     response: Response,
     tenant_context: TenantContextDep,
     service: RecoveryServiceDep,
 ) -> ExecutionRestoreResultOut:
+    audit_service = _optional_execution_audit_service(request)
+    request_id = _request_id(request)
     if payload.tenant_id != tenant_context.tenant_id:
         _observe("restore", "tenant_forbidden", 403)
+        _record_api_failure_audit(
+            audit_service,
+            tenant_id=tenant_context.tenant_id,
+            execution_id=payload.execution_id,
+            outcome=AuditOutcome.FORBIDDEN,
+            reason_code="tenant_forbidden",
+            request_id=request_id,
+        )
         raise HTTPException(
             status_code=403,
             detail=_ApiErrorCode.TENANT_FORBIDDEN.value,
@@ -1132,17 +1447,42 @@ def restore_execution(
         domain_request = payload.to_domain()
     except (TypeError, ValueError) as exc:
         _observe("restore", "invalid_request", 422)
+        _record_api_failure_audit(
+            audit_service,
+            tenant_id=tenant_context.tenant_id,
+            execution_id=payload.execution_id,
+            outcome=AuditOutcome.REJECTED,
+            reason_code="invalid_request",
+            request_id=request_id,
+        )
         raise HTTPException(status_code=422, detail="invalid_request") from exc
     try:
-        result = service.restore(domain_request)
+        with audit_request_context(request_id):
+            result = service.restore(domain_request)
     except Exception as exc:  # adapter boundary: never expose a backend cause
         _observe("restore", "backend_unavailable", 503)
+        _record_api_failure_audit(
+            audit_service,
+            tenant_id=tenant_context.tenant_id,
+            execution_id=payload.execution_id,
+            outcome=AuditOutcome.FAILED,
+            reason_code="backend_unavailable",
+            request_id=request_id,
+        )
         raise HTTPException(
             status_code=503,
             detail=_ApiErrorCode.RECOVERY_SERVICE_UNAVAILABLE.value,
         ) from exc
     if not isinstance(result, ExecutionRestoreResult):
         _observe("restore", "backend_unavailable", 503)
+        _record_api_failure_audit(
+            audit_service,
+            tenant_id=tenant_context.tenant_id,
+            execution_id=payload.execution_id,
+            outcome=AuditOutcome.FAILED,
+            reason_code="invalid_backend_result",
+            request_id=request_id,
+        )
         raise HTTPException(
             status_code=503,
             detail=_ApiErrorCode.RECOVERY_SERVICE_UNAVAILABLE.value,
@@ -1153,13 +1493,92 @@ def restore_execution(
         outcome = _restore_outcome(result.status)
     except (AttributeError, KeyError, TypeError, ValueError) as exc:
         _observe("restore", "backend_unavailable", 503)
+        _record_api_failure_audit(
+            audit_service,
+            tenant_id=tenant_context.tenant_id,
+            execution_id=payload.execution_id,
+            outcome=AuditOutcome.FAILED,
+            reason_code="invalid_backend_result",
+            request_id=request_id,
+        )
         raise HTTPException(
             status_code=503,
             detail=_ApiErrorCode.RECOVERY_SERVICE_UNAVAILABLE.value,
         ) from exc
     response.status_code = status_code
+    _record_optional_restore_audit(
+        audit_service,
+        result,
+        status_code=status_code,
+        request_id=request_id,
+    )
     _observe("restore", outcome, status_code)
     return response_body
+
+
+@router.get(
+    "/audit/statistics",
+    response_model=ExecutionAuditStatsOut,
+    summary="Read execution audit statistics",
+    description=(
+        "Read-only, tenant-scoped operational counters. Audit statistics are independent "
+        "from W104 execution-history analytics and never mutate the audit store."
+    ),
+    responses=_AUDIT_ERROR_RESPONSES,
+    openapi_extra={
+        "security": [
+            {"BearerAuth": []},
+            {"ApiKeyAuth": []},
+        ]
+    },
+)
+def execution_audit_statistics(
+    query: ExecutionAuditQueryDep,
+    service: ExecutionAuditServiceDep,
+) -> ExecutionAuditStatsOut:
+    try:
+        result = ExecutionAuditStatsOut.from_statistics(service.statistics(query))
+    except Exception as exc:
+        _observe("audit_statistics", "backend_unavailable", 503)
+        raise HTTPException(
+            status_code=503,
+            detail=_ApiErrorCode.AUDIT_SERVICE_UNAVAILABLE.value,
+        ) from exc
+    _observe("audit_statistics", "success", 200)
+    return result
+
+
+@router.get(
+    "/audit",
+    response_model=ExecutionAuditListOut,
+    summary="Query execution operational audit events",
+    description=(
+        "Read-only and tenant-aware W110 audit query. Results are deterministically ordered, "
+        "bounded to at most 1000 events per request, and never expose credentials, payloads, "
+        "or filesystem paths."
+    ),
+    responses=_AUDIT_ERROR_RESPONSES,
+    openapi_extra={
+        "security": [
+            {"BearerAuth": []},
+            {"ApiKeyAuth": []},
+        ]
+    },
+)
+def query_execution_audit(
+    query: ExecutionAuditQueryDep,
+    service: ExecutionAuditServiceDep,
+) -> ExecutionAuditListOut:
+    try:
+        result = ExecutionAuditListOut.from_page(service.query(query))
+    except Exception as exc:
+        _observe("audit", "backend_unavailable", 503)
+        raise HTTPException(
+            status_code=503,
+            detail=_ApiErrorCode.AUDIT_SERVICE_UNAVAILABLE.value,
+        ) from exc
+    _observe("audit", "success", 200)
+    return result
 
 
 @router.get(
@@ -1254,6 +1673,11 @@ __all__ = [
     "ExecutionAnalyticsOut",
     "ExecutionAnalyticsReportOut",
     "ExecutionAnalyticsReportingService",
+    "ExecutionAuditEventOut",
+    "ExecutionAuditListOut",
+    "ExecutionAuditQuery",
+    "ExecutionAuditServiceDep",
+    "ExecutionAuditStatsOut",
     "ExecutionDiagnosticOut",
     "ExecutionReportFiltersOut",
     "ExecutionReportPaginationOut",
@@ -1279,7 +1703,11 @@ __all__ = [
     "TimeBucketOut",
     "TrendContractOut",
     "build_analytics_query",
+    "build_execution_audit_query",
     "build_execution_query",
+    "execution_audit_statistics",
+    "query_execution_audit",
+    "get_execution_audit_service",
     "get_execution_history_service",
     "get_execution_recovery_service",
     "get_tenant_context",

@@ -122,6 +122,12 @@ class Settings(BaseSettings):
         default="",
         alias="TRENDX_EXECUTION_ARCHIVE_PATH",
     )
+    # W110: server-side durable operational audit directory.  It is never
+    # accepted from an HTTP client and is independent from execution history.
+    trendx_execution_audit_path: str = Field(
+        default="",
+        alias="TRENDX_EXECUTION_AUDIT_PATH",
+    )
     trendx_default_customer_id: str = Field(default="", alias="TRENDX_DEFAULT_CUSTOMER_ID")
     trendx_default_user_id: str = Field(default="", alias="TRENDX_DEFAULT_USER_ID")
 

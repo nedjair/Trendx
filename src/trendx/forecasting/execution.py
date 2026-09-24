@@ -25,6 +25,13 @@ from pathlib import Path
 from threading import RLock
 from typing import Any, Protocol, Self
 
+from trendx.forecasting.audit import (
+    AuditActorType,
+    AuditOperation,
+    AuditOutcome,
+    ExecutionAuditService,
+)
+
 
 class ExecutionStatus(str, Enum):
     """Lifecycle states for one forecast execution."""
@@ -254,6 +261,33 @@ class MemoryExecutionStore:
 
     _records: dict[str, ExecutionRecord] = field(default_factory=dict)
     _lock: RLock = field(default_factory=RLock, init=False, repr=False)
+    audit_service: ExecutionAuditService | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
+    audit_source: str = "w98-execution-store"
+
+    def _audit_execution(
+        self,
+        record: ExecutionRecord,
+        outcome: AuditOutcome,
+        reason_code: str,
+    ) -> None:
+        if self.audit_service is None:
+            return
+        self.audit_service.record(
+            operation=AuditOperation.EXECUTION,
+            outcome=outcome,
+            tenant_id=record.tenant_id,
+            execution_id=record.execution_id,
+            reference_key=record.reference_key,
+            actor_type=AuditActorType.SYSTEM,
+            actor_id="system",
+            request_id=f"execution:{record.execution_id}",
+            source=self.audit_source,
+            reason_code=reason_code,
+        )
 
     @staticmethod
     def _copy(record: ExecutionRecord) -> ExecutionRecord:
@@ -327,6 +361,7 @@ class MemoryExecutionStore:
                 result=_copy_result(provenance.result),
             )
             self._records[execution_id] = self._copy(updated)
+            self._audit_execution(updated, AuditOutcome.SUCCESS, "execution_succeeded")
             return self._copy(updated)
 
     def mark_failed(
@@ -375,6 +410,7 @@ class MemoryExecutionStore:
                 result=None,
             )
             self._records[execution_id] = self._copy(updated)
+            self._audit_execution(updated, AuditOutcome.FAILED, "execution_failed")
             return self._copy(updated)
 
     def delete_if_unchanged(
@@ -593,8 +629,17 @@ class DurableExecutionStore:
 
     FORMAT_VERSION = 1
 
-    def __init__(self, path: str | Path, *, create_if_missing: bool = True) -> None:
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        create_if_missing: bool = True,
+        audit_service: ExecutionAuditService | None = None,
+        audit_source: str = "w98-execution-store",
+    ) -> None:
         self._path = Path(path)
+        self._audit_service = audit_service
+        self._audit_source = audit_source
         self._lock_path = self._path.with_name(f".{self._path.name}.lock")
         self._path.parent.mkdir(parents=True, exist_ok=True)
         with self._locked():
@@ -617,6 +662,27 @@ class DurableExecutionStore:
         so there is no long-lived connection to release.  The method exists
         to make process lifecycle explicit for callers and tests.
         """
+
+    def _audit_execution(
+        self,
+        record: ExecutionRecord,
+        outcome: AuditOutcome,
+        reason_code: str,
+    ) -> None:
+        if self._audit_service is None:
+            return
+        self._audit_service.record(
+            operation=AuditOperation.EXECUTION,
+            outcome=outcome,
+            tenant_id=record.tenant_id,
+            execution_id=record.execution_id,
+            reference_key=record.reference_key,
+            actor_type=AuditActorType.SYSTEM,
+            actor_id="system",
+            request_id=f"execution:{record.execution_id}",
+            source=self._audit_source,
+            reason_code=reason_code,
+        )
 
     def __enter__(self) -> Self:
         return self
@@ -812,6 +878,7 @@ class DurableExecutionStore:
             )
             records[execution_id] = updated.to_dict()
             self._write_unlocked(records)
+            self._audit_execution(updated, AuditOutcome.SUCCESS, "execution_succeeded")
             return updated
 
     def mark_failed(
@@ -872,6 +939,7 @@ class DurableExecutionStore:
             )
             records[execution_id] = updated.to_dict()
             self._write_unlocked(records)
+            self._audit_execution(updated, AuditOutcome.FAILED, "execution_failed")
             return updated
 
     def get(self, execution_id: str) -> ExecutionRecord | None:
