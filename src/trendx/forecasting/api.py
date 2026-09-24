@@ -1,4 +1,4 @@
-"""W101 — operational read-only API for forecast execution history.
+"""W101/W104 — operational read-only API for forecast execution history.
 
 The router delegates exclusively to :class:`ExecutionHistoryService`.  The
 application wiring supplies the service through ``app.state``; this module
@@ -16,6 +16,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from loguru import logger
 from pydantic import BaseModel, Field
 from trendx.config import settings
+from trendx.forecasting.analytics import (
+    TREND_CONTRACT,
+    ExecutionAnalytics,
+    analyze_execution_history,
+)
 from trendx.forecasting.execution import ExecutionRecord, ExecutionStatus, ExecutionStoreError
 from trendx.forecasting.history import (
     MAX_HISTORY_PAGE_SIZE,
@@ -139,6 +144,74 @@ class ExecutionStatsOut(BaseModel):
         )
 
 
+class AnalyticsGroupOut(BaseModel):
+    key: str
+    total: int
+    success_count: int
+    failed_count: int
+    success_rate: float
+    prediction_count: int
+
+
+class EntityAnalyticsOut(BaseModel):
+    entity_type: str
+    entity_id: str
+    total: int
+    success_count: int
+    failed_count: int
+    success_rate: float
+    prediction_count: int
+
+
+class ModelAnalyticsOut(BaseModel):
+    model_config = {"protected_namespaces": ()}
+
+    model_id: str
+    model_version: str
+    total: int
+    success_count: int
+    failed_count: int
+    success_rate: float
+    prediction_count: int
+
+
+class FailureAnalyticsOut(BaseModel):
+    error_code: str
+    count: int
+    proportion: float = Field(
+        description="Fraction of failed executions in the filtered tenant scope"
+    )
+
+
+class TimeBucketOut(BaseModel):
+    bucket: str
+    total: int
+    success_count: int
+    failed_count: int
+    prediction_count: int
+
+
+class TrendContractOut(BaseModel):
+    dimension: str
+    bucket: str
+    timezone: str
+    inclusivity: str
+    ordering: str
+
+
+class ExecutionAnalyticsOut(BaseModel):
+    tenant_id: str
+    summary: ExecutionStatsOut
+    by_metric: list[AnalyticsGroupOut]
+    by_entity: list[EntityAnalyticsOut]
+    by_algorithm: list[AnalyticsGroupOut]
+    by_model: list[ModelAnalyticsOut]
+    by_status: list[AnalyticsGroupOut]
+    failures: list[FailureAnalyticsOut]
+    created_at_trend: list[TimeBucketOut]
+    trend_contract: TrendContractOut
+
+
 class FailureDiagnosticOut(BaseModel):
     model_config = {"protected_namespaces": ()}
 
@@ -174,6 +247,89 @@ class ExecutionDiagnosticOut(BaseModel):
 
 class ExecutionErrorOut(BaseModel):
     detail: str
+
+
+def _analytics_out(result: ExecutionAnalytics) -> ExecutionAnalyticsOut:
+    return ExecutionAnalyticsOut(
+        tenant_id=result.tenant_id,
+        summary=ExecutionStatsOut.from_statistics(result.summary),
+        by_metric=[
+            AnalyticsGroupOut(
+                key=item.key,
+                total=item.total,
+                success_count=item.success_count,
+                failed_count=item.failed_count,
+                success_rate=item.success_rate,
+                prediction_count=item.prediction_count,
+            )
+            for item in result.by_metric
+        ],
+        by_entity=[
+            EntityAnalyticsOut(
+                entity_type=item.entity_type,
+                entity_id=item.entity_id,
+                total=item.total,
+                success_count=item.success_count,
+                failed_count=item.failed_count,
+                success_rate=item.success_rate,
+                prediction_count=item.prediction_count,
+            )
+            for item in result.by_entity
+        ],
+        by_algorithm=[
+            AnalyticsGroupOut(
+                key=item.key,
+                total=item.total,
+                success_count=item.success_count,
+                failed_count=item.failed_count,
+                success_rate=item.success_rate,
+                prediction_count=item.prediction_count,
+            )
+            for item in result.by_algorithm
+        ],
+        by_model=[
+            ModelAnalyticsOut(
+                model_id=item.model_id,
+                model_version=item.model_version,
+                total=item.total,
+                success_count=item.success_count,
+                failed_count=item.failed_count,
+                success_rate=item.success_rate,
+                prediction_count=item.prediction_count,
+            )
+            for item in result.by_model
+        ],
+        by_status=[
+            AnalyticsGroupOut(
+                key=item.key,
+                total=item.total,
+                success_count=item.success_count,
+                failed_count=item.failed_count,
+                success_rate=item.success_rate,
+                prediction_count=item.prediction_count,
+            )
+            for item in result.by_status
+        ],
+        failures=[
+            FailureAnalyticsOut(
+                error_code=item.error_code,
+                count=item.count,
+                proportion=item.proportion,
+            )
+            for item in result.failures
+        ],
+        created_at_trend=[
+            TimeBucketOut(
+                bucket=item.bucket,
+                total=item.total,
+                success_count=item.success_count,
+                failed_count=item.failed_count,
+                prediction_count=item.prediction_count,
+            )
+            for item in result.created_at_trend
+        ],
+        trend_contract=TrendContractOut(**TREND_CONTRACT),
+    )
 
 
 class _ApiErrorCode(str, Enum):
@@ -338,7 +494,59 @@ def build_execution_query(
 ExecutionQueryDep = Annotated[ExecutionQuery, Depends(build_execution_query)]
 
 
-def _service_unavailable(exc: ExecutionStoreError) -> HTTPException:
+def build_analytics_query(
+    tenant_context: TenantContextDep,
+    tenant_id: str | None = Query(None),
+    entity_type: str | None = Query(None),
+    entity_id: str | None = Query(None),
+    target_metric: str | None = Query(None),
+    execution_id: str | None = Query(None),
+    reference_key: str | None = Query(None),
+    model_id: str | None = Query(None),
+    model_version: str | None = Query(None),
+    algorithm: str | None = Query(None),
+    feature_schema_version: str | None = Query(None),
+    feature_schema_fingerprint: str | None = Query(None),
+    status: str | None = Query(None),
+    created_at_from: str | None = Query(None),
+    created_at_to: str | None = Query(None),
+    completed_at_from: str | None = Query(None),
+    completed_at_to: str | None = Query(None),
+) -> ExecutionQuery:
+    if tenant_id is not None and tenant_id != tenant_context.tenant_id:
+        _observe("analytics_query", "tenant_rejected", 403)
+        raise HTTPException(status_code=403, detail=_ApiErrorCode.TENANT_FORBIDDEN.value)
+    try:
+        return ExecutionQuery(
+            tenant_id=tenant_context.tenant_id,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            target_metric=target_metric,
+            execution_id=execution_id,
+            reference_key=reference_key,
+            model_id=model_id,
+            model_version=model_version,
+            algorithm=algorithm,
+            feature_schema_version=feature_schema_version,
+            feature_schema_fingerprint=feature_schema_fingerprint,
+            status=status,
+            created_at_from=created_at_from,
+            created_at_to=created_at_to,
+            completed_at_from=completed_at_from,
+            completed_at_to=completed_at_to,
+        )
+    except ValueError as exc:
+        _observe("analytics_query", "invalid_request", 422)
+        raise HTTPException(
+            status_code=422,
+            detail=_ApiErrorCode.INVALID_QUERY.value,
+        ) from exc
+
+
+ExecutionAnalyticsQueryDep = Annotated[ExecutionQuery, Depends(build_analytics_query)]
+
+
+def _service_unavailable(exc: Exception) -> HTTPException:
     return HTTPException(
         status_code=503,
         detail=_ApiErrorCode.EXECUTION_HISTORY_UNAVAILABLE.value,
@@ -402,6 +610,37 @@ def execution_statistics(
         raise _service_unavailable(exc) from exc
     _observe("statistics", "success", 200)
     return result
+
+
+@router.get(
+    "/analytics",
+    response_model=ExecutionAnalyticsOut,
+    summary="Analyze forecast execution history",
+    description=(
+        "Read-only aggregate projection over the authorized tenant's persisted execution history. "
+        "All date filters use W99 UTC normalization and inclusive bounds; trend buckets are exact "
+        "created_at timestamps in ascending UTC order. Pagination is intentionally not applied."
+    ),
+    responses=_ERROR_RESPONSES,
+)
+def execution_analytics(
+    query: ExecutionAnalyticsQueryDep,
+    service: ExecutionHistoryServiceDep,
+) -> ExecutionAnalyticsOut:
+    try:
+        result = analyze_execution_history(service, query)
+    except (ExecutionStoreError, OSError, UnicodeError) as exc:
+        _observe("analytics", "datastore_unavailable", 503)
+        raise _service_unavailable(exc) from exc
+    except ValueError as exc:
+        _observe("analytics", "invalid_request", 422)
+        raise HTTPException(
+            status_code=422,
+            detail=_ApiErrorCode.INVALID_QUERY.value,
+        ) from exc
+    response = _analytics_out(result)
+    _observe("analytics", "success", 200)
+    return response
 
 
 @router.get(
@@ -490,15 +729,23 @@ def get_execution(
 
 
 __all__ = [
+    "AnalyticsGroupOut",
+    "EntityAnalyticsOut",
+    "ExecutionAnalyticsOut",
     "ExecutionDiagnosticOut",
     "ExecutionErrorOut",
     "ExecutionHistoryService",
     "ExecutionListOut",
     "ExecutionOut",
     "ExecutionStatsOut",
+    "FailureAnalyticsOut",
     "FailureDiagnosticOut",
+    "ModelAnalyticsOut",
     "TenantContext",
     "TenantContextError",
+    "TimeBucketOut",
+    "TrendContractOut",
+    "build_analytics_query",
     "build_execution_query",
     "get_execution_history_service",
     "get_tenant_context",
