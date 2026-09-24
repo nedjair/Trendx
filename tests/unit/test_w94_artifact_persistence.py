@@ -194,6 +194,15 @@ def _treq(target="temperature", **kw):
     return TrainingRequest(**params)
 
 
+def _promote(reg, model_id, dataset=None, *, artifact_store=None):
+    """Call the W94 promotion API with an explicit W87 reference dataset."""
+    return reg.promote(
+        model_id,
+        dataset if dataset is not None else _dataset(),
+        artifact_store=artifact_store,
+    )
+
+
 # ---------------------------------------------------------------------------
 # A: Artifact save
 # ---------------------------------------------------------------------------
@@ -534,7 +543,7 @@ def test_r_champion_preserved_after_training(tmp_path):
     reg = ChampionRegistry()
     champ_a = _candidate("champ-A", uri="file:///dev/null")
     reg.register(champ_a)
-    reg.promote("champ-A")
+    _promote(reg, "champ-A")
     assert reg.champions()[0].model_id == "champ-A"
 
     # Train B
@@ -562,7 +571,7 @@ def test_s_champion_preserved_after_registration(tmp_path):
     reg = ChampionRegistry()
     champ_a = _candidate("champ-A", uri="file:///dev/null")
     reg.register(champ_a)
-    reg.promote("champ-A")
+    _promote(reg, "champ-A")
 
     m = _candidate("m1", uri="")
     store = FileSystemArtifactStore(base_path=tmp_path / "art")
@@ -585,12 +594,12 @@ def test_s_champion_preserved_after_registration(tmp_path):
 def test_t_promote_b_becomes_champion():
     reg = ChampionRegistry()
     reg.register(_candidate("champ-A", uri="file:///dev/null"))
-    reg.promote("champ-A")
+    _promote(reg, "champ-A")
 
     b = _candidate("challenger-B", uri="file:///dev/null")
     reg.register(b)
 
-    promoted = reg.promote("challenger-B")
+    promoted = _promote(reg, "challenger-B")
     assert promoted.role is ModelRole.CHAMPION
     assert [c.model_id for c in reg.champions()] == ["challenger-B"]
 
@@ -607,10 +616,10 @@ def test_u_a_becomes_challenger_after_promote_b():
     b = _candidate("challenger-B", uri="file:///dev/null")
     reg.register(a)
     reg.register(b)
-    reg.promote("champ-A")
+    _promote(reg, "champ-A")
     assert reg.champions()[0].model_id == "champ-A"
 
-    reg.promote("challenger-B")
+    _promote(reg, "challenger-B")
     champs = reg.champions()
     assert [c.model_id for c in champs] == ["challenger-B"]
     a_after = reg.get("champ-A")
@@ -628,7 +637,7 @@ def test_v_failed_cannot_be_champion():
     failed = _candidate("fail-M", status=ModelStatus.FAILED, uri="file:///dev/null")
     reg.register(failed)
     with pytest.raises(ValueError, match="not READY"):
-        reg.promote("fail-M")
+        _promote(reg, "fail-M")
     assert reg.champions() == []
 
 
@@ -643,7 +652,55 @@ def test_w_unknown_algorithm_cannot_be_champion():
     unk = _candidate("unk-M", algo=Algorithm.UNKNOWN, uri="file:///dev/null")
     reg.register(unk)
     with pytest.raises(ValueError, match="UNKNOWN"):
-        reg.promote("unk-M")
+        _promote(reg, "unk-M")
+
+
+def _assert_incompatible_promotion_refused(candidate, dataset, reason):
+    reg = ChampionRegistry()
+    champion = _candidate("champ-A")
+    reg.register(champion)
+    _promote(reg, "champ-A")
+
+    reg.register(candidate)
+    with pytest.raises(ValueError, match=reason.value):
+        _promote(reg, candidate.model_id, dataset)
+
+    assert [model.model_id for model in reg.champions()] == ["champ-A"]
+    assert reg.get(candidate.model_id).role is ModelRole.CHALLENGER
+
+
+@pytest.mark.unit
+def test_schema_mismatch_promotion_refused():
+    features = (FeatureDefinition(name="a", metric="a"),)
+    candidate = _candidate("schema-mismatch", features=(), uri="file:///dev/null")
+    dataset = _dataset(features=features)
+    _assert_incompatible_promotion_refused(
+        candidate,
+        dataset,
+        IncompatibilityReason.FEATURE_SCHEMA_MISMATCH,
+    )
+
+
+@pytest.mark.unit
+def test_frequency_mismatch_promotion_refused():
+    candidate = _candidate("frequency-mismatch", freq="1h", uri="file:///dev/null")
+    dataset = _dataset(features=(), freq="15m")
+    _assert_incompatible_promotion_refused(
+        candidate,
+        dataset,
+        IncompatibilityReason.FREQUENCY_MISMATCH,
+    )
+
+
+@pytest.mark.unit
+def test_horizon_mismatch_promotion_refused():
+    candidate = _candidate("horizon-mismatch", hz=24, uri="file:///dev/null")
+    dataset = _dataset(features=(), hz=48)
+    _assert_incompatible_promotion_refused(
+        candidate,
+        dataset,
+        IncompatibilityReason.HORIZON_MISMATCH,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -659,7 +716,7 @@ def test_x_artifact_absent_cannot_be_champion(tmp_path):
     m = _candidate("m1", uri="file:///nonexistent")
     reg.register(m)
     with pytest.raises(ArtifactError, match="artifact not found"):
-        reg.promote("m1", artifact_store=store)
+        _promote(reg, "m1", artifact_store=store)
     assert reg.champions() == []
 
 
@@ -673,11 +730,11 @@ def test_y_promotion_idempotent():
     reg = ChampionRegistry()
     b = _candidate("B", uri="file:///dev/null")
     reg.register(b)
-    first = reg.promote("B")
-    second = reg.promote("B")
+    first = _promote(reg, "B")
+    second = _promote(reg, "B")
     assert first is second or first.model_id == second.model_id
     assert [c.model_id for c in reg.champions()] == ["B"]
-    reg.promote("B")
+    _promote(reg, "B")
     assert [c.model_id for c in reg.champions()] == ["B"]
 
 
@@ -693,8 +750,8 @@ def test_z_two_entities_isolated():
     b1 = _candidate("B1", entity="entity-B", target="temperature")
     reg.register(a1)
     reg.register(b1)
-    reg.promote("A1")
-    reg.promote("B1")
+    _promote(reg, "A1", _dataset(entity="entity-A"))
+    _promote(reg, "B1", _dataset(entity="entity-B"))
     champs = reg.champions()
     assert len(champs) == 2
     assert {c.model_id for c in champs} == {"A1", "B1"}
@@ -750,8 +807,8 @@ def test_ab_external_feature_schema_isolated(tmp_path):
     reg.register(m_with)
 
     # Promote both — they should coexist as separate champions
-    reg.promote("no-ext")
-    reg.promote("with-ext")
+    _promote(reg, "no-ext", _dataset(features=feats_no_ext))
+    _promote(reg, "with-ext", _dataset(features=feats_with_ext))
     assert {c.model_id for c in reg.champions()} == {"no-ext", "with-ext"}
 
 
@@ -1086,7 +1143,7 @@ def test_promote_with_store_passing_integrity(store):
     m = _candidate("champ", uri=uri, algo=Algorithm.FOURIER)
     reg = ChampionRegistry()
     reg.register(m)
-    promoted = reg.promote("champ", artifact_store=store)
+    promoted = _promote(reg, "champ", artifact_store=store)
     assert promoted.role is ModelRole.CHAMPION
 
 
@@ -1103,7 +1160,7 @@ def test_promote_with_corrupted_artifact_fails(store):
     reg = ChampionRegistry()
     reg.register(m)
     with pytest.raises(ArtifactIntegrityError, match="integrity"):
-        reg.promote("p2", artifact_store=store)
+        _promote(reg, "p2", artifact_store=store)
     assert reg.champions() == []
 
 

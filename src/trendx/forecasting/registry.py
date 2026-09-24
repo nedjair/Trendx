@@ -269,6 +269,7 @@ class ChampionRegistry:
     def promote(
         self,
         model_id: str,
+        dataset: ForecastDataset,
         *,
         artifact_store: Any = None,
     ) -> RegisteredModel:
@@ -283,6 +284,11 @@ class ChampionRegistry:
         * ``algorithm`` must be concrete (not ``UNKNOWN``)
         * if an ``artifact_store`` is supplied, the artifact must exist
           and pass integrity check
+        * the model must pass the W87 compatibility check against ``dataset``
+
+        ``dataset`` is required because promotion has no safe implicit
+        reference for feature schema, frequency, or horizon.  Callers must
+        provide the same reference used by prediction.
 
         Training, registration, and evaluation never call this — only an
         explicit, audited promotion step does.
@@ -324,6 +330,14 @@ class ChampionRegistry:
             if not artifact_store.integrity_check(current.model_uri):
                 msg = f"Cannot promote model {model_id!r}: artifact integrity check failed"
                 raise ArtifactIntegrityError(msg)
+
+        compatibility = check_compatibility(current, dataset)
+        if not compatibility.ok:
+            msg = (
+                f"Cannot promote model {model_id!r}: "
+                f"{compatibility.reason.value} ({compatibility.detail})"
+            )
+            raise ValueError(msg)
 
         # Already champion → idempotent no-op.
         if current.role is ModelRole.CHAMPION:
