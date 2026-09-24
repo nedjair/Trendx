@@ -13,6 +13,7 @@ from enum import Enum
 from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from loguru import logger
 from pydantic import BaseModel, Field
 from trendx.config import settings
 from trendx.forecasting.execution import ExecutionRecord, ExecutionStatus, ExecutionStoreError
@@ -185,6 +186,17 @@ class _ApiErrorCode(str, Enum):
     DIAGNOSTIC_UNAVAILABLE = "diagnostic_unavailable"
 
 
+def _observe(operation: str, outcome: str, status_code: int) -> None:
+    """Emit a minimal, non-sensitive execution-history observability event."""
+
+    logger.info(
+        "execution_history operation={} outcome={} status_code={}",
+        operation,
+        outcome,
+        status_code,
+    )
+
+
 _ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     401: {"model": ExecutionErrorOut, "description": "Authentication required"},
     403: {"model": ExecutionErrorOut, "description": "Tenant context is not authorized"},
@@ -220,6 +232,7 @@ def get_tenant_context() -> TenantContext:
 
     tenant_id = settings.trendx_default_tenant_id.strip()
     if not tenant_id:
+        _observe("tenant", "tenant_rejected", 403)
         raise TenantContextError(
             status_code=403,
             detail=_ApiErrorCode.TENANT_CONTEXT_UNAVAILABLE.value,
@@ -235,6 +248,7 @@ def get_execution_history_service(request: Request) -> ExecutionHistoryService:
 
     factory = getattr(request.app.state, "execution_history_service_factory", None)
     if not callable(factory):
+        _observe("service", "datastore_unavailable", 503)
         raise HTTPException(
             status_code=503,
             detail=_ApiErrorCode.EXECUTION_HISTORY_UNAVAILABLE.value,
@@ -242,11 +256,13 @@ def get_execution_history_service(request: Request) -> ExecutionHistoryService:
     try:
         service = cast(Callable[[], ExecutionHistoryService | None], factory)()
     except (ExecutionStoreError, OSError, UnicodeError) as exc:
+        _observe("service", "datastore_unavailable", 503)
         raise HTTPException(
             status_code=503,
             detail=_ApiErrorCode.EXECUTION_HISTORY_UNAVAILABLE.value,
         ) from exc
     if service is None:
+        _observe("service", "datastore_unavailable", 503)
         raise HTTPException(
             status_code=503,
             detail=_ApiErrorCode.EXECUTION_HISTORY_UNAVAILABLE.value,
@@ -282,8 +298,10 @@ def build_execution_query(
     offset: int = Query(0),
 ) -> ExecutionQuery:
     if tenant_id is not None and tenant_id != tenant_context.tenant_id:
+        _observe("query", "tenant_rejected", 403)
         raise HTTPException(status_code=403, detail=_ApiErrorCode.TENANT_FORBIDDEN.value)
     if limit < 1 or limit > MAX_HISTORY_PAGE_SIZE or offset < 0:
+        _observe("query", "invalid_request", 422)
         raise HTTPException(
             status_code=422,
             detail=_ApiErrorCode.INVALID_PAGINATION.value,
@@ -310,6 +328,7 @@ def build_execution_query(
             offset=offset,
         )
     except ValueError as exc:
+        _observe("query", "invalid_request", 422)
         raise HTTPException(
             status_code=422,
             detail=_ApiErrorCode.INVALID_QUERY.value,
@@ -329,8 +348,10 @@ def _service_unavailable(exc: ExecutionStoreError) -> HTTPException:
 def _authorized_record(
     record: ExecutionRecord | None,
     tenant_context: TenantContext,
+    operation: str,
 ) -> ExecutionRecord:
     if record is None or record.tenant_id != tenant_context.tenant_id:
+        _observe(operation, "not_found", 404)
         raise HTTPException(status_code=404, detail=_ApiErrorCode.EXECUTION_NOT_FOUND.value)
     return record
 
@@ -351,14 +372,17 @@ def list_executions(
     try:
         page = service.query(query)
     except ExecutionStoreError as exc:
+        _observe("list", "datastore_unavailable", 503)
         raise _service_unavailable(exc) from exc
-    return ExecutionListOut(
+    result = ExecutionListOut(
         items=[ExecutionOut.from_record(record) for record in page.records],
         total=page.total,
         limit=page.limit or MAX_HISTORY_PAGE_SIZE,
         offset=page.offset,
         has_more=page.has_more,
     )
+    _observe("list", "success", 200)
+    return result
 
 
 @router.get(
@@ -372,9 +396,12 @@ def execution_statistics(
     service: ExecutionHistoryServiceDep,
 ) -> ExecutionStatsOut:
     try:
-        return ExecutionStatsOut.from_statistics(service.statistics(query))
+        result = ExecutionStatsOut.from_statistics(service.statistics(query))
     except ExecutionStoreError as exc:
+        _observe("statistics", "datastore_unavailable", 503)
         raise _service_unavailable(exc) from exc
+    _observe("statistics", "success", 200)
+    return result
 
 
 @router.get(
@@ -391,8 +418,13 @@ def get_execution_by_reference(
     try:
         record = service.get_by_reference_key(reference_key)
     except ExecutionStoreError as exc:
+        _observe("get_by_reference", "datastore_unavailable", 503)
         raise _service_unavailable(exc) from exc
-    return ExecutionOut.from_record(_authorized_record(record, tenant_context))
+    result = ExecutionOut.from_record(
+        _authorized_record(record, tenant_context, "get_by_reference")
+    )
+    _observe("get_by_reference", "success", 200)
+    return result
 
 
 @router.get(
@@ -407,24 +439,33 @@ def get_execution_diagnostic(
     service: ExecutionHistoryServiceDep,
 ) -> ExecutionDiagnosticOut:
     try:
-        record = _authorized_record(service.get(execution_id), tenant_context)
+        record = _authorized_record(service.get(execution_id), tenant_context, "diagnostic")
         if record.status is not ExecutionStatus.FAILED:
-            return ExecutionDiagnosticOut(execution_id=record.execution_id, status=record.status)
+            result = ExecutionDiagnosticOut(
+                execution_id=record.execution_id,
+                status=record.status,
+            )
+            _observe("diagnostic", "success", 200)
+            return result
         diagnostics = service.failure_diagnostics(
             ExecutionQuery(tenant_id=tenant_context.tenant_id, execution_id=execution_id)
         )
     except ExecutionStoreError as exc:
+        _observe("diagnostic", "datastore_unavailable", 503)
         raise _service_unavailable(exc) from exc
     if not diagnostics:
+        _observe("diagnostic", "diagnostic_unavailable", 503)
         raise HTTPException(
             status_code=503,
             detail=_ApiErrorCode.DIAGNOSTIC_UNAVAILABLE.value,
         )
-    return ExecutionDiagnosticOut(
+    result = ExecutionDiagnosticOut(
         execution_id=record.execution_id,
         status=record.status,
         failure=FailureDiagnosticOut.from_diagnostic(diagnostics[0]),
     )
+    _observe("diagnostic", "success", 200)
+    return result
 
 
 @router.get(
@@ -441,8 +482,11 @@ def get_execution(
     try:
         record = service.get(execution_id)
     except ExecutionStoreError as exc:
+        _observe("get", "datastore_unavailable", 503)
         raise _service_unavailable(exc) from exc
-    return ExecutionOut.from_record(_authorized_record(record, tenant_context))
+    result = ExecutionOut.from_record(_authorized_record(record, tenant_context, "get"))
+    _observe("get", "success", 200)
+    return result
 
 
 __all__ = [
