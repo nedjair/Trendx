@@ -39,6 +39,17 @@ from trendx.forecasting.audit import (
     ExecutionAuditStatistics,
     audit_request_context,
 )
+from trendx.forecasting.audit_control import (
+    ExecutionAuditControlService,
+    ExecutionAuditExportService,
+    ExecutionAuditIntegrityService,
+    ExecutionAuditReconciliationService,
+    ExportFormat,
+    IntegrityReport,
+    IntegrityStatus,
+    ReconciliationReport,
+    ReconciliationStatus,
+)
 from trendx.forecasting.execution import ExecutionRecord, ExecutionStatus, ExecutionStoreError
 from trendx.forecasting.history import (
     MAX_HISTORY_PAGE_SIZE,
@@ -481,6 +492,100 @@ class ExecutionAuditStatsOut(BaseModel):
     @classmethod
     def from_statistics(cls, statistics: ExecutionAuditStatistics) -> ExecutionAuditStatsOut:
         return cls(**statistics.to_dict())
+
+
+class ExecutionAuditIntegrityOut(BaseModel):
+    """W111 read-only integrity verdict for the authenticated tenant."""
+
+    report_version: str
+    generated_at: str
+    tenant_id: str
+    documents_scanned: int
+    events_scanned: int
+    valid_events: int
+    invalid_events: int
+    duplicate_events: int
+    checksum_failures: int
+    schema_failures: int
+    version_failures: int
+    canonicalization_failures: int
+    identity_failures: int
+    unsafe_documents: int
+    unreadable_documents: int
+    malformed_documents: int
+    first_failure: str | None
+    integrity_status: IntegrityStatus
+
+    @classmethod
+    def from_report(cls, report: IntegrityReport) -> ExecutionAuditIntegrityOut:
+        return cls(**report.to_dict())
+
+
+class ExecutionAuditReconciliationFindingOut(BaseModel):
+    code: str
+    severity: str
+    detail: str
+    event_id: str | None
+    operation: str | None
+    request_id: str | None
+
+
+class ExecutionAuditReconciliationOut(BaseModel):
+    """W111 read-only logical reconciliation verdict."""
+
+    report_version: str
+    generated_at: str
+    tenant_id: str
+    events_scanned: int
+    checks_run: int
+    inconsistencies: int
+    warnings: int
+    correlation_chains: int
+    first_failure: str | None
+    reconciliation_status: ReconciliationStatus
+    findings: list[ExecutionAuditReconciliationFindingOut]
+
+    @classmethod
+    def from_report(cls, report: ReconciliationReport) -> ExecutionAuditReconciliationOut:
+        payload = report.to_dict()
+        return cls(
+            **{key: value for key, value in payload.items() if key != "findings"},
+            findings=[
+                ExecutionAuditReconciliationFindingOut(**finding) for finding in payload["findings"]
+            ],
+        )
+
+
+class ExecutionAuditExportOut(BaseModel):
+    """W111 deterministic export payload.
+
+    ``content`` is the exact canonical byte sequence covered by
+    ``export_checksum``; ``generated_at`` is transport metadata and is
+    deliberately outside the checksummed bytes.
+    """
+
+    export_version: str
+    format: ExportFormat
+    tenant_id: str
+    event_count: int
+    total: int
+    limit: int
+    offset: int
+    has_more: bool
+    export_checksum: str
+    generated_at: str
+    content: str
+
+
+class ExecutionAuditExportChecksumOut(BaseModel):
+    export_version: str
+    format: ExportFormat
+    tenant_id: str
+    event_count: int
+    total: int
+    limit: int
+    offset: int
+    export_checksum: str
 
 
 def _safe_response_identifier(value: str) -> str:
@@ -950,6 +1055,55 @@ ExecutionAuditServiceDep = Annotated[
 ]
 
 
+def get_execution_audit_control_service(
+    service: ExecutionAuditServiceDep,
+) -> ExecutionAuditControlService:
+    """Wrap the resolved W110 service in the W111 read-only control plane.
+
+    Authentication and tenant resolution are **not** repeated here: the W110
+    dependency above already applied the existing auth and store-availability
+    policy, so W111 inherits it instead of duplicating it.
+    """
+
+    return ExecutionAuditControlService(service)
+
+
+def get_execution_audit_integrity_service(
+    control: Annotated[ExecutionAuditControlService, Depends(get_execution_audit_control_service)],
+) -> ExecutionAuditIntegrityService:
+    return ExecutionAuditIntegrityService(control.service)
+
+
+def get_execution_audit_reconciliation_service(
+    control: Annotated[ExecutionAuditControlService, Depends(get_execution_audit_control_service)],
+) -> ExecutionAuditReconciliationService:
+    return ExecutionAuditReconciliationService(control.service)
+
+
+def get_execution_audit_export_service(
+    control: Annotated[ExecutionAuditControlService, Depends(get_execution_audit_control_service)],
+) -> ExecutionAuditExportService:
+    return ExecutionAuditExportService(control.service)
+
+
+ExecutionAuditControlDep = Annotated[
+    ExecutionAuditControlService,
+    Depends(get_execution_audit_control_service),
+]
+ExecutionAuditIntegrityDep = Annotated[
+    ExecutionAuditIntegrityService,
+    Depends(get_execution_audit_integrity_service),
+]
+ExecutionAuditReconciliationDep = Annotated[
+    ExecutionAuditReconciliationService,
+    Depends(get_execution_audit_reconciliation_service),
+]
+ExecutionAuditExportDep = Annotated[
+    ExecutionAuditExportService,
+    Depends(get_execution_audit_export_service),
+]
+
+
 def _record_optional_restore_audit(
     service: ExecutionAuditService | None,
     result: ExecutionRestoreResult,
@@ -1185,6 +1339,37 @@ _AUDIT_QUERY_FIELDS = frozenset(
 )
 
 
+def _build_audit_query(
+    request: Request,
+    tenant_context: TenantContext,
+    extra_fields: frozenset[str],
+    **filters: Any,
+) -> ExecutionAuditQuery:
+    """Single W110 audit filter implementation, reused verbatim by W111.
+
+    ``extra_fields`` only widens the *accepted* query-parameter names; tenant
+    pinning, bounds, unknown-field rejection and value validation stay in one
+    place instead of being duplicated per route.
+    """
+
+    unknown = set(request.query_params) - _AUDIT_QUERY_FIELDS - extra_fields
+    if unknown:
+        _observe("audit", "invalid_request", 422)
+        raise HTTPException(status_code=422, detail=_ApiErrorCode.INVALID_AUDIT_QUERY.value)
+    requested_tenant = filters.pop("tenant_id", None)
+    if requested_tenant is not None and requested_tenant != tenant_context.tenant_id:
+        _observe("audit", "tenant_rejected", 403)
+        raise HTTPException(status_code=403, detail=_ApiErrorCode.TENANT_FORBIDDEN.value)
+    try:
+        return ExecutionAuditQuery(tenant_id=tenant_context.tenant_id, **filters)
+    except (TypeError, ValueError) as exc:
+        _observe("audit", "invalid_request", 422)
+        raise HTTPException(
+            status_code=422,
+            detail=_ApiErrorCode.INVALID_AUDIT_QUERY.value,
+        ) from exc
+
+
 def build_execution_audit_query(
     request: Request,
     tenant_context: TenantContextDep,
@@ -1203,39 +1388,73 @@ def build_execution_audit_query(
     limit: int = Query(100, ge=1, le=MAX_AUDIT_QUERY_LIMIT),
     offset: int = Query(0, ge=0, le=MAX_AUDIT_OFFSET),
 ) -> ExecutionAuditQuery:
-    unknown = set(request.query_params) - _AUDIT_QUERY_FIELDS
-    if unknown:
-        _observe("audit", "invalid_request", 422)
-        raise HTTPException(status_code=422, detail=_ApiErrorCode.INVALID_AUDIT_QUERY.value)
-    if tenant_id is not None and tenant_id != tenant_context.tenant_id:
-        _observe("audit", "tenant_rejected", 403)
-        raise HTTPException(status_code=403, detail=_ApiErrorCode.TENANT_FORBIDDEN.value)
-    try:
-        return ExecutionAuditQuery(
-            tenant_id=tenant_context.tenant_id,
-            event_id=event_id,
-            operation=cast(Any, operation),
-            outcome=cast(Any, outcome),
-            execution_id=execution_id,
-            reference_key=reference_key,
-            occurred_at_from=occurred_at_from,
-            occurred_at_to=occurred_at_to,
-            request_id=request_id,
-            actor_type=cast(Any, actor_type),
-            source=source,
-            reason_code=reason_code,
-            limit=limit,
-            offset=offset,
-        )
-    except (TypeError, ValueError) as exc:
-        _observe("audit", "invalid_request", 422)
-        raise HTTPException(
-            status_code=422,
-            detail=_ApiErrorCode.INVALID_AUDIT_QUERY.value,
-        ) from exc
+    return _build_audit_query(
+        request,
+        tenant_context,
+        frozenset(),
+        tenant_id=tenant_id,
+        event_id=event_id,
+        operation=cast(Any, operation),
+        outcome=cast(Any, outcome),
+        execution_id=execution_id,
+        reference_key=reference_key,
+        occurred_at_from=occurred_at_from,
+        occurred_at_to=occurred_at_to,
+        request_id=request_id,
+        actor_type=cast(Any, actor_type),
+        source=source,
+        reason_code=reason_code,
+        limit=limit,
+        offset=offset,
+    )
+
+
+def build_execution_audit_export_query(
+    request: Request,
+    tenant_context: TenantContextDep,
+    tenant_id: str | None = Query(None),
+    event_id: str | None = Query(None),
+    operation: str | None = Query(None),
+    outcome: str | None = Query(None),
+    execution_id: str | None = Query(None),
+    reference_key: str | None = Query(None),
+    occurred_at_from: datetime | None = Query(None),  # noqa: B008
+    occurred_at_to: datetime | None = Query(None),  # noqa: B008
+    request_id: str | None = Query(None),
+    actor_type: str | None = Query(None),
+    source: str | None = Query(None),
+    reason_code: str | None = Query(None),
+    limit: int = Query(100, ge=1, le=MAX_AUDIT_QUERY_LIMIT),
+    offset: int = Query(0, ge=0, le=MAX_AUDIT_OFFSET),
+) -> ExecutionAuditQuery:
+    """W110 filters plus the W111 ``format`` selector, with identical bounds."""
+
+    return _build_audit_query(
+        request,
+        tenant_context,
+        frozenset({"format"}),
+        tenant_id=tenant_id,
+        event_id=event_id,
+        operation=cast(Any, operation),
+        outcome=cast(Any, outcome),
+        execution_id=execution_id,
+        reference_key=reference_key,
+        occurred_at_from=occurred_at_from,
+        occurred_at_to=occurred_at_to,
+        request_id=request_id,
+        actor_type=cast(Any, actor_type),
+        source=source,
+        reason_code=reason_code,
+        limit=limit,
+        offset=offset,
+    )
 
 
 ExecutionAuditQueryDep = Annotated[ExecutionAuditQuery, Depends(build_execution_audit_query)]
+ExecutionAuditExportQueryDep = Annotated[
+    ExecutionAuditQuery,
+    Depends(build_execution_audit_export_query),
+]
 
 
 def _service_unavailable(exc: Exception) -> HTTPException:
@@ -1579,6 +1798,148 @@ def query_execution_audit(
         ) from exc
     _observe("audit", "success", 200)
     return result
+
+
+@router.get(
+    "/audit/integrity",
+    response_model=ExecutionAuditIntegrityOut,
+    summary="Verify execution audit integrity",
+    description=(
+        "W111 read-only integrity verification of the W110 audit documents: strict schema, "
+        "event version, checksum, canonical JSON, identity, duplicates and unsafe documents. "
+        "A corrupted document is reported as INVALID; it is never hidden or repaired."
+    ),
+    responses=_AUDIT_ERROR_RESPONSES,
+    openapi_extra={"security": [{"BearerAuth": []}, {"ApiKeyAuth": []}]},
+)
+def execution_audit_integrity(
+    query: ExecutionAuditQueryDep,
+    service: ExecutionAuditIntegrityDep,
+    tenant_context: TenantContextDep,
+) -> ExecutionAuditIntegrityOut:
+    try:
+        report = service.verify(tenant_context.tenant_id, query=query)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        _observe("audit_integrity", "backend_unavailable", 503)
+        raise HTTPException(
+            status_code=503,
+            detail=_ApiErrorCode.AUDIT_SERVICE_UNAVAILABLE.value,
+        ) from exc
+    _observe("audit_integrity", report.integrity_status.value.lower(), 200)
+    return ExecutionAuditIntegrityOut.from_report(report)
+
+
+@router.get(
+    "/audit/reconciliation",
+    response_model=ExecutionAuditReconciliationOut,
+    summary="Reconcile execution audit events",
+    description=(
+        "W111 read-only logical reconciliation over the tenant's audit events using explicit, "
+        "documented rules for W107 archive/purge, W108 restore and W109 recovery API. An "
+        "undecidable case is reported as a warning or INSUFFICIENT_DATA, never invented."
+    ),
+    responses=_AUDIT_ERROR_RESPONSES,
+    openapi_extra={"security": [{"BearerAuth": []}, {"ApiKeyAuth": []}]},
+)
+def execution_audit_reconciliation(
+    query: ExecutionAuditQueryDep,
+    service: ExecutionAuditReconciliationDep,
+    tenant_context: TenantContextDep,
+) -> ExecutionAuditReconciliationOut:
+    try:
+        report = service.reconcile(tenant_context.tenant_id, query=query)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        _observe("audit_reconciliation", "backend_unavailable", 503)
+        raise HTTPException(
+            status_code=503,
+            detail=_ApiErrorCode.AUDIT_SERVICE_UNAVAILABLE.value,
+        ) from exc
+    _observe("audit_reconciliation", report.reconciliation_status.value.lower(), 200)
+    return ExecutionAuditReconciliationOut.from_report(report)
+
+
+@router.get(
+    "/audit/export",
+    response_model=ExecutionAuditExportOut,
+    summary="Export execution audit events",
+    description=(
+        "W111 controlled read-only export in JSON or JSONL. Events are ordered by occurred_at "
+        "then event_id ascending, bounded to at most 1000 events, tenant-isolated and free of "
+        "credentials, payloads, tracebacks and filesystem paths. The content is the exact "
+        "canonical byte sequence covered by export_checksum."
+    ),
+    responses=_AUDIT_ERROR_RESPONSES,
+    openapi_extra={"security": [{"BearerAuth": []}, {"ApiKeyAuth": []}]},
+)
+def execution_audit_export(
+    query: ExecutionAuditExportQueryDep,
+    service: ExecutionAuditExportDep,
+    tenant_context: TenantContextDep,
+    format: ExportFormat = Query(ExportFormat.JSON, alias="format"),  # noqa: B008
+) -> ExecutionAuditExportOut:
+    try:
+        export = service.export(tenant_context.tenant_id, export_format=format, query=query)
+    except HTTPException:
+        raise
+    except (TypeError, ValueError) as exc:
+        _observe("audit_export", "invalid_request", 422)
+        raise HTTPException(
+            status_code=422,
+            detail=_ApiErrorCode.INVALID_AUDIT_QUERY.value,
+        ) from exc
+    except Exception as exc:
+        _observe("audit_export", "backend_unavailable", 503)
+        raise HTTPException(
+            status_code=503,
+            detail=_ApiErrorCode.AUDIT_SERVICE_UNAVAILABLE.value,
+        ) from exc
+    _observe("audit_export", "success", 200)
+    return ExecutionAuditExportOut(**export.to_dict())
+
+
+@router.get(
+    "/audit/export/checksum",
+    response_model=ExecutionAuditExportChecksumOut,
+    summary="Compute the execution audit export checksum",
+    description=(
+        "W111 reproducible SHA-256 checksum of the canonical export content for the same "
+        "dataset and filters. The payload is returned without the export content itself."
+    ),
+    responses=_AUDIT_ERROR_RESPONSES,
+    openapi_extra={"security": [{"BearerAuth": []}, {"ApiKeyAuth": []}]},
+)
+def execution_audit_export_checksum(
+    query: ExecutionAuditExportQueryDep,
+    service: ExecutionAuditExportDep,
+    tenant_context: TenantContextDep,
+    format: ExportFormat = Query(ExportFormat.JSON, alias="format"),  # noqa: B008
+) -> ExecutionAuditExportChecksumOut:
+    try:
+        payload = service.checksum(
+            tenant_context.tenant_id,
+            export_format=format,
+            query=query,
+        )
+    except HTTPException:
+        raise
+    except (TypeError, ValueError) as exc:
+        _observe("audit_export_checksum", "invalid_request", 422)
+        raise HTTPException(
+            status_code=422,
+            detail=_ApiErrorCode.INVALID_AUDIT_QUERY.value,
+        ) from exc
+    except Exception as exc:
+        _observe("audit_export_checksum", "backend_unavailable", 503)
+        raise HTTPException(
+            status_code=503,
+            detail=_ApiErrorCode.AUDIT_SERVICE_UNAVAILABLE.value,
+        ) from exc
+    _observe("audit_export_checksum", "success", 200)
+    return ExecutionAuditExportChecksumOut(**payload)
 
 
 @router.get(

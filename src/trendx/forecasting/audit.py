@@ -123,6 +123,40 @@ class AuditEventVersionError(AuditIntegrityError):
     """A persisted event uses an unsupported W110 version."""
 
 
+# W111 refinement: each integrity phase raises a distinct subtype so a read-only
+# control plane can classify a failure without re-reading the document.  All of
+# them remain ``AuditIntegrityError`` subtypes, so the W110 contract is intact.
+class AuditEventShapeError(AuditIntegrityError):
+    """A persisted event does not match the strict W110 document shape."""
+
+
+class AuditChecksumError(AuditIntegrityError):
+    """A persisted event checksum is missing or does not match its content."""
+
+
+class AuditCanonicalizationError(AuditIntegrityError):
+    """A persisted event is not stored as strict canonical JSON."""
+
+
+class AuditDocumentIdentityError(AuditIntegrityError):
+    """A persisted event document does not match its hashed identity."""
+
+
+class AuditDocumentPermissionError(AuditIntegrityError):
+    """A persisted event document or its parent store is not safe to trust."""
+
+
+# Stable, non-sensitive failure codes returned by the W111 read-only scan.
+AUDIT_FAILURE_SCHEMA = "SCHEMA"
+AUDIT_FAILURE_VERSION = "VERSION"
+AUDIT_FAILURE_CHECKSUM = "CHECKSUM"
+AUDIT_FAILURE_CANONICAL = "CANONICALIZATION"
+AUDIT_FAILURE_IDENTITY = "IDENTITY"
+AUDIT_FAILURE_MALFORMED_JSON = "MALFORMED_JSON"
+AUDIT_FAILURE_UNSAFE_DOCUMENT = "UNSAFE_DOCUMENT"
+AUDIT_FAILURE_UNREADABLE = "UNREADABLE"
+
+
 class AuditIdempotencyConflictError(AuditStoreError):
     """An idempotency key was reused with a different event payload."""
 
@@ -386,9 +420,9 @@ class ExecutionAuditEvent:
 
     def verify_integrity(self) -> None:
         if self.checksum is None:
-            raise AuditIntegrityError("audit event checksum is missing")
+            raise AuditChecksumError("audit event checksum is missing")
         if self.calculated_checksum != self.checksum:
-            raise AuditIntegrityError("audit event checksum mismatch")
+            raise AuditChecksumError("audit event checksum mismatch")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -434,7 +468,7 @@ class ExecutionAuditEvent:
             "checksum",
         }
         if not isinstance(data, Mapping) or set(data) != expected:
-            raise AuditIntegrityError("audit event shape is invalid")
+            raise AuditEventShapeError("audit event shape is invalid")
         if data.get("event_version") != AUDIT_EVENT_VERSION:
             raise AuditEventVersionError("unsupported audit event version")
         required_text = (
@@ -451,12 +485,12 @@ class ExecutionAuditEvent:
             "event_version",
         )
         if any(not isinstance(data.get(name), str) for name in required_text):
-            raise AuditIntegrityError("audit event fields are invalid")
+            raise AuditEventShapeError("audit event fields are invalid")
         if any(
             data.get(name) is not None and not isinstance(data.get(name), str)
             for name in ("execution_id", "reference_key", "idempotency_key", "checksum")
         ):
-            raise AuditIntegrityError("audit event fields are invalid")
+            raise AuditEventShapeError("audit event fields are invalid")
         try:
             event = cls(
                 event_id=data["event_id"],
@@ -478,9 +512,9 @@ class ExecutionAuditEvent:
         except AuditEventVersionError:
             raise
         except (AuditError, TypeError, ValueError) as exc:
-            raise AuditIntegrityError("audit event fields are invalid") from exc
+            raise AuditEventShapeError("audit event fields are invalid") from exc
         if event.checksum is None:
-            raise AuditIntegrityError("audit event checksum is missing")
+            raise AuditChecksumError("audit event checksum is missing")
         event.verify_integrity()
         return event
 
@@ -740,6 +774,70 @@ class ExecutionAuditStatistics:
         }
 
 
+@dataclass(frozen=True)
+class AuditDocumentRef:
+    """Read-only verdict for one persisted audit document.
+
+    ``document_ref`` is a truncated SHA-256 of the internal document name, so
+    a consumer can correlate two independent scans without ever receiving a
+    filesystem path or an internal file name.  ``event`` is populated only when
+    the document is fully valid.
+    """
+
+    document_ref: str
+    event: ExecutionAuditEvent | None
+    tenant_id: str | None
+    failure_code: str | None = None
+    detail: str | None = None
+
+    @property
+    def is_valid(self) -> bool:
+        return self.event is not None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "document_ref": self.document_ref,
+            "event_id": self.event.event_id if self.event is not None else None,
+            "tenant_id": self.tenant_id,
+            "valid": self.is_valid,
+            "failure_code": self.failure_code,
+            "detail": self.detail,
+        }
+
+
+@dataclass(frozen=True)
+class AuditDocumentScan:
+    """Immutable result of a read-only integrity scan."""
+
+    documents: tuple[AuditDocumentRef, ...]
+
+    def __len__(self) -> int:
+        return len(self.documents)
+
+    def __iter__(self) -> Iterator[AuditDocumentRef]:
+        return iter(self.documents)
+
+    @property
+    def valid_documents(self) -> tuple[AuditDocumentRef, ...]:
+        return tuple(document for document in self.documents if document.is_valid)
+
+    @property
+    def invalid_documents(self) -> tuple[AuditDocumentRef, ...]:
+        return tuple(document for document in self.documents if not document.is_valid)
+
+    @property
+    def events(self) -> tuple[ExecutionAuditEvent, ...]:
+        return tuple(document.event for document in self.documents if document.event is not None)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "documents": [document.to_dict() for document in self.documents],
+            "documents_scanned": len(self.documents),
+            "valid_documents": len(self.valid_documents),
+            "invalid_documents": len(self.invalid_documents),
+        }
+
+
 class AuditStore(Protocol):
     """Persistence port required by the audit service."""
 
@@ -760,6 +858,8 @@ class AuditStore(Protocol):
         *,
         criteria: AuditQueryInput = None,
     ) -> ExecutionAuditStatistics: ...
+
+    def scan_documents(self) -> AuditDocumentScan: ...
 
 
 class ExecutionAuditStore:
@@ -826,7 +926,7 @@ class ExecutionAuditStore:
         except OSError as exc:
             raise AuditStoreError("audit store directory is unavailable") from exc
         if metadata.st_uid != os.geteuid() or stat.S_IMODE(metadata.st_mode) & 0o077:
-            raise AuditIntegrityError("audit store directory permissions are insecure")
+            raise AuditDocumentPermissionError("audit store directory permissions are insecure")
 
     def _check_root(self) -> None:
         if not self._path.exists() or self._path.is_symlink() or not self._path.is_dir():
@@ -836,7 +936,7 @@ class ExecutionAuditStore:
         except OSError as exc:
             raise AuditStoreError("audit store directory is unavailable") from exc
         if metadata.st_uid != os.geteuid() or stat.S_IMODE(metadata.st_mode) & 0o077:
-            raise AuditIntegrityError("audit store directory permissions are insecure")
+            raise AuditDocumentPermissionError("audit store directory permissions are insecure")
 
     def _require_root(self) -> None:
         self._check_root()
@@ -879,31 +979,31 @@ class ExecutionAuditStore:
             raise AuditStoreError("audit store is unavailable") from exc
         for path in paths:
             if path.is_symlink():
-                raise AuditIntegrityError("audit event file must not be a symlink")
+                raise AuditDocumentPermissionError("audit event file must not be a symlink")
         return paths
 
     def _read_event_path(self, path: Path) -> ExecutionAuditEvent:
         if path.is_symlink():
-            raise AuditIntegrityError("audit event file must not be a symlink")
+            raise AuditDocumentPermissionError("audit event file must not be a symlink")
         try:
             metadata = path.stat()
         except OSError as exc:
             raise AuditStoreError("audit event cannot be read") from exc
         if metadata.st_uid != os.geteuid() or stat.S_IMODE(metadata.st_mode) & 0o077:
-            raise AuditIntegrityError("audit event permissions are insecure")
+            raise AuditDocumentPermissionError("audit event permissions are insecure")
         try:
             raw = path.read_text(encoding="utf-8")
         except (OSError, UnicodeError) as exc:
             raise AuditStoreError("audit event cannot be read") from exc
         payload = _strict_json_loads(raw)
         if not isinstance(payload, Mapping):
-            raise AuditIntegrityError("audit event document is malformed")
+            raise AuditEventShapeError("audit event document is malformed")
         event = ExecutionAuditEvent.from_dict(payload)
         if path.name != self._filename(event.event_id):
-            raise AuditIntegrityError("audit event filename does not match identity")
+            raise AuditDocumentIdentityError("audit event filename does not match identity")
         canonical = _canonical_json(payload).decode("utf-8")
         if raw != f"{canonical}\n":
-            raise AuditIntegrityError("audit event is not canonical")
+            raise AuditCanonicalizationError("audit event is not canonical")
         return event
 
     @staticmethod
@@ -1057,6 +1157,66 @@ class ExecutionAuditStore:
                 return None
             return event
 
+    @staticmethod
+    def _document_ref(path: Path) -> str:
+        return hashlib.sha256(path.name.encode("utf-8")).hexdigest()[:32]
+
+    @staticmethod
+    def _failure_verdict(document_ref: str, exc: AuditError) -> AuditDocumentRef:
+        """Map an integrity phase failure to a stable, non-sensitive code.
+
+        The mapping is intentionally explicit: a control plane must be able to
+        distinguish a version, schema, checksum, canonicalization, identity or
+        unsafe-document failure without exposing the document or a path.
+        """
+
+        if isinstance(exc, AuditEventVersionError):
+            code, detail = AUDIT_FAILURE_VERSION, "unsupported_event_version"
+        elif isinstance(exc, AuditSerializationError):
+            code, detail = AUDIT_FAILURE_MALFORMED_JSON, "malformed_json"
+        elif isinstance(exc, AuditChecksumError):
+            code, detail = AUDIT_FAILURE_CHECKSUM, "checksum_mismatch"
+        elif isinstance(exc, AuditCanonicalizationError):
+            code, detail = AUDIT_FAILURE_CANONICAL, "non_canonical_document"
+        elif isinstance(exc, AuditDocumentIdentityError):
+            code, detail = AUDIT_FAILURE_IDENTITY, "document_identity_mismatch"
+        elif isinstance(exc, AuditDocumentPermissionError):
+            code, detail = AUDIT_FAILURE_UNSAFE_DOCUMENT, "unsafe_document"
+        elif isinstance(exc, AuditEventShapeError):
+            code, detail = AUDIT_FAILURE_SCHEMA, "schema_violation"
+        else:
+            code, detail = AUDIT_FAILURE_UNREADABLE, "unreadable_document"
+        return AuditDocumentRef(
+            document_ref=document_ref,
+            event=None,
+            tenant_id=None,
+            failure_code=code,
+            detail=detail,
+        )
+
+    def scan_documents(self) -> AuditDocumentScan:
+        """Return one verdict per persisted document without mutating anything.
+
+        Unlike :meth:`query`, a corrupt document is reported as data instead of
+        aborting the whole read, so an operator can see exactly what failed.
+        """
+
+        with self._locked():
+            documents = [self._classify_event_path(path) for path in self._event_paths()]
+        return AuditDocumentScan(documents=tuple(documents))
+
+    def _classify_event_path(self, path: Path) -> AuditDocumentRef:
+        document_ref = self._document_ref(path)
+        try:
+            event = self._read_event_path(path)
+        except AuditError as exc:
+            return self._failure_verdict(document_ref, exc)
+        return AuditDocumentRef(
+            document_ref=document_ref,
+            event=event,
+            tenant_id=event.tenant_id,
+        )
+
     def query(
         self,
         query: AuditQueryInput = None,
@@ -1158,6 +1318,27 @@ class MemoryExecutionAuditStore:
                     raise AuditIdempotencyConflictError("audit idempotency key was reused")
             self._events[persisted.event_id] = persisted
             return persisted
+
+    def scan_documents(self) -> AuditDocumentScan:
+        """Return one verdict per stored event without mutating anything."""
+
+        with self._lock:
+            documents = []
+            for event in self._events.values():
+                document_ref = hashlib.sha256(event.event_id.encode("utf-8")).hexdigest()[:32]
+                try:
+                    event.verify_integrity()
+                except AuditError as exc:
+                    documents.append(ExecutionAuditStore._failure_verdict(document_ref, exc))
+                    continue
+                documents.append(
+                    AuditDocumentRef(
+                        document_ref=document_ref,
+                        event=event,
+                        tenant_id=event.tenant_id,
+                    )
+                )
+        return AuditDocumentScan(documents=tuple(documents))
 
     def get(self, event_id: str, *, tenant_id: str | None = None) -> ExecutionAuditEvent | None:
         with self._lock:
@@ -1471,7 +1652,22 @@ AuditEventStore = ExecutionAuditStore
 
 __all__ = [
     "AUDIT_EVENT_VERSION",
+    "AUDIT_FAILURE_CANONICAL",
+    "AUDIT_FAILURE_CHECKSUM",
+    "AUDIT_FAILURE_IDENTITY",
+    "AUDIT_FAILURE_MALFORMED_JSON",
+    "AUDIT_FAILURE_SCHEMA",
+    "AUDIT_FAILURE_UNREADABLE",
+    "AUDIT_FAILURE_UNSAFE_DOCUMENT",
+    "AUDIT_FAILURE_VERSION",
     "AuditActorType",
+    "AuditCanonicalizationError",
+    "AuditChecksumError",
+    "AuditDocumentIdentityError",
+    "AuditDocumentPermissionError",
+    "AuditDocumentRef",
+    "AuditDocumentScan",
+    "AuditEventShapeError",
     "AuditQueryInput",
     "AuditEvent",
     "AuditEventStore",

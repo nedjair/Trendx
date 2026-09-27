@@ -127,6 +127,10 @@ def _openapi() -> dict[str, Any]:
     for path in (
         "/api/v1/forecast/executions/audit",
         "/api/v1/forecast/executions/audit/statistics",
+        "/api/v1/forecast/executions/audit/integrity",
+        "/api/v1/forecast/executions/audit/reconciliation",
+        "/api/v1/forecast/executions/audit/export",
+        "/api/v1/forecast/executions/audit/export/checksum",
     ):
         operation = schema.get("paths", {}).get(path, {}).get("get")
         if not isinstance(operation, dict):
@@ -249,6 +253,10 @@ async def _sanitize_recovery_validation(
     if request.url.path in {
         "/api/v1/forecast/executions/audit",
         "/api/v1/forecast/executions/audit/statistics",
+        "/api/v1/forecast/executions/audit/integrity",
+        "/api/v1/forecast/executions/audit/reconciliation",
+        "/api/v1/forecast/executions/audit/export",
+        "/api/v1/forecast/executions/audit/export/checksum",
     }:
         logger.info("execution_history operation=audit outcome=invalid_request status_code=422")
         return JSONResponse(status_code=422, content={"detail": "invalid_audit_query"})
