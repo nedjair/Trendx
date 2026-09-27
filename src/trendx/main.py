@@ -49,6 +49,11 @@ from trendx.forecasting.audit import (
     ExecutionAuditService,
     ExecutionAuditStore,
 )
+from trendx.forecasting.audit_lifecycle import (
+    AuditArchiveError,
+    AuditLifecycleService,
+    FileSystemAuditArchiveStore,
+)
 from trendx.forecasting.execution import DurableExecutionStore, ExecutionStoreError
 from trendx.forecasting.history import ExecutionHistoryService
 from trendx.forecasting.lifecycle import ExecutionHistoryLifecycle, FileSystemArchiveStore
@@ -131,6 +136,10 @@ def _openapi() -> dict[str, Any]:
         "/api/v1/forecast/executions/audit/reconciliation",
         "/api/v1/forecast/executions/audit/export",
         "/api/v1/forecast/executions/audit/export/checksum",
+        "/api/v1/forecast/executions/audit/lifecycle/preview",
+        "/api/v1/forecast/executions/audit/lifecycle/archive",
+        "/api/v1/forecast/executions/audit/lifecycle/purge",
+        "/api/v1/forecast/executions/audit/lifecycle/restore",
     ):
         operation = schema.get("paths", {}).get(path, {}).get("get")
         if not isinstance(operation, dict):
@@ -257,6 +266,10 @@ async def _sanitize_recovery_validation(
         "/api/v1/forecast/executions/audit/reconciliation",
         "/api/v1/forecast/executions/audit/export",
         "/api/v1/forecast/executions/audit/export/checksum",
+        "/api/v1/forecast/executions/audit/lifecycle/preview",
+        "/api/v1/forecast/executions/audit/lifecycle/archive",
+        "/api/v1/forecast/executions/audit/lifecycle/purge",
+        "/api/v1/forecast/executions/audit/lifecycle/restore",
     }:
         logger.info("execution_history operation=audit outcome=invalid_request status_code=422")
         return JSONResponse(status_code=422, content={"detail": "invalid_audit_query"})
@@ -314,6 +327,60 @@ def _execution_audit_service_factory() -> ExecutionAuditService | None:
     except Exception:
         logger.warning("execution_audit backend_unavailable reason=store_initialization_failed")
         return None
+
+
+def _execution_audit_archive_store_factory() -> FileSystemAuditArchiveStore | None:
+    """Build the optional W112 audit archive, refused when it overlaps the audit store."""
+
+    configured_path = settings.trendx_execution_audit_archive_path.strip()
+    if not configured_path:
+        return None
+    archive_path = Path(configured_path)
+    audit_text = settings.trendx_execution_audit_path.strip()
+    try:
+        audit_resolved = Path(audit_text).resolve() if audit_text else None
+        resolved_archive = archive_path.resolve()
+        overlaps_audit_store = audit_resolved is not None and (
+            resolved_archive == audit_resolved
+            or resolved_archive in audit_resolved.parents
+            or audit_resolved in resolved_archive.parents
+        )
+    except (OSError, RuntimeError, ValueError):
+        overlaps_audit_store = True
+    if overlaps_audit_store:
+        logger.warning("audit_lifecycle backend_unavailable reason=archive_overlap")
+        return None
+    if archive_path.is_symlink():
+        logger.warning("audit_lifecycle backend_unavailable reason=unsafe_archive_path")
+        return None
+    try:
+        return FileSystemAuditArchiveStore(archive_path)
+    except AuditArchiveError:
+        logger.warning("audit_lifecycle backend_unavailable reason=archive_unavailable")
+        return None
+    except OSError:
+        logger.warning("audit_lifecycle backend_unavailable reason=archive_unavailable")
+        return None
+    except Exception:
+        logger.warning("audit_lifecycle backend_unavailable reason=archive_unavailable")
+        return None
+
+
+def _execution_audit_lifecycle_service_factory() -> AuditLifecycleService | None:
+    """Build the optional W112 lifecycle service from server configuration.
+
+    W112 never runs by itself: it is only reachable through an authenticated,
+    explicit lifecycle request.
+    """
+
+    audit_service = _execution_audit_service_factory()
+    if audit_service is None:
+        return None
+    archive_store = _execution_audit_archive_store_factory()
+    if archive_store is None:
+        logger.warning("audit_lifecycle backend_unavailable reason=archive_not_configured")
+        return None
+    return AuditLifecycleService(audit_service, archive_store)
 
 
 def _execution_recovery_service_factory() -> RecoveryService:
@@ -379,6 +446,7 @@ app.state.execution_history_service_factory = _execution_history_service_factory
 app.state.execution_recovery_service_factory = _execution_recovery_service_factory
 app.state.execution_lifecycle_service_factory = _execution_lifecycle_service_factory
 app.state.execution_audit_service_factory = _execution_audit_service_factory
+app.state.execution_audit_lifecycle_service_factory = _execution_audit_lifecycle_service_factory
 
 
 @app.on_event("startup")

@@ -19,7 +19,7 @@ from typing import Annotated, Any, Literal, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from loguru import logger
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from trendx.config import settings
 from trendx.forecasting.analytics import (
     TREND_CONTRACT,
@@ -49,6 +49,17 @@ from trendx.forecasting.audit_control import (
     IntegrityStatus,
     ReconciliationReport,
     ReconciliationStatus,
+)
+from trendx.forecasting.audit_lifecycle import (
+    AuditLifecycleReport,
+    AuditLifecycleService,
+    AuditRestoreRequest,
+    AuditRestoreResult,
+    AuditRestoreStatus,
+    AuditRetentionPolicy,
+    AuditRetentionPolicyError,
+    LifecyclePreviewReport,
+    LifecycleStatus,
 )
 from trendx.forecasting.execution import ExecutionRecord, ExecutionStatus, ExecutionStoreError
 from trendx.forecasting.history import (
@@ -494,6 +505,89 @@ class ExecutionAuditStatsOut(BaseModel):
         return cls(**statistics.to_dict())
 
 
+class AuditRetentionPolicyIn(BaseModel):
+    """W112 retention request.
+
+    ``extra="forbid"`` makes an unknown field a hard ``422`` instead of a silent
+    no-op, and ``reference_time`` is mandatory so a lifecycle run never inherits
+    an implicit wall clock.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    retention_days: int
+    reference_time: str
+    archive_before_purge: bool = True
+    minimum_events_to_keep: int = 0
+    dry_run: bool = True
+
+
+class AuditRestoreRequestIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    event_id: str
+    tenant_id: str
+    request_id: str | None = None
+    actor_id: str = "api-key-context"
+
+
+class AuditLifecyclePreviewOut(BaseModel):
+    report_version: str
+    generated_at: str
+    tenant_id: str
+    policy: dict[str, Any]
+    scanned: int
+    eligible: int
+    protected: int
+    invalid: int
+    already_archived: int
+    archive_candidates: int
+    purge_candidates: int
+    warnings: list[str]
+    status: LifecycleStatus
+
+    @classmethod
+    def from_report(cls, report: LifecyclePreviewReport) -> AuditLifecyclePreviewOut:
+        return cls(**report.to_dict())
+
+
+class AuditLifecycleOut(BaseModel):
+    report_version: str
+    generated_at: str
+    tenant_id: str
+    policy: dict[str, Any]
+    dry_run: bool
+    scanned: int
+    eligible: int
+    archived: int
+    archive_verified: int
+    purged: int
+    skipped: int
+    conflicts: int
+    failures: int
+    protected: int
+    integrity_failures: int
+    status: LifecycleStatus
+    guards: dict[str, int]
+
+    @classmethod
+    def from_report(cls, report: AuditLifecycleReport) -> AuditLifecycleOut:
+        return cls(**report.to_dict())
+
+
+class AuditRestoreOut(BaseModel):
+    status: AuditRestoreStatus
+    event_id: str
+    tenant_id: str
+    reason_code: str
+    http_status: int
+
+    @classmethod
+    def from_result(cls, result: AuditRestoreResult, http_status: int) -> AuditRestoreOut:
+        payload = result.to_dict()
+        return cls(**payload, http_status=http_status)
+
+
 class ExecutionAuditIntegrityOut(BaseModel):
     """W111 read-only integrity verdict for the authenticated tenant."""
 
@@ -791,6 +885,10 @@ class _ApiErrorCode(str, Enum):
     AUDIT_SERVICE_UNAVAILABLE = "audit_service_unavailable"
     AUDIT_AUTH_NOT_CONFIGURED = "audit_authentication_not_configured"
     INVALID_AUDIT_QUERY = "invalid_audit_query"
+    AUDIT_LIFECYCLE_UNAVAILABLE = "audit_lifecycle_unavailable"
+    INVALID_AUDIT_RETENTION = "invalid_audit_retention"
+    INVALID_AUDIT_RESTORE = "invalid_audit_restore"
+    AUDIT_RESTORE_CONFLICT = "audit_restore_conflict"
 
 
 def _observe(operation: str, outcome: str, status_code: int) -> None:
@@ -836,6 +934,18 @@ _RESTORE_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     503: {
         "model": ExecutionRestoreErrorOut,
         "description": "Recovery backend is unavailable",
+    },
+}
+
+_AUDIT_LIFECYCLE_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
+    200: {"description": "Lifecycle operation completed"},
+    401: {"model": ExecutionErrorOut, "description": "Authentication required"},
+    403: {"model": ExecutionErrorOut, "description": "Tenant context is not authorized"},
+    409: {"model": ExecutionErrorOut, "description": "Lifecycle conflict; nothing was removed"},
+    422: {"model": ExecutionErrorOut, "description": "Invalid policy, event or pagination"},
+    503: {
+        "model": ExecutionErrorOut,
+        "description": "Audit store or audit archive is unavailable or corrupt",
     },
 }
 
@@ -1102,6 +1212,71 @@ ExecutionAuditExportDep = Annotated[
     ExecutionAuditExportService,
     Depends(get_execution_audit_export_service),
 ]
+
+
+def get_execution_audit_lifecycle_service(
+    request: Request,
+) -> AuditLifecycleService:
+    """Resolve the W112 lifecycle service from the application wiring.
+
+    Authentication is not duplicated: the W110 guard below is reused verbatim, so
+    a placeholder token is refused exactly as it is for every other audit route.
+    """
+
+    if not _recovery_api_is_configured():
+        _observe("audit_lifecycle", "authentication_not_configured", 503)
+        raise HTTPException(
+            status_code=503,
+            detail=_ApiErrorCode.AUDIT_AUTH_NOT_CONFIGURED.value,
+        )
+    factory = getattr(request.app.state, "execution_audit_lifecycle_service_factory", None)
+    if not callable(factory):
+        _observe("audit_lifecycle", "backend_unavailable", 503)
+        raise HTTPException(
+            status_code=503,
+            detail=_ApiErrorCode.AUDIT_LIFECYCLE_UNAVAILABLE.value,
+        )
+    try:
+        service = cast(Callable[[], AuditLifecycleService | None], factory)()
+    except Exception as exc:
+        _observe("audit_lifecycle", "backend_unavailable", 503)
+        raise HTTPException(
+            status_code=503,
+            detail=_ApiErrorCode.AUDIT_LIFECYCLE_UNAVAILABLE.value,
+        ) from exc
+    if service is None:
+        _observe("audit_lifecycle", "backend_unavailable", 503)
+        raise HTTPException(
+            status_code=503,
+            detail=_ApiErrorCode.AUDIT_LIFECYCLE_UNAVAILABLE.value,
+        )
+    return service
+
+
+ExecutionAuditLifecycleDep = Annotated[
+    AuditLifecycleService,
+    Depends(get_execution_audit_lifecycle_service),
+]
+
+
+def _retention_policy_from(payload: AuditRetentionPolicyIn) -> AuditRetentionPolicy:
+    """Build the typed policy, mapping every failure to a sanitized ``422``."""
+
+    try:
+        # the policy normalises the string to an explicit UTC datetime itself
+        return AuditRetentionPolicy(
+            retention_days=payload.retention_days,
+            reference_time=cast(Any, payload.reference_time),
+            archive_before_purge=payload.archive_before_purge,
+            minimum_events_to_keep=payload.minimum_events_to_keep,
+            dry_run=payload.dry_run,
+        )
+    except (AuditRetentionPolicyError, TypeError, ValueError) as exc:
+        _observe("audit_lifecycle", "invalid_request", 422)
+        raise HTTPException(
+            status_code=422,
+            detail=_ApiErrorCode.INVALID_AUDIT_RETENTION.value,
+        ) from exc
 
 
 def _record_optional_restore_audit(
@@ -1798,6 +1973,177 @@ def query_execution_audit(
         ) from exc
     _observe("audit", "success", 200)
     return result
+
+
+_AUDIT_LIFECYCLE_SECURITY: list[dict[str, list[Any]]] = [
+    {"BearerAuth": []},
+    {"ApiKeyAuth": []},
+]
+
+
+@router.post(
+    "/audit/lifecycle/preview",
+    response_model=AuditLifecyclePreviewOut,
+    summary="Preview the audit retention lifecycle",
+    description=(
+        "W112 read-only retention preview. It never writes an archive, never removes an event and "
+        "never changes a checksum, so the audit store fingerprint is identical before and after."
+    ),
+    responses=_AUDIT_LIFECYCLE_ERROR_RESPONSES,
+    openapi_extra={"security": _AUDIT_LIFECYCLE_SECURITY},
+)
+def preview_audit_lifecycle(
+    payload: AuditRetentionPolicyIn,
+    tenant_context: TenantContextDep,
+    service: ExecutionAuditLifecycleDep,
+) -> AuditLifecyclePreviewOut:
+    policy = _retention_policy_from(payload)
+    try:
+        report = service.preview(tenant_context.tenant_id, policy)
+    except HTTPException:
+        raise
+    except (TypeError, ValueError) as exc:
+        _observe("audit_lifecycle", "invalid_request", 422)
+        raise HTTPException(
+            status_code=422, detail=_ApiErrorCode.INVALID_AUDIT_RETENTION.value
+        ) from exc
+    except Exception as exc:
+        _observe("audit_lifecycle", "backend_unavailable", 503)
+        raise HTTPException(
+            status_code=503, detail=_ApiErrorCode.AUDIT_LIFECYCLE_UNAVAILABLE.value
+        ) from exc
+    _observe("audit_lifecycle", "preview", 200)
+    return AuditLifecyclePreviewOut.from_report(report)
+
+
+@router.post(
+    "/audit/lifecycle/archive",
+    response_model=AuditLifecycleOut,
+    summary="Archive eligible audit events",
+    description=(
+        "W112 controlled archival of eligible audit events. dry_run defaults to true, so the call is "
+        "read-only unless the caller explicitly opts out. Publication is atomic and each document is "
+        "verified before it is counted."
+    ),
+    responses=_AUDIT_LIFECYCLE_ERROR_RESPONSES,
+    openapi_extra={"security": _AUDIT_LIFECYCLE_SECURITY},
+)
+def archive_audit_lifecycle(
+    payload: AuditRetentionPolicyIn,
+    tenant_context: TenantContextDep,
+    service: ExecutionAuditLifecycleDep,
+) -> AuditLifecycleOut:
+    policy = _retention_policy_from(payload)
+    try:
+        report = service.archive(tenant_context.tenant_id, policy)
+    except HTTPException:
+        raise
+    except (TypeError, ValueError) as exc:
+        _observe("audit_lifecycle", "invalid_request", 422)
+        raise HTTPException(
+            status_code=422, detail=_ApiErrorCode.INVALID_AUDIT_RETENTION.value
+        ) from exc
+    except Exception as exc:
+        _observe("audit_lifecycle", "backend_unavailable", 503)
+        raise HTTPException(
+            status_code=503, detail=_ApiErrorCode.AUDIT_LIFECYCLE_UNAVAILABLE.value
+        ) from exc
+    _observe("audit_lifecycle", f"archive_{report.status.value}", 200)
+    return AuditLifecycleOut.from_report(report)
+
+
+@router.post(
+    "/audit/lifecycle/purge",
+    response_model=AuditLifecycleOut,
+    summary="Purge archived audit events",
+    description=(
+        "W112 controlled purge. An event is removed only after SELECT, VALIDATE, ELIGIBILITY, "
+        "ARCHIVE, VERIFY ARCHIVE, COMPARE and a successful compare-and-delete. There is no direct "
+        "DELETE route: every removal goes through this safety gate."
+    ),
+    responses=_AUDIT_LIFECYCLE_ERROR_RESPONSES,
+    openapi_extra={"security": _AUDIT_LIFECYCLE_SECURITY},
+)
+def purge_audit_lifecycle(
+    payload: AuditRetentionPolicyIn,
+    tenant_context: TenantContextDep,
+    service: ExecutionAuditLifecycleDep,
+) -> AuditLifecycleOut:
+    policy = _retention_policy_from(payload)
+    try:
+        report = service.purge(tenant_context.tenant_id, policy)
+    except HTTPException:
+        raise
+    except (TypeError, ValueError) as exc:
+        _observe("audit_lifecycle", "invalid_request", 422)
+        raise HTTPException(
+            status_code=422, detail=_ApiErrorCode.INVALID_AUDIT_RETENTION.value
+        ) from exc
+    except Exception as exc:
+        _observe("audit_lifecycle", "backend_unavailable", 503)
+        raise HTTPException(
+            status_code=503, detail=_ApiErrorCode.AUDIT_LIFECYCLE_UNAVAILABLE.value
+        ) from exc
+    _observe("audit_lifecycle", f"purge_{report.status.value}", 200)
+    return AuditLifecycleOut.from_report(report)
+
+
+@router.post(
+    "/audit/lifecycle/restore",
+    response_model=AuditRestoreOut,
+    summary="Restore an archived audit event",
+    description=(
+        "W112 controlled restore of one archived audit event into the active store. An identical "
+        "active event is ALREADY_PRESENT and a different one is CONFLICT; an active event is never "
+        "overwritten and no force option exists."
+    ),
+    responses=_AUDIT_LIFECYCLE_ERROR_RESPONSES,
+    openapi_extra={"security": _AUDIT_LIFECYCLE_SECURITY},
+)
+def restore_audit_lifecycle(
+    payload: AuditRestoreRequestIn,
+    tenant_context: TenantContextDep,
+    service: ExecutionAuditLifecycleDep,
+    response: Response,
+) -> AuditRestoreOut:
+    try:
+        request = AuditRestoreRequest(
+            event_id=payload.event_id,
+            tenant_id=payload.tenant_id,
+            request_id=payload.request_id,
+            actor_id=payload.actor_id,
+        )
+    except (TypeError, ValueError) as exc:
+        _observe("audit_lifecycle", "invalid_request", 422)
+        raise HTTPException(
+            status_code=422, detail=_ApiErrorCode.INVALID_AUDIT_RESTORE.value
+        ) from exc
+    try:
+        result = service.restore(request, authenticated_tenant=tenant_context.tenant_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        _observe("audit_lifecycle", "backend_unavailable", 503)
+        raise HTTPException(
+            status_code=503, detail=_ApiErrorCode.AUDIT_LIFECYCLE_UNAVAILABLE.value
+        ) from exc
+    status_code = {
+        AuditRestoreStatus.RESTORED: 200,
+        AuditRestoreStatus.ALREADY_PRESENT: 200,
+        AuditRestoreStatus.CONFLICT: 409,
+        AuditRestoreStatus.TENANT_FORBIDDEN: 403,
+        AuditRestoreStatus.NOT_FOUND: 404,
+        AuditRestoreStatus.INTEGRITY_FAILURE: 503,
+        AuditRestoreStatus.RESTORE_FAILED: 503,
+    }[result.status]
+    # the HTTP status mirrors the outcome so a client never reads a failure as a
+    # success, while the body stays the same typed, sanitized contract
+    response.status_code = status_code
+    if status_code == 200:
+        _observe("audit_lifecycle", result.status.value.lower(), 200)
+    else:
+        _observe("audit_lifecycle", result.status.value.lower(), status_code)
+    return AuditRestoreOut.from_result(result, status_code)
 
 
 @router.get(

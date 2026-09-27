@@ -36,7 +36,7 @@ from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
-from typing import Any
+from typing import Any, Protocol
 
 from trendx.forecasting.audit import (
     AUDIT_FAILURE_CANONICAL,
@@ -122,6 +122,37 @@ class ExportFormat(str, Enum):
 
     JSON = "JSON"
     JSONL = "JSONL"
+
+
+class AuditExportScope(str, Enum):
+    """Explicit, deterministic export perimeter.
+
+    W112 archives and purges audit events, so an export must state whether it
+    covers the active journal only or the active journal *and* the archive.  The
+    default is ``ACTIVE_ONLY`` so a W111-only deployment behaves exactly as
+    before.
+    """
+
+    ACTIVE_ONLY = "ACTIVE_ONLY"
+    ACTIVE_AND_ARCHIVED = "ACTIVE_AND_ARCHIVED"
+
+
+class AuditLifecycleState(str, Enum):
+    """Where a tenant's audit events currently live."""
+
+    ACTIVE = "ACTIVE"
+    ARCHIVED = "ARCHIVED"
+    PURGED = "PURGED"
+
+
+class AuditLifecycleReader(Protocol):
+    """Optional W112 port consumed by the W111 control plane.
+
+    W111 stays usable without W112: when no reader is wired the control plane
+    simply reports ``ACTIVE`` for every observed event.
+    """
+
+    def archived_events(self, tenant_id: str) -> tuple[ExecutionAuditEvent, ...]: ...
 
 
 class FindingSeverity(str, Enum):
@@ -294,6 +325,9 @@ class ReconciliationReport:
     correlation_chains: int
     first_failure: str | None
     reconciliation_status: ReconciliationStatus
+    active_events: int = 0
+    archived_events: int = 0
+    lifecycle_reader: bool = False
     findings: tuple[ReconciliationFinding, ...] = field(default_factory=tuple)
 
     def to_dict(self) -> dict[str, Any]:
@@ -308,6 +342,9 @@ class ReconciliationReport:
             "correlation_chains": self.correlation_chains,
             "first_failure": self.first_failure,
             "reconciliation_status": self.reconciliation_status.value,
+            "active_events": self.active_events,
+            "archived_events": self.archived_events,
+            "lifecycle_reader": self.lifecycle_reader,
             "findings": [finding.to_dict() for finding in self.findings],
         }
 
@@ -324,6 +361,7 @@ class ExecutionAuditExport:
     limit: int
     offset: int
     generated_at: datetime
+    scope: AuditExportScope = AuditExportScope.ACTIVE_ONLY
 
     @property
     def count(self) -> int:
@@ -345,6 +383,7 @@ class ExecutionAuditExport:
             envelope = {
                 "export_version": self.export_version,
                 "format": self.export_format.value,
+                "scope": self.scope.value,
                 "tenant_id": self.tenant_id,
                 "event_count": self.count,
                 "events": [_sanitized_event_dict(event) for event in self.events],
@@ -363,6 +402,7 @@ class ExecutionAuditExport:
         payload: dict[str, Any] = {
             "export_version": self.export_version,
             "format": self.export_format.value,
+            "scope": self.scope.value,
             "tenant_id": self.tenant_id,
             "event_count": self.count,
             "total": self.total,
@@ -693,6 +733,7 @@ class ExecutionAuditReconciliationService(ExecutionAuditControlService):
         tenant_id: str,
         *,
         query: ExecutionAuditQuery | None = None,
+        lifecycle: AuditLifecycleReader | None = None,
     ) -> ReconciliationReport:
         tenant = _require_tenant(tenant_id)
         generated_at = _utc(None)
@@ -728,8 +769,22 @@ class ExecutionAuditReconciliationService(ExecutionAuditControlService):
                     ),
                 ),
             )
+        archived_events: tuple[ExecutionAuditEvent, ...] = ()
+        if lifecycle is not None:
+            try:
+                archived_events = tuple(lifecycle.archived_events(tenant))
+            except (AuditStoreError, OSError):
+                raise
+            except AuditError:
+                archived_events = ()
         try:
-            return self._build_report(tenant, generated_at, events)
+            return self._build_report(
+                tenant,
+                generated_at,
+                events,
+                archived_events,
+                lifecycle_reader=lifecycle is not None,
+            )
         except Exception:  # pragma: no cover - defensive fail-closed branch
             return ReconciliationReport(
                 report_version=AUDIT_CONTROL_REPORT_VERSION,
@@ -749,6 +804,9 @@ class ExecutionAuditReconciliationService(ExecutionAuditControlService):
         tenant: str,
         generated_at: datetime,
         events: tuple[ExecutionAuditEvent, ...],
+        archived_events: tuple[ExecutionAuditEvent, ...] = (),
+        *,
+        lifecycle_reader: bool = False,
     ) -> ReconciliationReport:
         findings: list[ReconciliationFinding] = []
         checks = 0
@@ -976,6 +1034,9 @@ class ExecutionAuditReconciliationService(ExecutionAuditControlService):
             tenant_id=tenant,
             events_scanned=len(events),
             checks_run=checks,
+            active_events=len(events),
+            archived_events=len(archived_events),
+            lifecycle_reader=lifecycle_reader,
             inconsistencies=inconsistencies,
             warnings=warnings,
             correlation_chains=chains,
@@ -997,8 +1058,11 @@ class ExecutionAuditExportService(ExecutionAuditControlService):
         limit: int | None = None,
         offset: int = 0,
         generated_at: datetime | None = None,
+        scope: AuditExportScope | str = AuditExportScope.ACTIVE_ONLY,
+        lifecycle: AuditLifecycleReader | None = None,
     ) -> ExecutionAuditExport:
         tenant = _require_tenant(tenant_id)
+        resolved_scope = _coerce_scope(scope)
         resolved_format = _coerce_format(export_format)
         active_limit = (
             query.limit
@@ -1026,6 +1090,8 @@ class ExecutionAuditExportService(ExecutionAuditControlService):
         else:
             tenant_scoped_query = ExecutionAuditQuery(tenant_id=tenant)
         events = self.events_for(tenant_scoped_query)
+        if resolved_scope is AuditExportScope.ACTIVE_AND_ARCHIVED:
+            events = _merge_archived(events, tenant, lifecycle)
         # the match set is complete, so `total` is the true filtered count and
         # only the returned page is bounded
         total = len(events)
@@ -1039,6 +1105,7 @@ class ExecutionAuditExportService(ExecutionAuditControlService):
             limit=active_limit,
             offset=active_offset,
             generated_at=_utc(generated_at),
+            scope=resolved_scope,
         )
 
     def checksum(
@@ -1050,6 +1117,8 @@ class ExecutionAuditExportService(ExecutionAuditControlService):
         limit: int | None = None,
         offset: int = 0,
         generated_at: datetime | None = None,
+        scope: AuditExportScope | str = AuditExportScope.ACTIVE_ONLY,
+        lifecycle: AuditLifecycleReader | None = None,
     ) -> dict[str, Any]:
         """Return only the reproducible checksum and its deterministic inputs."""
 
@@ -1060,10 +1129,13 @@ class ExecutionAuditExportService(ExecutionAuditControlService):
             limit=limit,
             offset=offset,
             generated_at=generated_at,
+            scope=scope,
+            lifecycle=lifecycle,
         )
         return {
             "export_version": export.export_version,
             "format": export.export_format.value,
+            "scope": export.scope.value,
             "tenant_id": export.tenant_id,
             "event_count": export.count,
             "total": export.total,
@@ -1071,6 +1143,36 @@ class ExecutionAuditExportService(ExecutionAuditControlService):
             "offset": export.offset,
             "export_checksum": export.export_checksum,
         }
+
+
+def _coerce_scope(value: AuditExportScope | str) -> AuditExportScope:
+    if isinstance(value, AuditExportScope):
+        return value
+    try:
+        return AuditExportScope(str(value).upper())
+    except (TypeError, ValueError) as exc:
+        raise AuditValidationError("export scope is unsupported") from exc
+
+
+def _merge_archived(
+    active: tuple[ExecutionAuditEvent, ...],
+    tenant_id: str,
+    lifecycle: AuditLifecycleReader | None,
+) -> tuple[ExecutionAuditEvent, ...]:
+    """Merge archived events into an active export, deterministically.
+
+    An event that is both active and archived is kept once: the active copy wins
+    and the merge stays idempotent, so repeated exports never duplicate an event.
+    """
+
+    if lifecycle is None:
+        return active
+    archived = tuple(lifecycle.archived_events(tenant_id))
+    active_ids = {event.event_id for event in active}
+    extra = [event for event in archived if event.event_id not in active_ids]
+    if not extra:
+        return active
+    return _ordered_events((*active, *extra))
 
 
 def _coerce_format(value: ExportFormat | str) -> ExportFormat:

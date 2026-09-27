@@ -128,6 +128,12 @@ class Settings(BaseSettings):
         default="",
         alias="TRENDX_EXECUTION_AUDIT_PATH",
     )
+    # W112: server-side archive of audit events.  Independent from both the audit
+    # directory and the W107 execution archive; clients never provide a path.
+    trendx_execution_audit_archive_path: str = Field(
+        default="",
+        alias="TRENDX_EXECUTION_AUDIT_ARCHIVE_PATH",
+    )
     trendx_default_customer_id: str = Field(default="", alias="TRENDX_DEFAULT_CUSTOMER_ID")
     trendx_default_user_id: str = Field(default="", alias="TRENDX_DEFAULT_USER_ID")
 

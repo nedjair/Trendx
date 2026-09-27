@@ -70,6 +70,14 @@ class AuditOperation(str, Enum):
     PURGE_EXECUTE = "PURGE_EXECUTE"
     RESTORE_VERIFY = "RESTORE_VERIFY"
     RESTORE_EXECUTE = "RESTORE_EXECUTE"
+    # W112: lifecycle of the audit trail itself.  They are ordinary W110 events
+    # so they are recorded through the same service, store, sanitation, checksum
+    # and idempotency contract as every other operation.
+    AUDIT_LIFECYCLE_PREVIEW = "AUDIT_LIFECYCLE_PREVIEW"
+    AUDIT_ARCHIVE = "AUDIT_ARCHIVE"
+    AUDIT_ARCHIVE_VERIFY = "AUDIT_ARCHIVE_VERIFY"
+    AUDIT_PURGE = "AUDIT_PURGE"
+    AUDIT_RESTORE = "AUDIT_RESTORE"
 
 
 class AuditOutcome(str, Enum):
@@ -159,6 +167,39 @@ AUDIT_FAILURE_UNREADABLE = "UNREADABLE"
 
 class AuditIdempotencyConflictError(AuditStoreError):
     """An idempotency key was reused with a different event payload."""
+
+
+class AuditDeleteOutcome(str, Enum):
+    """W112 compare-and-delete outcome.
+
+    ``CONFLICT`` and ``INVALID`` are fail-closed: the caller must not treat them
+    as a successful removal.
+    """
+
+    DELETED = "DELETED"
+    CONFLICT = "CONFLICT"
+    NOT_FOUND = "NOT_FOUND"
+    INVALID = "INVALID"
+
+
+@dataclass(frozen=True)
+class AuditDeleteResult:
+    """Result of a W112 ``delete_if_unchanged`` call."""
+
+    event_id: str
+    tenant_id: str
+    outcome: AuditDeleteOutcome
+
+    @property
+    def deleted(self) -> bool:
+        return self.outcome is AuditDeleteOutcome.DELETED
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "event_id": self.event_id,
+            "tenant_id": self.tenant_id,
+            "outcome": self.outcome.value,
+        }
 
 
 # Compatibility spelling for callers that used the initial W110 draft name.
@@ -843,6 +884,8 @@ class AuditStore(Protocol):
 
     def append(self, event: ExecutionAuditEvent) -> ExecutionAuditEvent: ...
 
+    def delete_if_unchanged(self, expected: ExecutionAuditEvent) -> AuditDeleteResult: ...
+
     def get(self, event_id: str, *, tenant_id: str | None = None) -> ExecutionAuditEvent | None: ...
 
     def query(
@@ -1157,6 +1200,85 @@ class ExecutionAuditStore:
                 return None
             return event
 
+    def delete_if_unchanged(self, expected: ExecutionAuditEvent) -> AuditDeleteResult:
+        """Delete one event only if it is byte-for-byte the expected document.
+
+        This is the W112 purge safety primitive.  Under the same exclusive lock
+        used by :meth:`append` it re-reads the persisted document and compares the
+        identity, version, tenant, occurred_at, checksum and the full canonical
+        representation.  Any divergence yields ``CONFLICT`` and nothing is
+        removed, so a concurrently modified event can never be deleted by a
+        lifecycle run that selected it earlier.
+        """
+
+        if not isinstance(expected, ExecutionAuditEvent):
+            raise AuditValidationError("audit event is required")
+        if expected.checksum is None:
+            raise AuditValidationError("audit event checksum is required")
+        expected.verify_integrity()
+        with self._locked():
+            path = self._event_path(expected.event_id)
+            if not path.exists():
+                for candidate in self._event_paths():
+                    try:
+                        probe = self._read_event_path(candidate)
+                    except AuditError:
+                        continue
+                    if probe.event_id == expected.event_id:
+                        path = candidate
+                        break
+                else:
+                    return AuditDeleteResult(
+                        event_id=expected.event_id,
+                        tenant_id=expected.tenant_id,
+                        outcome=AuditDeleteOutcome.NOT_FOUND,
+                    )
+            try:
+                current = self._read_event_path(path)
+            except AuditError:
+                return AuditDeleteResult(
+                    event_id=expected.event_id,
+                    tenant_id=expected.tenant_id,
+                    outcome=AuditDeleteOutcome.INVALID,
+                )
+            if not self._same_event(current, expected):
+                return AuditDeleteResult(
+                    event_id=expected.event_id,
+                    tenant_id=expected.tenant_id,
+                    outcome=AuditDeleteOutcome.CONFLICT,
+                )
+            if (
+                current.checksum != expected.checksum
+                or current.event_version != expected.event_version
+                or current.tenant_id != expected.tenant_id
+                or current.occurred_at != expected.occurred_at
+                or _canonical_json(current.to_dict()) != _canonical_json(expected.to_dict())
+            ):
+                return AuditDeleteResult(
+                    event_id=expected.event_id,
+                    tenant_id=expected.tenant_id,
+                    outcome=AuditDeleteOutcome.CONFLICT,
+                )
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                return AuditDeleteResult(
+                    event_id=expected.event_id,
+                    tenant_id=expected.tenant_id,
+                    outcome=AuditDeleteOutcome.NOT_FOUND,
+                )
+            except OSError as exc:
+                raise AuditStoreError("audit event cannot be deleted") from exc
+            self._fsync_directory()
+            if self._event_cache is not None:
+                self._event_cache.pop(expected.event_id, None)
+                self._event_signatures.pop(path.name, None)
+            return AuditDeleteResult(
+                event_id=expected.event_id,
+                tenant_id=expected.tenant_id,
+                outcome=AuditDeleteOutcome.DELETED,
+            )
+
     @staticmethod
     def _document_ref(path: Path) -> str:
         return hashlib.sha256(path.name.encode("utf-8")).hexdigest()[:32]
@@ -1318,6 +1440,33 @@ class MemoryExecutionAuditStore:
                     raise AuditIdempotencyConflictError("audit idempotency key was reused")
             self._events[persisted.event_id] = persisted
             return persisted
+
+    def delete_if_unchanged(self, expected: ExecutionAuditEvent) -> AuditDeleteResult:
+        if not isinstance(expected, ExecutionAuditEvent):
+            raise AuditValidationError("audit event is required")
+        if expected.checksum is None:
+            raise AuditValidationError("audit event checksum is required")
+        expected.verify_integrity()
+        with self._lock:
+            current = self._events.get(expected.event_id)
+            if current is None:
+                return AuditDeleteResult(
+                    event_id=expected.event_id,
+                    tenant_id=expected.tenant_id,
+                    outcome=AuditDeleteOutcome.NOT_FOUND,
+                )
+            if not ExecutionAuditStore._same_event(current, expected):
+                return AuditDeleteResult(
+                    event_id=expected.event_id,
+                    tenant_id=expected.tenant_id,
+                    outcome=AuditDeleteOutcome.CONFLICT,
+                )
+            self._events.pop(expected.event_id, None)
+            return AuditDeleteResult(
+                event_id=expected.event_id,
+                tenant_id=expected.tenant_id,
+                outcome=AuditDeleteOutcome.DELETED,
+            )
 
     def scan_documents(self) -> AuditDocumentScan:
         """Return one verdict per stored event without mutating anything."""
@@ -1663,6 +1812,8 @@ __all__ = [
     "AuditActorType",
     "AuditCanonicalizationError",
     "AuditChecksumError",
+    "AuditDeleteOutcome",
+    "AuditDeleteResult",
     "AuditDocumentIdentityError",
     "AuditDocumentPermissionError",
     "AuditDocumentRef",
