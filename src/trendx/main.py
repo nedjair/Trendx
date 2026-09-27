@@ -49,6 +49,7 @@ from trendx.forecasting.audit import (
     ExecutionAuditService,
     ExecutionAuditStore,
 )
+from trendx.forecasting.audit_health import AuditHealthService
 from trendx.forecasting.audit_lifecycle import (
     AuditArchiveError,
     AuditLifecycleService,
@@ -140,6 +141,9 @@ def _openapi() -> dict[str, Any]:
         "/api/v1/forecast/executions/audit/lifecycle/archive",
         "/api/v1/forecast/executions/audit/lifecycle/purge",
         "/api/v1/forecast/executions/audit/lifecycle/restore",
+        "/api/v1/forecast/executions/audit/health",
+        "/api/v1/forecast/executions/audit/capacity",
+        "/api/v1/forecast/executions/audit/readiness",
     ):
         operation = schema.get("paths", {}).get(path, {}).get("get")
         if not isinstance(operation, dict):
@@ -270,6 +274,9 @@ async def _sanitize_recovery_validation(
         "/api/v1/forecast/executions/audit/lifecycle/archive",
         "/api/v1/forecast/executions/audit/lifecycle/purge",
         "/api/v1/forecast/executions/audit/lifecycle/restore",
+        "/api/v1/forecast/executions/audit/health",
+        "/api/v1/forecast/executions/audit/capacity",
+        "/api/v1/forecast/executions/audit/readiness",
     }:
         logger.info("execution_history operation=audit outcome=invalid_request status_code=422")
         return JSONResponse(status_code=422, content={"detail": "invalid_audit_query"})
@@ -383,6 +390,31 @@ def _execution_audit_lifecycle_service_factory() -> AuditLifecycleService | None
     return AuditLifecycleService(audit_service, archive_store)
 
 
+def _execution_audit_health_service_factory() -> AuditHealthService | None:
+    """Build the optional W113 read-only diagnostic service.
+
+    W113 only reads: it never mutates the audit store or the archive, and it
+    never creates an audit event while reporting on the audit trail.
+    """
+
+    audit_service = _execution_audit_service_factory()
+    if audit_service is None:
+        return None
+    archive_store = _execution_audit_archive_store_factory()
+    lifecycle = (
+        AuditLifecycleService(audit_service, archive_store) if archive_store is not None else None
+    )
+    audit_path = settings.trendx_execution_audit_path.strip()
+    archive_path = settings.trendx_execution_audit_archive_path.strip()
+    return AuditHealthService(
+        audit_service,
+        archive_store=archive_store,
+        lifecycle=lifecycle,
+        active_path=Path(audit_path) if audit_path else None,
+        archive_path=Path(archive_path) if archive_path else None,
+    )
+
+
 def _execution_recovery_service_factory() -> RecoveryService:
     """Build W108 recovery around server-configured, existing local stores."""
 
@@ -447,6 +479,7 @@ app.state.execution_recovery_service_factory = _execution_recovery_service_facto
 app.state.execution_lifecycle_service_factory = _execution_lifecycle_service_factory
 app.state.execution_audit_service_factory = _execution_audit_service_factory
 app.state.execution_audit_lifecycle_service_factory = _execution_audit_lifecycle_service_factory
+app.state.execution_audit_health_service_factory = _execution_audit_health_service_factory
 
 
 @app.on_event("startup")

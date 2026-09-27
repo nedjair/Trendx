@@ -50,6 +50,16 @@ from trendx.forecasting.audit_control import (
     ReconciliationReport,
     ReconciliationStatus,
 )
+from trendx.forecasting.audit_health import (
+    AuditArchiveStatus,
+    AuditCapacitySnapshot,
+    AuditHealthReport,
+    AuditHealthService,
+    AuditOperationalSnapshot,
+    AuditOperationalStatus,
+    AuditReadinessReport,
+    AuditReadinessStatus,
+)
 from trendx.forecasting.audit_lifecycle import (
     AuditLifecycleReport,
     AuditLifecycleService,
@@ -588,6 +598,86 @@ class AuditRestoreOut(BaseModel):
         return cls(**payload, http_status=http_status)
 
 
+class AuditHealthOut(BaseModel):
+    """W113 read-only health of the active audit journal."""
+
+    report_version: str
+    checked_at: str
+    tenant_id: str
+    status: AuditOperationalStatus
+    event_count: int
+    valid_event_count: int
+    integrity_invalid_count: int
+    malformed_count: int
+    version_failure_count: int
+    checksum_failure_count: int
+    identity_failure_count: int
+    unsafe_document_count: int
+    schema_failure_count: int
+    canonicalization_failure_count: int
+    tenant_count: int
+    success_count: int
+    failure_count: int
+    oldest_event_at: str | None
+    newest_event_at: str | None
+    last_observed_event_at: str | None
+    reason_codes: list[str]
+
+    @classmethod
+    def from_report(cls, report: AuditHealthReport) -> AuditHealthOut:
+        return cls(**report.to_dict())
+
+
+class AuditCapacityOut(BaseModel):
+    """W113 capacity snapshot. Byte metrics may be ``None`` when unavailable."""
+
+    report_version: str
+    measured_at: str
+    tenant_id: str
+    event_count: int
+    active_bytes: int | None
+    active_file_count: int
+    archive_bytes: int | None
+    archive_file_count: int
+    archived_event_count: int | None
+    total_known_event_count: int | None
+    oldest_active_event_at: str | None
+    newest_active_event_at: str | None
+    oldest_archived_event_at: str | None
+    newest_archived_event_at: str | None
+    filesystem: dict[str, Any]
+    capacity_measurement_complete: bool
+    current_count: int
+    current_size_bytes: int | None
+    current_oldest_event_at: str | None
+    current_newest_event_at: str | None
+    observed_growth: int | None
+    observation_window: dict[str, Any] | None
+    reason_codes: list[str]
+
+    @classmethod
+    def from_report(cls, report: AuditCapacitySnapshot) -> AuditCapacityOut:
+        return cls(**report.to_dict())
+
+
+class AuditReadinessOut(BaseModel):
+    """W113 explainable readiness verdict. DEGRADED is not an HTTP error."""
+
+    report_version: str
+    checked_at: str
+    tenant_id: str
+    readiness_status: AuditReadinessStatus
+    reason_codes: list[str]
+    blocking_reason_codes: list[str]
+    checks_run: int
+    health_status: AuditOperationalStatus
+    archive_status: AuditArchiveStatus
+
+    @classmethod
+    def from_report(cls, report: AuditReadinessReport) -> AuditReadinessOut:
+        return cls(**report.to_dict())
+
+
 class ExecutionAuditIntegrityOut(BaseModel):
     """W111 read-only integrity verdict for the authenticated tenant."""
 
@@ -889,6 +979,7 @@ class _ApiErrorCode(str, Enum):
     INVALID_AUDIT_RETENTION = "invalid_audit_retention"
     INVALID_AUDIT_RESTORE = "invalid_audit_restore"
     AUDIT_RESTORE_CONFLICT = "audit_restore_conflict"
+    AUDIT_HEALTH_UNAVAILABLE = "audit_health_unavailable"
 
 
 def _observe(operation: str, outcome: str, status_code: int) -> None:
@@ -934,6 +1025,17 @@ _RESTORE_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
     503: {
         "model": ExecutionRestoreErrorOut,
         "description": "Recovery backend is unavailable",
+    },
+}
+
+_AUDIT_HEALTH_ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
+    200: {"description": "Operational diagnostic returned"},
+    401: {"model": ExecutionErrorOut, "description": "Authentication required"},
+    403: {"model": ExecutionErrorOut, "description": "Tenant context is not authorized"},
+    422: {"model": ExecutionErrorOut, "description": "Invalid tenant or pagination"},
+    503: {
+        "model": ExecutionErrorOut,
+        "description": "Audit operational status is unavailable",
     },
 }
 
@@ -1251,6 +1353,49 @@ def get_execution_audit_lifecycle_service(
             detail=_ApiErrorCode.AUDIT_LIFECYCLE_UNAVAILABLE.value,
         )
     return service
+
+
+def get_execution_audit_health_service(request: Request) -> AuditHealthService:
+    """Resolve the W113 read-only diagnostic service from application wiring.
+
+    Authentication and tenant resolution are inherited from the existing W110
+    chain: no new auth mechanism and no new tenant logic is introduced.
+    """
+
+    if not _recovery_api_is_configured():
+        _observe("audit_health", "authentication_not_configured", 503)
+        raise HTTPException(
+            status_code=503,
+            detail=_ApiErrorCode.AUDIT_AUTH_NOT_CONFIGURED.value,
+        )
+    factory = getattr(request.app.state, "execution_audit_health_service_factory", None)
+    if not callable(factory):
+        _observe("audit_health", "backend_unavailable", 503)
+        raise HTTPException(
+            status_code=503,
+            detail=_ApiErrorCode.AUDIT_HEALTH_UNAVAILABLE.value,
+        )
+    try:
+        service = cast(Callable[[], AuditHealthService | None], factory)()
+    except Exception as exc:
+        _observe("audit_health", "backend_unavailable", 503)
+        raise HTTPException(
+            status_code=503,
+            detail=_ApiErrorCode.AUDIT_HEALTH_UNAVAILABLE.value,
+        ) from exc
+    if service is None:
+        _observe("audit_health", "backend_unavailable", 503)
+        raise HTTPException(
+            status_code=503,
+            detail=_ApiErrorCode.AUDIT_HEALTH_UNAVAILABLE.value,
+        )
+    return service
+
+
+ExecutionAuditHealthDep = Annotated[
+    AuditHealthService,
+    Depends(get_execution_audit_health_service),
+]
 
 
 ExecutionAuditLifecycleDep = Annotated[
@@ -2144,6 +2289,92 @@ def restore_audit_lifecycle(
     else:
         _observe("audit_lifecycle", result.status.value.lower(), status_code)
     return AuditRestoreOut.from_result(result, status_code)
+
+
+_AUDIT_HEALTH_SECURITY: list[dict[str, list[Any]]] = [
+    {"BearerAuth": []},
+    {"ApiKeyAuth": []},
+]
+
+
+@router.get(
+    "/audit/health",
+    response_model=AuditHealthOut,
+    summary="Read audit journal operational health",
+    description=(
+        "W113 read-only health of the active audit journal: observable event counts, oldest and "
+        "newest event instants, tenant count, outcome breakdown and document-level failure "
+        "counters. It never archives, purges, restores or writes an audit event."
+    ),
+    responses=_AUDIT_HEALTH_ERROR_RESPONSES,
+    openapi_extra={"security": _AUDIT_HEALTH_SECURITY},
+)
+def execution_audit_health(
+    tenant_context: TenantContextDep,
+    service: ExecutionAuditHealthDep,
+) -> AuditHealthOut:
+    report = _health_snapshot(service, tenant_context).health
+    _observe("audit_health", f"health_{report.status.value}", 200)
+    return AuditHealthOut.from_report(report)
+
+
+@router.get(
+    "/audit/capacity",
+    response_model=AuditCapacityOut,
+    summary="Read audit capacity snapshot",
+    description=(
+        "W113 read-only capacity snapshot: active and archive byte footprints, file and event "
+        "counts, age bounds and filesystem metrics. A metric that cannot be observed portably is "
+        "reported as null (unavailable) and never invented. No path is ever returned."
+    ),
+    responses=_AUDIT_HEALTH_ERROR_RESPONSES,
+    openapi_extra={"security": _AUDIT_HEALTH_SECURITY},
+)
+def execution_audit_capacity(
+    tenant_context: TenantContextDep,
+    service: ExecutionAuditHealthDep,
+) -> AuditCapacityOut:
+    report = _health_snapshot(service, tenant_context).capacity
+    _observe("audit_health", f"capacity_{report.capacity_measurement_complete}", 200)
+    return AuditCapacityOut.from_report(report)
+
+
+@router.get(
+    "/audit/readiness",
+    response_model=AuditReadinessOut,
+    summary="Read audit archive readiness",
+    description=(
+        "W113 explainable readiness verdict with stable reason codes. A degraded journal or an "
+        "empty journal is reported with HTTP 200: readiness is a diagnostic, not an HTTP error. An "
+        "empty journal is never automatically NOT_READY."
+    ),
+    responses=_AUDIT_HEALTH_ERROR_RESPONSES,
+    openapi_extra={"security": _AUDIT_HEALTH_SECURITY},
+)
+def execution_audit_readiness(
+    tenant_context: TenantContextDep,
+    service: ExecutionAuditHealthDep,
+) -> AuditReadinessOut:
+    report = _health_snapshot(service, tenant_context).readiness
+    _observe("audit_health", f"readiness_{report.readiness_status.value}", 200)
+    return AuditReadinessOut.from_report(report)
+
+
+def _health_snapshot(
+    service: AuditHealthService, tenant_context: TenantContext
+) -> AuditOperationalSnapshot:
+    """Take one coherent snapshot and never leak the underlying cause."""
+
+    try:
+        return service.snapshot(tenant_context.tenant_id)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        _observe("audit_health", "backend_unavailable", 503)
+        raise HTTPException(
+            status_code=503,
+            detail=_ApiErrorCode.AUDIT_HEALTH_UNAVAILABLE.value,
+        ) from exc
 
 
 @router.get(
