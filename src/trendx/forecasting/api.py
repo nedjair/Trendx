@@ -1831,6 +1831,19 @@ def reject_reserved_restore_read(request: Request) -> None:
         raise HTTPException(status_code=405, detail="method_not_allowed")
 
 
+#: Declared OpenAPI security for the W99/W104/W106 execution read routes.
+#:
+#: These routes were already protected at runtime by the application-wide
+#: ``require_auth_middleware``; this declaration only makes the published
+#: contract match the enforced one, exactly as the W110-W113 audit routes
+#: already declare it.  It changes no runtime behaviour: no new route, no new
+#: middleware, no new status code and no new response body.
+_EXECUTION_READ_SECURITY: list[dict[str, list[Any]]] = [
+    {"BearerAuth": []},
+    {"ApiKeyAuth": []},
+]
+
+
 router = APIRouter(prefix="/api/v1/forecast/executions", tags=["forecast-executions"])
 
 
@@ -1839,6 +1852,7 @@ router = APIRouter(prefix="/api/v1/forecast/executions", tags=["forecast-executi
     response_model=ExecutionListOut,
     summary="List forecast executions",
     responses=_ERROR_RESPONSES,
+    openapi_extra={"security": _EXECUTION_READ_SECURITY},
 )
 def list_executions(
     query: ExecutionQueryDep,
@@ -1865,6 +1879,7 @@ def list_executions(
     response_model=ExecutionStatsOut,
     summary="Forecast execution statistics",
     responses=_ERROR_RESPONSES,
+    openapi_extra={"security": _EXECUTION_READ_SECURITY},
 )
 def execution_statistics(
     query: ExecutionQueryDep,
@@ -1889,6 +1904,7 @@ def execution_statistics(
         "created_at timestamps in ascending UTC order. Pagination is intentionally not applied."
     ),
     responses=_ERROR_RESPONSES,
+    openapi_extra={"security": _EXECUTION_READ_SECURITY},
 )
 def execution_analytics(
     query: ExecutionAnalyticsQueryDep,
@@ -1920,6 +1936,7 @@ def execution_analytics(
         "generated_at is null in deterministic mode and never affects analytics."
     ),
     responses=_ERROR_RESPONSES,
+    openapi_extra={"security": _EXECUTION_READ_SECURITY},
 )
 def execution_report(
     query: ExecutionReportQueryDep,
@@ -2524,6 +2541,7 @@ def execution_audit_export_checksum(
     response_model=ExecutionOut,
     summary="Get a forecast execution by reference key",
     responses=_ERROR_RESPONSES,
+    openapi_extra={"security": _EXECUTION_READ_SECURITY},
 )
 def get_execution_by_reference(
     reference_key: str,
@@ -2547,6 +2565,7 @@ def get_execution_by_reference(
     response_model=ExecutionDiagnosticOut,
     summary="Get failure diagnostics for a forecast execution",
     responses=_ERROR_RESPONSES,
+    openapi_extra={"security": _EXECUTION_READ_SECURITY},
 )
 def get_execution_diagnostic(
     execution_id: str,
@@ -2589,6 +2608,7 @@ def get_execution_diagnostic(
     summary="Get a forecast execution by ID",
     responses=_ERROR_RESPONSES,
     dependencies=[Depends(reject_reserved_restore_read)],
+    openapi_extra={"security": _EXECUTION_READ_SECURITY},
 )
 def get_execution(
     execution_id: str,

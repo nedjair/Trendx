@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import inspect
 import subprocess
+import sys
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -1055,7 +1056,9 @@ def test_an_w84_w93_regression():
     """The full regression suite for W84-W93 must still pass."""
     result = subprocess.run(
         [
-            "python",
+            # the interpreter running this very test, so the nested run uses the
+            # same environment (a bare "python" is absent on many hosts)
+            sys.executable,
             "-m",
             "pytest",
             "tests/unit/test_forecast_contract_generic.py",
