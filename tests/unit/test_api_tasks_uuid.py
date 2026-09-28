@@ -23,7 +23,6 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
 from trendx.config import settings
 from trendx.database.models import (
     Base,
@@ -35,10 +34,15 @@ from trendx.database.models import (
 from trendx.main import app
 
 
-def _make_engine():
+def _make_engine(tmp_path):
+    # A file-backed database is required here, not ":memory:".  The request
+    # handler runs in the TestClient thread and the assertions read back from a
+    # separate session, so the test must not depend on both happening to share
+    # one single in-memory connection: a recycled connection silently yields a
+    # brand-new empty database.  A file makes the committed state visible to
+    # every connection deterministically.
     engine = create_engine(
-        "sqlite://",
-        poolclass=StaticPool,
+        f"sqlite:///{tmp_path / 'tasks.db'}",
         connect_args={"check_same_thread": False},
     )
     Base.metadata.create_all(
@@ -104,15 +108,28 @@ def _auth_headers() -> dict[str, str]:
 
 
 @pytest.mark.unit
-def test_retry_valid_uuid_creates_pending_request_no_hex_error(client):
-    engine = _make_engine()
+def test_retry_valid_uuid_creates_pending_request_no_hex_error(client, tmp_path):
+    engine = _make_engine(tmp_path)
     task_id = uuid.uuid4()
     _seed_task(engine, task_id)
 
     def _fake_get_session(key: str):
         @contextmanager
         def _cm():
-            yield sessionmaker(bind=engine)()
+            # Mirror DatabaseManager.get_session: commit on success, roll back on
+            # error, always close.  The previous fake only yielded, so the row
+            # written by the handler lived exclusively in its own uncommitted
+            # transaction and the read-back assertion silently depended on both
+            # sessions happening to share one single in-memory connection.
+            session = sessionmaker(bind=engine)()
+            try:
+                yield session
+                session.commit()
+            except Exception:
+                session.rollback()
+                raise
+            finally:
+                session.close()
 
         return _cm()
 
@@ -128,13 +145,26 @@ def test_retry_valid_uuid_creates_pending_request_no_hex_error(client):
 
 
 @pytest.mark.unit
-def test_retry_invalid_uuid_returns_400(client):
-    engine = _make_engine()
+def test_retry_invalid_uuid_returns_400(client, tmp_path):
+    engine = _make_engine(tmp_path)
 
     def _fake_get_session(key: str):
         @contextmanager
         def _cm():
-            yield sessionmaker(bind=engine)()
+            # Mirror DatabaseManager.get_session: commit on success, roll back on
+            # error, always close.  The previous fake only yielded, so the row
+            # written by the handler lived exclusively in its own uncommitted
+            # transaction and the read-back assertion silently depended on both
+            # sessions happening to share one single in-memory connection.
+            session = sessionmaker(bind=engine)()
+            try:
+                yield session
+                session.commit()
+            except Exception:
+                session.rollback()
+                raise
+            finally:
+                session.close()
 
         return _cm()
 
@@ -144,15 +174,28 @@ def test_retry_invalid_uuid_returns_400(client):
 
 
 @pytest.mark.unit
-def test_get_task_valid_uuid_uses_coercion(client):
-    engine = _make_engine()
+def test_get_task_valid_uuid_uses_coercion(client, tmp_path):
+    engine = _make_engine(tmp_path)
     task_id = uuid.uuid4()
     _seed_task(engine, task_id)
 
     def _fake_get_session(key: str):
         @contextmanager
         def _cm():
-            yield sessionmaker(bind=engine)()
+            # Mirror DatabaseManager.get_session: commit on success, roll back on
+            # error, always close.  The previous fake only yielded, so the row
+            # written by the handler lived exclusively in its own uncommitted
+            # transaction and the read-back assertion silently depended on both
+            # sessions happening to share one single in-memory connection.
+            session = sessionmaker(bind=engine)()
+            try:
+                yield session
+                session.commit()
+            except Exception:
+                session.rollback()
+                raise
+            finally:
+                session.close()
 
         return _cm()
 
@@ -163,15 +206,28 @@ def test_get_task_valid_uuid_uses_coercion(client):
 
 
 @pytest.mark.unit
-def test_cancel_task_valid_uuid_uses_coercion(client):
-    engine = _make_engine()
+def test_cancel_task_valid_uuid_uses_coercion(client, tmp_path):
+    engine = _make_engine(tmp_path)
     task_id = uuid.uuid4()
     _seed_task(engine, task_id)
 
     def _fake_get_session(key: str):
         @contextmanager
         def _cm():
-            yield sessionmaker(bind=engine)()
+            # Mirror DatabaseManager.get_session: commit on success, roll back on
+            # error, always close.  The previous fake only yielded, so the row
+            # written by the handler lived exclusively in its own uncommitted
+            # transaction and the read-back assertion silently depended on both
+            # sessions happening to share one single in-memory connection.
+            session = sessionmaker(bind=engine)()
+            try:
+                yield session
+                session.commit()
+            except Exception:
+                session.rollback()
+                raise
+            finally:
+                session.close()
 
         return _cm()
 

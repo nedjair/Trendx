@@ -19,7 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import IO
+from typing import IO, Any
 
 import httpx
 from trendx.forecasting.audit import (
@@ -50,6 +50,36 @@ PATHS = {
     "capacity": "/api/v1/forecast/executions/audit/capacity",
     "readiness": "/api/v1/forecast/executions/audit/readiness",
 }
+
+#: Response fields that are observation instants rather than business facts.
+OBSERVATION_FIELDS = ("checked_at", "measured_at", "last_verified_at")
+
+#: The ``filesystem`` block of the W113 capacity payload is a live ``statvfs``
+#: measurement of the host, not a property of the audit journal.  Its
+#: ``filesystem_free_bytes``, ``filesystem_used_bytes`` and ``inode_free`` move
+#: whenever anything else on the host touches the disk, so two processes reading
+#: the *same, unchanged* journal at different instants legitimately disagree.
+#: It is an infrastructure indicator and stays part of the API; it is simply not
+#: a cross-process business invariant.  Every other capacity field -- event
+#: counts, active and archive bytes, the union count, age bounds, status and
+#: reason codes -- is still compared strictly between the two processes.
+ENVIRONMENTAL_FIELDS = ("filesystem",)
+
+
+def business_projection(payload: dict[str, Any]) -> dict[str, Any]:
+    """Keep only the fields that must be identical across two processes.
+
+    This narrows nothing that describes the journal: it removes the observation
+    instant and the live filesystem measurement, and compares everything else
+    byte for byte.
+    """
+
+    return {
+        key: value
+        for key, value in payload.items()
+        if key not in OBSERVATION_FIELDS and key not in ENVIRONMENTAL_FIELDS
+    }
+
 
 TEST_FLAGS = {
     "TRENDX_SCHEDULER_ENABLED": "false",
@@ -388,11 +418,8 @@ def test_w113_ops_process_a_b_identical_reads(tmp_path: Path) -> None:
             httpx.Client(base_url=server_b.url, trust_env=False, timeout=60.0) as client_b,
         ):
             for key, path in PATHS.items():
-                body_a = client_a.get(path, headers=_headers()).json()
-                body_b = client_b.get(path, headers=_headers()).json()
-                for volatile in ("checked_at", "measured_at", "last_verified_at"):
-                    body_a.pop(volatile, None)
-                    body_b.pop(volatile, None)
+                body_a = business_projection(client_a.get(path, headers=_headers()).json())
+                body_b = business_projection(client_b.get(path, headers=_headers()).json())
                 if key != "readiness":
                     # the two processes must not observe a different journal
                     assert body_a == body_b, key
