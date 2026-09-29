@@ -28,11 +28,31 @@ def test_thingsboard_requires_explicit_device_and_customer_confirmation():
 
 
 def test_sql_contains_default_revocations_and_read_only_grafana():
+    """Single-DB dynamic contract (Correction A, ef45094).
+
+    Migration 000 targets ONE database (``current_database()``, no ``\\connect``
+    switching), grants CONNECT/USAGE dynamically (``DO $$`` over the real
+    roles), scopes DML defaults to ``trendx_app``, and leaves ``trendx_grafana``
+    read-only. The pre-ef45094 static multi-database pattern (``REVOKE ALL ON
+    DATABASE``, ``:GRAFANA_DB_USER`` psql vars, repeated static GRANTs) is
+    intentionally absent.
+    """
     sql = (ROOT / "migrations/000_service_accounts.sql").read_text()
-    assert "REVOKE ALL ON DATABASE" in sql
-    assert 'GRANT SELECT ON ALL TABLES IN SCHEMA public TO :"GRAFANA_DB_USER"' in sql
-    assert sql.count("GRANT CONNECT ON DATABASE") >= 3
-    assert sql.count("GRANT USAGE, CREATE ON SCHEMA public") >= 3
+    # Dynamic single-DB block over the real infrastructure roles.
+    assert "DO $$" in sql
+    assert "current_database()" in sql
+    assert "GRANT CONNECT ON DATABASE" in sql
+    assert "GRANT USAGE ON SCHEMA trendx_catalog" in sql
+    assert "GRANT USAGE ON SCHEMA trendx_analytics" in sql
+    assert "ALTER DEFAULT PRIVILEGES IN SCHEMA trendx_analytics" in sql
+    assert "trendx_grafana" in sql
+    # DML defaults go to the application role only, never to Grafana.
+    assert "TO trendx_app" in sql
+    assert "TO trendx_grafana" not in sql
+    # Obsolete static multi-database assumptions must stay out.
+    assert "REVOKE ALL ON DATABASE" not in sql
+    assert "GRAFANA_DB_USER" not in sql
+    assert "\\connect" not in sql
 
 
 def test_grafana_prevalidates_and_uses_versioned_folder_permission_method():

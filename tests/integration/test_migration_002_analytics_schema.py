@@ -4,7 +4,8 @@ Two layers of validation:
 
   * Static (always runs, no DB): the file qualifies analytics objects with
     ``trendx_analytics.``, targets the single base ``trendx`` in GRANT CONNECT,
-    and keeps the ledger in ``public.schema_version``. This proves the audit
+    and carries NO legacy internal ledger (the runner records every migration
+    in ``trendx_catalog.schema_version``, 75e1422). This proves the audit
     corrections (002 -> trendx_analytics) without needing a TimescaleDB image.
   * Dynamic (disposable native PostgreSQL): when TimescaleDB is ABSENT, 002 is a
     no-op — it must NOT leak any object into ``public`` and must be idempotent.
@@ -52,8 +53,11 @@ def test_002_qualifies_analytics_objects_statically():
     assert "ALTER DEFAULT PRIVILEGES IN SCHEMA trendx_analytics" in text
     assert "ALTER DEFAULT PRIVILEGES IN SCHEMA public" not in text
 
-    # Ledger stays in public (managed by the runner).
-    assert "public.schema_version" in text
+    # Ledger is runner-exclusive (trendx_catalog.schema_version, 75e1422):
+    # the file must not carry a legacy internal ledger (bare or public),
+    # which would fail on hardened databases where public is absent.
+    assert "public.schema_version" not in text
+    assert "CREATE TABLE IF NOT EXISTS schema_version" not in text
 
 
 @INTEGRATION
