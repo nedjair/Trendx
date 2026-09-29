@@ -1,17 +1,30 @@
-# Git Remote Governance — TrendX (W119 Phase 9B)
+# Git Remote Governance — TrendX (W119 Phase 9B, decided W120 Phase 2, implemented W120 Phase 3)
 
-> Statut : constats prouvés uniquement. Toute valeur non déterminée est
-> explicitement marquée `UNDECLARED`. Ce document ne déclare aucune source de
-> vérité par défaut : la désignation d'un dépôt canonique relève d'une décision
-> opérateur distincte.
+> Statut : décisions opérateur W120 Phase 2 implémentées ci-dessous. Les faits
+> restent distingués des décisions : tout rôle non décidé est marqué
+> `UNDECLARED`. Publier vers un remote ou l'utiliser ne constitue aucune
+> désignation de canonicité.
+
+## Operator decisions (W120 Phase 2, implemented here)
+
+```text
+SOURCE_OF_TRUTH = gitea-migration
+GITEA_POLICY = D2-A
+GIT_SYNC = NO
+AGENTS_POLICY = D3-A
+PUBLICATION_POLICY = D4-A
+CANONICAL_BRANCH = UNDECLARED
+```
 
 ## Git Source of Truth
 
 ```text
-Official repository: UNDECLARED (no governance declaration found in
-  AGENTS.md, README, docs/, Makefile, or CI configuration as of W119)
+Official repository: gitea-migration
+  (http://10.0.0.101:3000/admin/trendx-migration.git)
+  DESIGNATED BY OPERATOR (W120 Phase 2, decision D1), not inferred from
+  existence, reachability, or usage. Prior W119 state was UNDECLARED.
 Canonical branch:    UNDECLARED (operational main branch observed: `master`;
-  no release/tag process observed)
+  no release/tag process observed; master must NOT be read as designated)
 ```
 
 ## Remotes (observed, read-only inventory)
@@ -19,33 +32,39 @@ Canonical branch:    UNDECLARED (operational main branch observed: `master`;
 ```text
 origin
   URL:  git@github.com:nedjair/Trendx.git
-  Role: PUBLICATION_TARGET (W119 f71b3f5 published here, Phase 7, after
-    explicit Phase 6 authorization). No CI observed. Not canonical.
+  Role: non-canonical publication/legacy remote (SOURCE_OF_TRUTH = NO).
+    W119 f71b3f5 was published here on explicit Phase 6 authorization;
+    that publication did not designate origin as source of truth.
+    No CI observed. No new push authorized by this document.
 
 gitlab
   URL:  git@gitlab.com:raouf-groupe/trendx.git
-  Role: SECONDARY_CI + partial UPSTREAM (GitLab CI on master/MR/push;
-    upstream of ~10 local branches). Not canonical.
+  Role: secondary CI / additional remote (SOURCE_OF_TRUTH = NO).
+    GitLab CI on master/MR/push; upstream of ~10 local branches.
+    GIT_SYNC = NO. No fetch or synchronization performed.
 
 gitea-migration
   URL:  http://10.0.0.101:3000/admin/trendx-migration.git
-  Role: PRIMARY_CI + CONTAINER_REGISTRY + partial UPSTREAM.
+  Role: SOURCE_OF_TRUTH (operator-designated, W120 Phase 2 D1).
     Gitea 1.25.4 ACTIVE (proven HTTP 200); public repository
     `admin/trendx-migration` (default branch `master`); upstream of local
     `master` and ~6 feature branches; 60 remote-tracking refs; wired into
     `.env` (GITEA_URL/OWNER/REPO) and `scripts/mcp-gitea.sh`.
-    Active != canonical: CANONICAL = UNDECLARED.
+    CI = ACTIVE, REGISTRY = ACTIVE, GIT_SYNC = NO (policy D2-A below).
 ```
 
-## Gitea role (Q7)
+## Gitea role (Q7, decided D2-A)
 
 ```text
-canonical: NO (undeclared)
+source_of_truth: YES (operator-designated, D1)
+canonical:       branch UNDECLARED (see above)
 upstream:  YES (master + several branches)
 mirror:    UNKNOWN (server flag `mirror=false`; "migration mirror" label
   in description is not operational proof)
-CI:        YES (Gitea Actions, push + pull_request)
-registry:  YES (10.0.0.101:3000/trendx/* — the only registry referenced)
+CI:        YES / ACTIVE (Gitea Actions, push + pull_request)
+registry:  YES / ACTIVE (10.0.0.101:3000/trendx/* — the only registry referenced)
+git_sync:  NO (policy D2-A: no automatic or mandatory Git synchronization
+  to any other remote; any additional sync needs a separate decision)
 ```
 
 ## GitLab role
@@ -98,26 +117,31 @@ Upstream links are operational facts, not canonicity proof.
 None of the above is executed or pre-decided by this document.
 ```
 
-## Synchronization policy
+## Synchronization policy (decided D2-A)
 
 ```text
-Source -> Gitea:   UNDECLARED (DO_NOT_SYNCHRONIZE until declared)
-Source -> GitLab:  UNDECLARED (DO_NOT_SYNCHRONIZE until declared)
-Gitea -> Source:   UNDECLARED
-GitLab -> Source:  UNDECLARED
-W119_GITEA_SYNC_POLICY = UNDECLARED (governance decision required;
-  W119 currently on origin ONLY: W119_ON_GITEA = UNKNOWN, W119_ON_GITLAB = UNKNOWN)
+Source -> Gitea:   NO SYNC DEFINED (DO_NOT_SYNCHRONIZE until a separate decision)
+Source -> GitLab:  NO SYNC DEFINED (DO_NOT_SYNCHRONIZE until a separate decision)
+Gitea -> Source:   NO SYNC DEFINED (gitea-migration IS the designated source;
+  no mirror mechanism created by this policy)
+GitLab -> Source:  NO SYNC DEFINED
+W119_GITEA_SYNC_POLICY = NO (D2-A: W119 currently on origin ONLY;
+  W119_ON_GITEA = UNKNOWN, W119_ON_GITLAB = UNKNOWN; no fetch performed)
 ```
 
-## Publication policy
+## Publication policy (decided D4-A)
 
 ```text
-WHO_CAN_PUSH / WHAT_BRANCHES / WHAT_TAGS / WHAT_REMOTE: UNDECLARED in general.
-Observed precedent: W119 publication to origin/fix/ml-w49-master-conflicts
-was explicitly authorized (Phase 6: REMOTE + BRANCH + PUSH_AUTHORIZATION).
+PUBLICATION_POLICY = D4-A: no push without prior explicit operator
+authorization for the targeted remote AND branch. No implicit push, no
+automatic multi-remote push, no target deduced from local configuration.
+Each publication requires its own explicit phase or authorization.
+WHO_CAN_PUSH / WHAT_BRANCHES / WHAT_TAGS: per-authorization (no standing rule).
 REQUIRES_REVIEW / REQUIRES_CI / FORCE_PUSH_ALLOWED: UNDECLARED.
 FORCE_PUSH: never authorized by default.
 ```
+
+## Divergence policy (target procedure, documentary only)
 
 ## Divergence policy (target procedure, documentary only)
 
@@ -141,14 +165,15 @@ W119_ON_GITEA = UNKNOWN (no fetch performed)
 W119_ON_GITLAB = UNKNOWN (no fetch performed)
 ```
 
-## Known governance ambiguity (documented, not resolved here)
+## Known governance ambiguity (decided D3-A, documented only)
 
 ```text
 AGENTS.md states 10.0.0.101 abandoned with no references to subsist, while
 tracked .env and W118-frozen .gitea/workflows/ci.yaml reference
-10.0.0.101:3000 operationally (Gitea + registry). Distinguish HOST_ROLE
-(deployment target, disk) from SERVICE_ROLE (Gitea/registry active).
-Resolution requires a governance decision outside W119.
+10.0.0.101:3000 operationally (Gitea + registry). Decided interpretation
+(D3-A): the AGENTS.md rule concerns the HOST_ROLE (deployment target,
+disk), not the SERVICE_ROLE (Gitea/registry active, which keep operating).
+AGENTS.md is NOT modified by W120 Phase 3; no historical resolution claimed.
 ```
 
 ## Compatibility
