@@ -1,6 +1,6 @@
-# Git Remote Governance — TrendX (W119 Phase 9B, decided W120 Phase 2, implemented W120 Phase 3)
+# Git Remote Governance — TrendX (decided W120 Phase 2, designated W121 Phase 2, implemented W121 Phase 3)
 
-> Statut : décisions opérateur W120 Phase 2 implémentées ci-dessous. Les faits
+> Statut : décisions opérateur implémentées ci-dessous. Les faits
 > restent distingués des décisions : tout rôle non décidé est marqué
 > `UNDECLARED`. Publier vers un remote ou l'utiliser ne constitue aucune
 > désignation de canonicité.
@@ -13,7 +13,7 @@ GITEA_POLICY = D2-A
 GIT_SYNC = NO
 AGENTS_POLICY = D3-A
 PUBLICATION_POLICY = D4-A
-CANONICAL_BRANCH = UNDECLARED
+CANONICAL_BRANCH = master
 ```
 
 ## Git Source of Truth
@@ -23,8 +23,11 @@ Official repository: gitea-migration
   (http://10.0.0.101:3000/admin/trendx-migration.git)
   DESIGNATED BY OPERATOR (W120 Phase 2, decision D1), not inferred from
   existence, reachability, or usage. Prior W119 state was UNDECLARED.
-Canonical branch:    UNDECLARED (operational main branch observed: `master`;
-  no release/tag process observed; master must NOT be read as designated)
+Canonical branch:    master
+  DESIGNATED BY OPERATOR (W121 Phase 2, decision D1 = DESIGNATE_MASTER).
+  Gitea default branch (`master`) and canonical branch are now aligned values
+  but remain distinct concepts. Prior state was UNDECLARED. This designation
+  implies NO protection, NO auto-merge, NO sync, and NO automatic publication.
 ```
 
 ## Remotes (observed, read-only inventory)
@@ -57,7 +60,7 @@ gitea-migration
 
 ```text
 source_of_truth: YES (operator-designated, D1)
-canonical:       branch UNDECLARED (see above)
+canonical:       branch master (designated W121 Phase 2; PROTECTION UNDECIDED)
 upstream:  YES (master + several branches)
 mirror:    UNKNOWN (server flag `mirror=false`; "migration mirror" label
   in description is not operational proof)
@@ -107,14 +110,13 @@ Upstream links are operational facts, not canonicity proof.
 
 ## Follow-up (human decision required)
 
-## Follow-up (human decision required)
-
 ```text
-1. Declare the official source of truth (repository + canonical branch).
+1. DONE (W120 D1 + W121 D1): source of truth = gitea-migration,
+   canonical branch = master.
 2. Define Gitea's exact role and whether W119 must be synchronized there.
 3. Resolve the AGENTS.md host-vs-service ambiguity for 10.0.0.101.
 4. Define publication, synchronization, and divergence policies.
-None of the above is executed or pre-decided by this document.
+Items 2-4 are not executed or pre-decided by this document.
 ```
 
 ## Synchronization policy (decided D2-A)
@@ -143,8 +145,6 @@ FORCE_PUSH: never authorized by default.
 
 ## Divergence policy (target procedure, documentary only)
 
-## Divergence policy (target procedure, documentary only)
-
 ```text
 IF remotes diverge:
   DO NOT AUTO-MERGE
@@ -152,8 +152,8 @@ IF remotes diverge:
   STOP SYNCHRONIZATION
   OPEN GOVERNANCE INCIDENT
   COMPARE COMMITS
-  IDENTIFY AUTHORITY (currently UNDECLARED -> escalate to operator)
-  RESOLVE FROM SOURCE_OF_TRUTH (once declared)
+  IDENTIFY AUTHORITY (gitea-migration / master per W120-W121 decisions)
+  RESOLVE FROM SOURCE_OF_TRUTH (gitea-migration, canonical branch master)
 ```
 
 ## W119 publication
